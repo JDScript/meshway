@@ -13,6 +13,20 @@
 
 库测试、单独内核测试、镜像构建成功或常驻 lab 的部分功能检查都不替代对应行的整组结论。
 
+## macOS 实验验收 {#macos}
+
+以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。VM 仍为 A2 薄壳，A3 升级被来宾 GUI 授权阻塞；不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替这些行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
+
+| 行 | 必需场景 | 状态 |
+| --- | --- | --- |
+| `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 未验收（VM）；真实 Node control-only 分派已有原生单测，VM 尚未替换薄壳 |
+| `macos/enrollment` | enrollment key 接入、验签与保存 netmap、实际 applied／running／peer | 未验收 |
+| `macos/mesh` | utun ↔ Linux peer 的双向 IPv4／IPv6 ping、TCP、UDP；Rust provider underlay 绕行 | 未验收 |
+| `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 未验收；本机服务地址待决定，未安装 NE DNS |
+| `macos/offline` | Server 停机，签名租约内持续通信 | 未验收 |
+| `macos/lease` | 短租约实际到期后包被丢弃且不落物理网络；Server 恢复后自动恢复 | 未验收 |
+| `macos/restart` | stopTunnel/startTunnel 后在 Server 离线时从 netmap.json 恢复，保持租约期限 | 未验收 |
+
 ## 验收矩阵
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。

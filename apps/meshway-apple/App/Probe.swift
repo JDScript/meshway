@@ -29,6 +29,7 @@ enum Probe {
     static func request(_ command: Command) throws -> (String, Data) {
         let id = UUID().uuidString.lowercased()
         let body = try JSONEncoder().encode(Request(requestId: id, command: command))
+        guard body.count <= 65_536 else { throw CocoaError(.coderInvalidValue) }
         var length = UInt32(body.count).bigEndian
         var frame = withUnsafeBytes(of: &length) { Data($0) }
         frame.append(body)
@@ -66,10 +67,16 @@ enum Probe {
                     guard action == "up", index + 1 < arguments.count else { throw CocoaError(.coderInvalidValue) }
                     let source = arguments[index + 1]
                     guard source.hasPrefix("@") else { throw CocoaError(.coderInvalidValue) }
-                    key = try String(contentsOfFile: String(source.dropFirst()), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let file = try FileHandle(forReadingFrom: URL(fileURLWithPath: String(source.dropFirst())))
+                    defer { try? file.close() }
+                    let data = try file.read(upToCount: 65_537) ?? Data()
+                    guard data.count <= 65_536, let text = String(data: data, encoding: .utf8) else { throw CocoaError(.coderInvalidValue) }
+                    key = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
                 if let index = arguments.firstIndex(of: "--server") {
-                    guard index + 1 < arguments.count, arguments[index + 1] == current.server else {
+                    guard index + 1 < arguments.count else { throw CocoaError(.coderInvalidValue) }
+                    let origin = arguments[index + 1].hasSuffix("/") ? arguments[index + 1] : arguments[index + 1] + "/"
+                    guard origin == current.server else {
                         print("Server differs from running Node; start the tunnel with MESHWAY_SERVER_URL first"); exit(2)
                     }
                 }

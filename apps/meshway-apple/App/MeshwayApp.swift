@@ -44,7 +44,7 @@ private struct DebugView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Meshway · System Extension Lab").font(.title2)
-            Text("Control-only Node: real IPC and identity; Apple packet Host is not connected.").foregroundStyle(.secondary)
+            Text("Experimental Mesh Node. DNS service address is pending; use a network with DNS disabled for Mesh IP validation.").foregroundStyle(.secondary)
             HStack {
                 Button("Activate extension") { controller.activate() }
                 Button("Start Node") { Task { await controller.start(defaultRoute: false, includeAllNetworks: false) } }.disabled(controller.busy)

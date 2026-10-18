@@ -40,6 +40,7 @@ BUILD_INPUTS = {"Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock"}
 # Workspace members the matrix neither builds nor runs.
 OUTSIDE = {
     "apps/meshway-server",
+    "apps/meshway-apple/meshway-apple-bridge",
     "tools/meshway-transport-perf",
     "tools/meshway-desired-fixture",
     "tools/meshway-circuit-perf",

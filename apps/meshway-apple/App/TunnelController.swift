@@ -5,7 +5,7 @@ import SystemExtensions
 
 @MainActor @Observable
 final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
-    var message = "Node bridge — control-only lab." {
+    var message = "Apple Host — experimental Mesh Node." {
         didSet { report?(message) }
     }
     var report: ((String) -> Void)?
@@ -14,6 +14,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     var busy = false
     private var manager: NETunnelProviderManager?
     private var client: FrameClient?
+    private var clientID: UUID?
 
     func activate(completion: ((Int32) -> Void)? = nil) {
         activationCompletion = completion
@@ -37,7 +38,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
 
     @discardableResult
     func start(defaultRoute: Bool, includeAllNetworks: Bool, excludeLocalNetworks: Bool = false) async -> Bool {
-        guard !defaultRoute, !includeAllNetworks else { message = "Packet capture requires Apple Host (not connected yet)"; return false }
+        guard !defaultRoute, !includeAllNetworks else { message = "Default capture lab switches are not enabled for this Mesh-only package"; return false }
         guard !busy else { return false }
         busy = true
         defer { busy = false }
@@ -47,7 +48,8 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             let manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == identifier } ?? NETunnelProviderManager()
             let configuration = NETunnelProviderProtocol()
             configuration.providerBundleIdentifier = identifier
-            let origin = ProcessInfo.processInfo.environment["MESHWAY_SERVER_URL"] ?? "http://127.0.0.1:8430"
+            let savedOrigin = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["serverOrigin"] as? String
+            let origin = ProcessInfo.processInfo.environment["MESHWAY_SERVER_URL"] ?? savedOrigin ?? "http://127.0.0.1:8430"
             configuration.serverAddress = origin
             configuration.providerConfiguration = ["serverOrigin": origin]
             configuration.includeAllNetworks = includeAllNetworks
@@ -59,7 +61,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             try await manager.loadFromPreferences()
             self.manager = manager
             try manager.connection.startVPNTunnel()
-            message = "Control-only Node start requested"
+            message = "Apple Host Node start requested"
             return true
         } catch { message = error.localizedDescription; return false }
     }
@@ -71,8 +73,10 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func disconnectFrames() {
-        client?.close()
+        let previous = client
         client = nil
+        clientID = nil
+        previous?.close()
     }
 
     @discardableResult
@@ -93,20 +97,29 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
         disconnectFrames()
         do {
             if client == nil {
+                let id = UUID()
+                clientID = id
                 client = try FrameClient(output: { [weak self] frame, acknowledge in
                     Task { @MainActor in
                         defer { acknowledge() }
-                        guard let self else { return }
+                        guard let self, self.clientID == id else { return }
                         guard let body = try? Probe.body(frame) else { self.message = "Invalid IPC frame"; return }
                         self.frames = String((self.frames + "\n" + String(decoding: body, as: UTF8.self)).suffix(8192))
                     }
                 }, disconnected: { [weak self] in
-                    Task { @MainActor in self?.client = nil; self?.message = "XPC disconnected" }
+                    Task { @MainActor in
+                        guard let self, self.clientID == id else { return }
+                        self.client = nil; self.clientID = nil; self.message = "XPC disconnected"
+                    }
                 })
             }
             let (_, request) = try Probe.request(Probe.Command(type: "status"))
+            let id = clientID
             client?.send(request) { [weak self] accepted in
-                Task { @MainActor in self?.message = accepted ? "Frame acknowledged" : "Frame rejected / busy" }
+                Task { @MainActor in
+                    guard let self, self.clientID == id else { return }
+                    self.message = accepted ? "Frame acknowledged" : "Frame rejected / busy"
+                }
             }
         } catch { message = error.localizedDescription }
     }

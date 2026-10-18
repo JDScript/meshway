@@ -61,7 +61,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 `crates/meshway-node` 是唯一 Node 运行时。嵌入宿主通过 `Node::open(settings, Arc<dyn host::Platform>)` 取得持久意图 owner，随后驱动 `Node::run(shutdown)` 至完成；`Node::ipc().submit(connection)` 只接收宿主已认证的 `AsyncRead + AsyncWrite` 字节流，复用现有 IPC codec。`Node::lifecycle()` 提供 Starting／Ready／Stopping／Stopped 状态；库不安装日志 subscriber、不写 stdout、不发送 systemd 通知。
 
-`host::Platform` 负责能力、接口清单、打开 Host 和选择工作执行器；`Host` 负责 capture 生命周期、包设备、受保护 socket／HTTP builder、网络变化、系统 DNS 附着、MSS、可选出口 driver 与本地诊断。`runtime/network/` 对这些接口驱动同一 Engine、Manager、SecureNode 与 DNS owner；Linux 的包装位于 `host/linux/`，其中出口 glue 位于 `host/linux/exit/`。Linux 的非 Send 探测使用其适配器自己的 joined blocking worker；接口不要求其他宿主使用这一执行模型。当前只提供 Linux 包附件与显式 `ControlOnly` 平台；Apple Host 尚未实现。
+`host::Platform` 负责能力、接口清单、打开 Host 和选择工作执行器；`Host` 负责 capture 生命周期、包设备、受保护 socket／HTTP builder、网络变化、系统 DNS 附着、MSS、可选出口 driver 与本地诊断。`runtime/network/` 对这些接口驱动同一 Engine、Manager、SecureNode 与 DNS owner；Linux 的包装位于 `host/linux/`，其中出口 glue 位于 `host/linux/exit/`。Linux 的非 Send 探测使用其适配器自己的 joined blocking worker；接口不要求其他宿主使用这一执行模型。实验 Apple Host 在 `host/apple/`，仅由 Packet Tunnel extension 装配，VM 验收与 DNS 限制见 [Apple 设计](/v2/node/apple-design)。`ControlOnly` 仍是显式平台；错误不会回退为 control-only。
 
 daemon 负责 Unix socket 的创建、UID 认证与陈旧 socket 精确回收，并把已认证连接提交给库。运行时单测随组件位于 `meshway-node`；真实二进制、Unix socket 与信号的生命周期集成测试仍归 daemon。
 

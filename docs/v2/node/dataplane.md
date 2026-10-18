@@ -209,6 +209,8 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 ## Linux TUN
 
+包处理器只依赖 `meshway_tun::PacketDevice` 的有界读写契约。macOS 实验 `Utun` 接受 NE 的 owned fd，平台设置与验收限制见 [Apple Host](/v2/node/apple-design#apple-host)；以下创建／offload 选项只描述 Linux `Tun`。
+
 `meshway-tun::Tun::create(Options)` 在宿主已经选择的 network namespace 中创建内核自动命名、非持久的 L3 TUN。安全 Rust 层使用固定版本 tun-rs；不接管已有名称，不导出 FD，drop 由内核回收设备。
 
 `Options::new(mtu)` 接受 1280–65535 bytes，可为新设备设置 IPv4／IPv6 地址及前缀。地址带来的本地／直连路由由该 namespace 的内核产生。创建需要已启用 I/O 的 Tokio runtime、既有 `/dev/net/tun` 和相应设备权限。

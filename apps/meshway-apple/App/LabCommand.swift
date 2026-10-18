@@ -31,7 +31,7 @@ enum LabCommand {
                 controller.send("meshway-app-frame")
                 try? await Task.sleep(for: .seconds(4))
                 print(controller.frames)
-                let passed = controller.frames.contains("\"controlOnly\"") && controller.frames.contains("\"version\":13")
+                let passed = controller.frames.contains("\"networkMode\":\"tun\"") && controller.frames.contains("\"version\":13")
                 controller.disconnectFrames()
                 print(passed ? "PASS App controller IPC 13 Status" : "FAIL App controller Status")
                 exit(passed ? 0 : 1)

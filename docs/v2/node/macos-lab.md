@@ -2,6 +2,35 @@
 
 `meshway-mac-vm` 是 [macOS App 设计](/v2/node/apple-design)的独立 Tart 验收机。App 在宿主 Xcode 构建，在 VM 内安装、激活与运行；网络使用 Tart 默认 NAT。VM 的 SIP／AMFI 开发设置只用于无 provisioning profile 的平台实验，不是发布方式。
 
+## A3 Node 接线与当前部署
+
+当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 仍安装下文的 A2 **0.1/2**，没有 VPN 配置；源码构建不代表 VM 已更新。通过 SSH 请求卸载旧 extension 时返回 `AuthorizationCreate failed: ... no user interaction was possible`（退出 70），须在来宾 GUI 完成旧 extension 的停用／授权后再部署。没有替换现有 App，没有停止 Tart。A3 私有证据在工作树 `.meshway/macos-lab/a3/`。
+
+宿主构建（先检查磁盘余量超过 50 GiB）：
+
+```sh
+df -h /
+MESHWAY_CORE_PROFILE=debug bash apps/meshway-apple/scripts/check.sh
+MESHWAY_CORE_PROFILE=debug bash apps/meshway-apple/scripts/sign-lab.sh
+```
+
+`build.sh` 先运行 `build-core.sh`：mise 锁定 Rust、`CARGO_INCREMENTAL=0`，默认复用当前工作树 `target/`（可用 `CARGO_TARGET_DIR` 指定），目标 `aarch64-apple-darwin`、deployment target 26.0；生成 Swift、头文件和 `build/MeshwayCore.xcframework`。`MESHWAY_CORE_PROFILE` 默认 release，debug 用于 lab。生成目录被忽略；Xcode 直接引用生成物。
+
+完成 GUI 授权与本页的升级清理后，用 `MESHWAY_VM_SSH_CONFIG` 和 `deploy-vm.sh` 部署。来宾 Node 命令（尚未完成 VM 验收）：
+
+```sh
+MESHWAY_SERVER_URL=https://192.168.64.1:PORT /Applications/Meshway.app/Contents/MacOS/Meshway --lab start-private
+/Applications/Meshway.app/Contents/MacOS/Meshway --probe status
+/Applications/Meshway.app/Contents/MacOS/Meshway --probe up --enrollment-key @/absolute/private/enrollment-key
+/Applications/Meshway.app/Contents/MacOS/Meshway --probe down
+```
+
+`start-private` 保留 lab action 名，当前捕获完全由签名 netmap 决定，不再固定 `10.203.0.0/24`；旧默认路由 lab action 在此包拒绝。Server origin 经 NE providerConfiguration 交给 Node，远端必须 HTTPS 并通过平台信任；未重新设置环境变量时保留已有 VPN 配置的 origin，供 stop/start 离线恢复。`--probe up --server ORIGIN` 只核对正在运行的 Node origin，不改变 IPC 13 或切换网络。每个 probe 请求新建一条 XPC／Rust IPC 会话，完整帧上限 64 KiB＋4 字节；回包消费后 ACK，5 秒无 ACK 关闭。状态目录为 root 0700 的 `/Library/Application Support/Meshway`，日志为 os_log `dev.meshway.node`／`node`。
+
+DNS 地址决定见 [Apple Host](/v2/node/apple-design#apple-host)。决定前使用明确关闭 DNS 的隔离网络做 Mesh IP 验收；需要 DNS 的 netmap 会阻断 applied。A3 目标环境为独立 Server 数据目录／随机端口和带所有权标签的 Linux peer 容器，不使用另一工作流的 `127.0.0.1:8420`。接入、双向包流、租约／停机／恢复和离线载入当前均未取得 VM 证据。
+
+下文 A2 0.1/2 的平台实验步骤与结果描述的是薄壳版本；其中 echo／定时 fixture 与固定路由开关已退出当前源码。保留这些结论仅用于界定已经验证的平台前提。
+
 ## 资源与边界
 
 | 项 | 取值 |

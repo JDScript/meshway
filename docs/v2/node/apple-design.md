@@ -1,6 +1,6 @@
 # macOS App 设计
 
-> **设计稿，Swift 平台薄壳已验，Node 接线未完成。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
+> **实验实现，Apple Host 与 Rust 桥接已接线，VM Node 验收未完成。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
 >
 > 归档 `archive/apple-007e9deb`（`apps/apple`、`docs/apple-app.md`）对接已退役的 agent 协议，且由 App 自行联系 Server。本设计只按[复用白名单](#reuse)取用其中的工程外壳，不恢复其控制流程。
 
@@ -35,11 +35,11 @@ App / CLI(macOS) ──XPC──► extension ──FFI──► meshway-apple-b
 
 ### Node 运行时库 {#meshway-node}
 
-`apps/meshway-daemon` 现在持有运行协调器、持久意图、状态投影、控制调度、网络 plane／worker、DNS 装配、诊断与 IPC 分派。按“库不依赖 App”的约束，Apple 桥接不能链接它，因此先抽出 `crates/meshway-node`：
+`crates/meshway-node` 持有运行协调器、持久意图、状态投影、控制调度、网络 plane／worker、DNS 装配、诊断与 IPC 分派。Apple 桥接与 daemon 共同装配这个库：
 
 - **移入库**：`runtime/` 全部（intent、status、control、network、peers、ping、netcheck、local_endpoints）与 IPC 的类型化分派（当前 `ipc/mod.rs` 的 `Channels`、请求 ID、期望 revision、有界队列、ping 流取消）。分派与传输、对端认证分离，库只接受已认证的命令流。
 - **留在 meshwayd**：clap 参数、`meshway-logging` 安装、信号、musl 分配器、Unix socket 服务与 UID 认证、systemd notify、stdout 就绪输出、`/var/lib/meshway` 默认路径。
-- **平台 Host 接口**：库定义，Linux 实现包装现有 `meshway_underlay::Host`、`meshway_tun::Tun`、`meshway_dns::SystemDnsOwner` 与出口 driver；Apple 实现位于桥接包，向 Swift 回调 NE 设置。接口面按实际消费者分组：
+- **平台 Host 接口**：库定义，Linux 实现包装现有 `meshway_underlay::Host`、`meshway_tun::Tun`、`meshway_dns::SystemDnsOwner` 与出口 driver；Apple 实现在 `crates/meshway-node/src/host/apple/`，经桥接包向 Swift 回调 NE 设置。接口面按实际消费者分组：
 
 | 接口 | 职责 | Linux | Apple |
 | --- | --- | --- | --- |
@@ -62,9 +62,28 @@ App / CLI(macOS) ──XPC──► extension ──FFI──► meshway-apple-b
 - **DNS**：`NEDNSSettings.matchDomains` 为 Mesh 区域；当[出口 DNS 判定](/v2/node/dataplane)要求普通查询经出口时加入空匹配域。DNS 服务地址是隧道内一个保留地址，worker 把发往该地址的 UDP／TCP 53 交给现有 `meshway-dns` OwnerDispatcher，不另写解析实现。
 - **漫游**：`NWPathMonitor` 的接口／网关变化映射为现有 `NetworkChange` path／refresh 分类，复用[漫游](/v2/node/connectivity#roaming)的通道跟随与重新穿透。
 
+#### 当前接线与限制
+
+- `Apple::new(OwnedFd, utun_name, TunnelSettingsSink)` 构造平台附件。`TunnelSettingsSink::apply(Option<TunnelSettings>)` 的完成表示 NE 设置完成；capture 从 `Desired` 的本机地址与完整 Mesh 池计算，使用 `/32`／`/128` 本机地址、默认内层 MTU 1366。历史捕获前缀并集至多 128 条；`suspend` 保留 NE 设置，关闭物理描述符，包平面由同一 Engine 撤回。显式 `down` 才移除设置。
+- 私有 `apple-capture.json` 仅记录负向捕获资源，先于 NE 变更原子写入。重新打开 Host 时先恢复捕获，再等待 Engine 安装有效 netmap；该记录不授权任何包。接口地址每秒重枚举，发现与 Mesh 前缀重叠时关闭描述符并报告 overlap，重叠消失后按现有 worker 流程重装。
+- NE 设置串行提交，只在系统 completion 成功后确认；5 秒未完成则报错并撤回包输出，原调用完成前拒绝下一次设置变更，不把超时当作已回滚或已安装。
+- `meshway_tun::Utun::from_owned_fd` 以 rustix＋Tokio AsyncFd 读写 Darwin 的 4 字节 AF 头，无后台包发送者；每次写只提交一个报文并返回已提交前缀，读批沿用 32 包／64 KiB 上限。桥接只用 `F_DUPFD_CLOEXEC` 复制 NE 的原 fd，成功结果才转入 `OwnedFd`；Swift 不调用 packetFlow 的读写。
+- Apple socket 工厂实现完整 `SocketFactory`，TCP／UDP 普通 socket 绑定当前物理接口（`IP_BOUND_IF`／`IPV6_BOUND_IF`）。资源差量沿用同一 `netmap_resource_compatible`；STUN／attempt／learned／channel 授权与 Linux 共用 `meshway_underlay::traversal`，没有 Apple 专用协调权限实现。实际 UDP 截断／缓冲与批量 I/O 复用 `meshway-transport` 的 macOS 后端。
+- Control 使用直连、平台信任、无代理／空闲连接池。Host 的 `RequestInterrupt` 在 path 事件时中断有限 HTTP 请求（包括 body 与 sync 长轮询）；refresh 不中断。该钩子不改变 Linux UDS relay。Control 与承载 bootstrap 各有独立的最多 8 个系统名称解析工作；已交给 libc 的解析不能强行中止，取消后不使用结果、保留工作预算，Host shutdown 等待 join。真实 provider 中的 Rust TCP／UDP 绕行、吞吐与漫游尚未验收。
+- MSS clamp 返回明确的不支持错误，使用隧道 MTU 与既有 PTB；不宣称安装了 clamp。出口角色不声明能力；外部直接 ICMP 不支持。出口使用仍未启用：出现外部受管范围时只安装负向默认捕获并拒绝 applied，不直出；该保留边界需显式 down 才移除。
+
+#### DNS 地址决定待确认
+
+现行 netmap 没有本机 DNS 虚拟服务地址。`DnsService.address` 是出口节点的 IPv4 Mesh 地址，不能用作本机 NE DNS 地址；Linux 的 `198.18.255.254` 是本机安装参数中的 DNS 锚点，不是已约定的跨平台保留地址。候选为：
+
+1. 采用平台本地安装地址（例如现有锚点默认值），在 NE 中捕获并检查冲突；无需修改配置／wire，但须确认本地保留范围与冲突时行为。
+2. 由配置／Server 分配正式 DNS 服务地址；需要约定分配／保留语义并更新契约，避免与节点 Mesh 地址重叠。
+
+决定前不安装 `NEDNSSettings` 或第二份 resolver。存在 DNS 需求时 Host 返回 `apple_dns_service_address_pending`，阻断整体 applied。仅 Mesh IP 验收须按[无 DNS 配置](/v2/node/runtime#安装范围与状态)关闭所有 DNS 需求；之后的隧道 UDP／TCP 53 应交给现有 OwnerDispatcher。
+
 ### 状态目录与身份
 
-System Extension 以 root 运行。状态目录为 `/Library/Application Support/Meshway`（root、0700），沿用 Control 与 `meshway-private-storage` 的私有文件与原子发布，不为 Apple 另写 Keychain 身份存储。`netmap.json` 离线载入与租约语义与 Linux 相同。
+System Extension 以 root 运行。状态目录为 `/Library/Application Support/Meshway`（root、0700），extension 的 Sandbox entitlement 只为该目录声明 absolute-path read-write exception；实际 VM 沙箱放行尚未验收。沿用 Control 与 `meshway-private-storage` 的私有文件与原子发布，不为 Apple 另写 Keychain 身份存储。`netmap.json` 离线载入与租约语义与 Linux 相同。
 
 ### App ↔ extension IPC {#ipc}
 
@@ -72,7 +91,9 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 - 负载是现有 `meshway_protocol::ipc` 的帧编码（IPC 13），由 `meshway-node` 的同一分派处理；ping 等流式命令在同一 XPC 连接上按帧推送，断开即取消订阅。
 - macOS 的 `meshway` CLI 随 App 打包（`Meshway.app/Contents/MacOS/meshway`），复用现有 `meshway-cli` 的参数、命令与输出，只替换传输。
 
-A2 薄壳当前以 `Meshway.app/Contents/MacOS/Meshway --probe` 复用 App 签名验证连接；不是正式 `meshway` CLI。`Shared/FrameProtocol.swift` 只传 `Data`，`FrameSession.dispatchFrame` 是待接 Rust 的唯一入口。当前 echo 和 `shell-fixture: runtime=absent` 连续推送不冒充 IPC 13 Status。服务端限制为 8 连接、每帧 1 MiB、每连接一个未 ACK push；5 秒未 ACK 或断线取消该连接。App 消费帧后再 ACK，避免把推送无限堆入 UI 队列。工程、VM 与命令见 [macOS lab](/v2/node/macos-lab)。
+`Meshway.app/Contents/MacOS/Meshway --probe` 复用 App 签名验证连接，不是正式 `meshway` CLI。`Shared/FrameProtocol.swift` 只传 `Data`，`FrameSession.dispatchFrame` 交给 Rust `Session::send`；每个请求使用一个内存 duplex，经同一 `Node::ipc().submit` 分派 IPC 13。echo／定时 fixture 已退出当前源码。服务端至多 8 连接，每帧 64 KiB＋4 字节长度前缀、每连接一个未 ACK push；5 秒未 ACK 或断线取消该连接。停止 Node 时 join 所有会话及运行任务。
+
+桥接导出 `start(config, logs, settings, utun_fd, utun_name)`、显式 `start_control_only`、`NodeHandle::stop/path_changed/open_ipc_session`、`Session::send/close`。日志只在桥接入口安装一次，经 `meshway-logging` 的平台 writer 回调写入 os_log。Swift 绑定与 XCFramework 由 `scripts/build-core.sh` 生成并忽略，不手改生成物。工程、VM 与命令见 [macOS lab](/v2/node/macos-lab)。
 
 ### 生命周期
 
@@ -98,8 +119,8 @@ A2 薄壳当前以 `Meshway.app/Contents/MacOS/Meshway --probe` 复用 App 签�
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | A1 | 抽出 `crates/meshway-node` 与平台 Host 接口；dataplane carrier 依赖包设备接口；IPC 分派与传输分离 | Linux 行为不变：`mise run check`、现有矩阵回归；workspace 在 macOS 原生编译 |
-| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | **Swift／平台部分已验，阶段未完成**：VM 无 profile 激活、真实 tunnel、root XPC、签名拒绝、连续推送与断开取消通过；Rust bridge 未接，仍须 CLI 经同一分派取得真实 control-only Status |
-| A3 | Apple Host：utun fd、socket 绑定、NE 路由与负向边界、DNS、`NWPathMonitor` | VM 与 Linux lab 节点 Mesh 双向 TCP／UDP、Mesh DNS、租约到期 fail closed、离线载入、出口使用、漫游；新增 `macos/*` 验收行 |
+| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | **Swift／平台部分已验，VM Rust 分派待验**：VM 无 profile 激活、真实 tunnel、root XPC、签名拒绝、连续推送与断开取消通过；桥接的真实 control-only IPC 单测、Swift 编译／签名已通过，升级 VM 需 GUI 授权 |
+| A3 | Apple Host：utun fd、socket 绑定、NE 路由与负向边界、DNS、`NWPathMonitor` | 实现已接线，VM 与 Linux peer Mesh 双向 TCP／UDP、Mesh DNS、租约到期 fail closed、离线载入均待验；DNS 地址待决定。出口使用与漫游完整验收留后续包 |
 | A4 | App 界面 | 人工验收 |
 | A5 | Developer ID 签名、公证、安装与升级 extension | 未关闭 SIP 的干净 VM 上安装、升级、卸载 |
 
@@ -114,5 +135,5 @@ A2 薄壳当前以 `Meshway.app/Contents/MacOS/Meshway --probe` 复用 App 签�
 
 ## 待定 {#open}
 
-- **MSS clamp**：macOS 无对应内核表。候选为按 `SecureNode::clamps` 下调隧道 MTU 并依赖已有的 PTB 合成，或在 dataplane 中对隧道内 TCP SYN 改写 MSS（会成为与 Linux nft 并列的第二份实现，需要先定归属）。
+- **MSS clamp**：第一版设置隧道 MTU 并依赖已有 PTB，不安装内核 clamp，`clamp_mss` 明确报告不支持。未来是否按路径进一步下调隧道 MTU，或在 dataplane 中改写 TCP SYN MSS，仍需确定归属与验收。
 - 是否在第一版开放本机 listener（macOS 多在 NAT 后，默认只拨出）。

@@ -23,6 +23,8 @@ RUST_LOG=info,meshway_daemon=debug,meshway_node=debug ./target/debug/meshwayd \
 
 JSON 事件包含 `timestamp`、`level`、`target`、`fields`；`fields.message` 是事件说明。span 上下文由 subscriber 的 `span`／`spans` 字段表达。
 
+Apple bridge 在 extension 入口用同一 `Options::init_with_writer` 安装一次 subscriber，输出 JSON 行经 Swift 回调写入 os_log（`dev.meshway.node`／`node`），不在 Node 库安装 subscriber；日志回调不持控制凭据或包状态。默认 Rust 程序入口仍写 stderr。
+
 ## 事件与字段
 
 | 来源 | 常规日志 | debug 日志 |
