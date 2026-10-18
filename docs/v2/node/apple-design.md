@@ -1,6 +1,6 @@
 # macOS App 设计
 
-> **设计稿，尚未实现。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
+> **设计稿，Swift 平台薄壳已验，Node 接线未完成。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
 >
 > 归档 `archive/apple-007e9deb`（`apps/apple`、`docs/apple-app.md`）对接已退役的 agent 协议，且由 App 自行联系 Server。本设计只按[复用白名单](#reuse)取用其中的工程外壳，不恢复其控制流程。
 
@@ -58,7 +58,7 @@ App / CLI(macOS) ──XPC──► extension ──FFI──► meshway-apple-b
 ### Apple Host {#apple-host}
 
 - **路由**：Mesh 网段放入 `includedRoutes`；选择出口方案时加入默认路由，必要时 `includeAllNetworks`。`apply(empty)` 与租约到期时保留 Mesh 网段（及已选出口的默认路由）的捕获并丢弃或回 ICMP admin-prohibited，作为负向边界，不撤 NE 设置让流量落回物理网络。
-- **underlay 绕行**：依赖 NE 不把 provider 自身流量送回本隧道（[待验证](#unverified)），因此 Apple Host 不需要 Linux 的 route／rule journal。
+- **underlay 绕行**：依赖 NE 不把 provider 自身流量送回本隧道，因此方案不引入 Linux 的 route／rule journal。URLSession IPv4 HTTPS 在默认路由／`includeAllNetworks` 下已验证，Rust 普通 socket／UDP 仍须补证据（[平台验证](#unverified)）。
 - **DNS**：`NEDNSSettings.matchDomains` 为 Mesh 区域；当[出口 DNS 判定](/v2/node/dataplane)要求普通查询经出口时加入空匹配域。DNS 服务地址是隧道内一个保留地址，worker 把发往该地址的 UDP／TCP 53 交给现有 `meshway-dns` OwnerDispatcher，不另写解析实现。
 - **漫游**：`NWPathMonitor` 的接口／网关变化映射为现有 `NetworkChange` path／refresh 分类，复用[漫游](/v2/node/connectivity#roaming)的通道跟随与重新穿透。
 
@@ -71,6 +71,8 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 - 传输为 extension 提供的 XPC Mach service，对端以代码签名要求（同 Team 的 App 与内置 CLI）认证；不用 UID 认证，也不把 Unix socket 放进 App Group 容器（root extension 与用户 App 的容器路径和 UID 均不同）。
 - 负载是现有 `meshway_protocol::ipc` 的帧编码（IPC 13），由 `meshway-node` 的同一分派处理；ping 等流式命令在同一 XPC 连接上按帧推送，断开即取消订阅。
 - macOS 的 `meshway` CLI 随 App 打包（`Meshway.app/Contents/MacOS/meshway`），复用现有 `meshway-cli` 的参数、命令与输出，只替换传输。
+
+A2 薄壳当前以 `Meshway.app/Contents/MacOS/Meshway --probe` 复用 App 签名验证连接；不是正式 `meshway` CLI。`Shared/FrameProtocol.swift` 只传 `Data`，`FrameSession.dispatchFrame` 是待接 Rust 的唯一入口。当前 echo 和 `shell-fixture: runtime=absent` 连续推送不冒充 IPC 13 Status。服务端限制为 8 连接、每帧 1 MiB、每连接一个未 ACK push；5 秒未 ACK 或断线取消该连接。App 消费帧后再 ACK，避免把推送无限堆入 UI 队列。工程、VM 与命令见 [macOS lab](/v2/node/macos-lab)。
 
 ### 生命周期
 
@@ -96,19 +98,19 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | A1 | 抽出 `crates/meshway-node` 与平台 Host 接口；dataplane carrier 依赖包设备接口；IPC 分派与传输分离 | Linux 行为不变：`mise run check`、现有矩阵回归；workspace 在 macOS 原生编译 |
-| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | VM 中 App 激活 extension，CLI 经 XPC 取得 control-only Status |
+| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | **Swift／平台部分已验，阶段未完成**：VM 无 profile 激活、真实 tunnel、root XPC、签名拒绝、连续推送与断开取消通过；Rust bridge 未接，仍须 CLI 经同一分派取得真实 control-only Status |
 | A3 | Apple Host：utun fd、socket 绑定、NE 路由与负向边界、DNS、`NWPathMonitor` | VM 与 Linux lab 节点 Mesh 双向 TCP／UDP、Mesh DNS、租约到期 fail closed、离线载入、出口使用、漫游；新增 `macos/*` 验收行 |
 | A4 | App 界面 | 人工验收 |
 | A5 | Developer ID 签名、公证、安装与升级 extension | 未关闭 SIP 的干净 VM 上安装、升级、卸载 |
 
 ## 待验证 {#unverified}
 
-以下是本设计依赖、但尚未在本项目中实测的平台行为；A2／A3 首先验证，不成立时回到本页修改方案：
+以下记录本设计的平台依赖与实测边界。Swift 薄壳证据不替代 Rust Node 接线与包流验收；实验环境、命令与管理通道保护见 [macOS lab](/v2/node/macos-lab)。
 
-1. Packet Tunnel System Extension 自身创建的 socket 不进入本隧道，包括 `includeAllNetworks` 打开时。
-2. 从 NE 进程中找到 utun 描述符并以 Rust 批量读写的可行性与性能，以及 `NEPacketTunnelFlow` 退路的吞吐。
-3. 关闭 SIP 与 AMFI 校验的 VM 中，未经 provisioning profile 的 NE entitlement 能否激活 System Extension。
-4. root System Extension 提供的 XPC Mach service 能被用户 App 与 CLI 连接，并能以代码签名要求认证对端。
+1. Packet Tunnel System Extension 自身创建的 socket 不进入本隧道，包括 `includeAllNetworks` 打开时。**本次 URLSession IPv4 HTTPS 范围成立**：私网 capture，以及默认 IPv4 路由配 `(includeAllNetworks, excludeLocalNetworks)=(false,true)/(true,true)/(true,false)`，provider 在 NE 设置前后请求 `https://1.1.1.1/cdn-cgi/trace` 均为 HTTP 200。三个默认路由用例中，普通来宾进程同目标请求在 capture 期间均 8 秒超时（HTTP 000），无 VPN 前置对照及独立回滚后均为 200，证明 capture 生效而 provider 外连可用。此结论不外推到 Rust 普通 TCP／UDP socket、IPv6、漫游或长期连接。
+2. 从 NE 进程中找到 utun 描述符并以 Rust 批量读写的可行性与性能，以及 `NEPacketTunnelFlow` 退路的吞吐。**fd 发现前置成立，批量 I/O／性能未验证**：provider PID 915、UID 0 在 NE 设置后以 `getsockopt(SYSPROTO_CONTROL, UTUN_OPT_IFNAME)` 实际取得 `utun4`，首次 fd 5，后续 stop/start 为 fd 7；`lsof` 独立显示 `com.apple.net.utun_control`。扫描最多 4096 个 fd，不依赖 `getsockname` 的地址族过滤，不复制、接管或读写 fd。描述符生命周期／所有权、Rust 批处理与吞吐仍属 A3。
+3. 关闭 SIP 与 AMFI 校验的 VM 中，未经 provisioning profile 的 NE entitlement 能否激活 System Extension。**本 VM 开发形态成立（2026-10-18 UTC）**：macOS 26.6.2 (25G83) arm64，SIP disabled、`kern.bootargs=amfi_get_out_of_my_way=1`、developer mode on；真实 Apple Development 签名、无 embedded provisioning profile 的 App／extension 0.1/2，在用户批准 extension 和 VPN 配置后实际 `activated enabled`，tunnel 为 Connected、地址 `10.203.0.2`、接口 `utun4`，provider 以 UID 0 运行。停止／重启、扩大 capture 与最终移除 VPN 配置已执行；不代表 SIP 开启时的 Developer ID 分发或 A5 通过。
+4. root System Extension 提供的 XPC Mach service 能被用户 App 与 CLI 连接，并能以代码签名要求认证对端。**Swift 帧通道范围成立**：root provider 的 `CDWF84L4TA.dev.meshway.lab.meshway.ipc` 分别通过 App 控制器路径（`--lab app-frame`，复用调试视图的 send／状态更新）和 `--probe` 取得 echo、ACK 与至少两个独立连续 push。真实开发证书、同 Team、错误 signing identifier 的客户端退出 2，服务端记录 `Dropping check-in message due to code signing requirement`，授权客户端随后成功。正常关闭和客户端 SIGTERM 后均记录对应 peer PID 的 session cancelled，重新启动 tunnel 后两入口仍成功。这里验证的是 shell fixture 和连接级取消；不是 Rust IPC 13 分派／ping 流，也不替代 GUI 人工视觉验收。
 
 ## 待定 {#open}
 
