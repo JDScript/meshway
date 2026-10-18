@@ -3,7 +3,14 @@ use super::*;
 use meshway_configuration::execution::EgressCapturePlan;
 
 pub(super) const MAX_ROUTES: usize = 32_768;
+pub(super) const MAX_RETAINED_ROUTES: usize = MAX_ROUTES * 2;
 pub(super) const JOURNAL_BYTES: u64 = 4 * 1024 * 1024;
+
+pub(super) fn negative() -> Vec<ipnet::IpNet> {
+    ["0.0.0.0/0", "::/0"]
+        .map(|route| route.parse().expect("constant prefix"))
+        .into()
+}
 
 pub(super) fn routes(plan: Option<&EgressCapturePlan>) -> Result<Vec<ipnet::IpNet>> {
     let Some(plan) = plan else {

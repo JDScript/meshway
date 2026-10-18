@@ -195,7 +195,7 @@ impl Platform for Apple {
                 }
                 let mut restored = record.settings;
                 if restored.routes.len() > 128
-                    || restored.egress_routes.len() > capture::MAX_ROUTES
+                    || restored.egress_routes.len() > capture::MAX_RETAINED_ROUTES
                     || restored.mtu < 1280
                     || restored.dns.as_ref().is_some_and(|dns| !dns.valid())
                 {
@@ -347,11 +347,19 @@ impl Host for Attachment {
             if routes.len() > 128 {
                 return Err(Error::Unsupported("capture prefix capacity"));
             }
+            // NE also needs routes for static IPv6 sinks, which Linux rejects
+            // in nft without a route. If their CIDR expansion exceeds the NE
+            // budget, first install a negative boundary; never leave new exit
+            // destinations on the physical network because capture is too big.
+            let (egress_routes, capture_error) = match capture::routes(desired.capture()) {
+                Ok(routes) => (routes, None),
+                Err(error) => (capture::negative(), Some(error)),
+            };
             let settings = TunnelSettings {
                 ipv4: desired.local().addresses.ipv4,
                 ipv6: desired.local().addresses.ipv6,
                 routes,
-                egress_routes: capture::routes(desired.capture())?,
+                egress_routes,
                 mtu: self.device.mtu() as u16,
                 dns: owner
                     .current
@@ -363,6 +371,10 @@ impl Host for Attachment {
                 return Err(io::ErrorKind::AddrInUse.into());
             }
             owner.apply(Some(settings)).await?;
+            if let Some(error) = capture_error {
+                self.sockets.resources.apply(None)?;
+                return Err(error);
+            }
             self.sockets.resources.apply(if desired.local().enabled {
                 Some(desired)
             } else {

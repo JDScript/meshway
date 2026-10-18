@@ -25,8 +25,11 @@ impl Owner {
                 retained.egress_routes.extend(&previous.egress_routes);
                 retained.egress_routes = ipnet::IpNet::aggregate(&retained.egress_routes);
             }
-            if retained.routes.len() > 128 || retained.egress_routes.len() > capture::MAX_ROUTES {
+            if retained.routes.len() > 128 {
                 return Err(io::Error::other("capture transition prefix capacity"));
+            }
+            if retained.egress_routes.len() > capture::MAX_RETAINED_ROUTES {
+                retained.egress_routes = capture::negative();
             }
             let bytes = serde_json::to_vec(&CaptureRecord {
                 version: 1,
