@@ -4,6 +4,10 @@
 
 ## 未发布
 
+## v0.1.0-alpha.19
+
+范围：⚠ 断网窗口——`compilerVersion` `meshway-netmap-3` → `meshway-netmap-4`（[升级方式](/v2/install#compiler-version-upgrade)：同一窗口内先全部 Node 后 Server，节点从升级到 Server 升级完成之间没有 Mesh），IPC 12 → 13（`exit.capability` 按族；另含下列 H4 的可省略 Status 字段；CLI 与 daemon 一起升级）；wire 6 与 Server schema 8 不变；HTTP 契约变化见下（OpenAPI／SDK 已重生成）。I6-1：IPv6 出口第一切片（NAT66、`nodes.<id>.exitFamilies`、出口能力按族）；H4：Status 撤回原因、`observedAt`／`controlObservedAt`、`controlRelay` 与 phase 映射；N6：Control 时钟先读墙钟，协调穿透 prepare 期限以 Server 时间表达；Control 短租约续租落盘；A1：Node 运行时抽取为 `meshway-node` 库（Linux 行为不变）；A2–C1：实验 macOS App 与 Packet Tunnel（不在本 Release 的产物中）；以及下列 N6、I6-1、H4、Node 运行时与 macOS 工作包。
+
 矩阵偶发失败（N6，`n6/matrix-flakes`）：wire、IPC、Server schema 与 HTTP 契约均不变。
 
 - 时钟（不变量：Control 的 UTC 高水位不晚于实际读到的墙钟；owner：`meshway-control` `clock.rs`）：先读墙钟再读单调时钟。此前两次读取之间的延迟被永久计入，高负载下节点时钟快数十毫秒。
@@ -13,8 +17,6 @@
 - 已登记未修：X16（出口投影安装 netlink 失败丢首包）、R4（重新穿透交接期新流丢失）、`exit/off` 第 16 阶段压力步 iperf3 超时（未定位），见 [剩余边界](/v2/node/validation#remaining-boundaries)。
 
 验证：`nat/resolved` 负载下 10／10（另 2 次单独运行），prepare `notAvailable` 0 次；Planck 24 行矩阵 5 轮，见 [N6](/v2/node/validation#n6)。
-
-范围：⚠ 断网窗口——`compilerVersion` `meshway-netmap-3` → `meshway-netmap-4`（[升级方式](/v2/install#compiler-version-upgrade)），IPC 12 → 13（`exit.capability` 按族；另含下列 H4 的可省略 Status 字段；CLI 与 daemon 一起升级）；wire 6 与 Server schema 8 不变；HTTP 契约变化见下（OpenAPI／SDK 已重生成）。I6-1：IPv6 出口第一切片（NAT66）；H4：Status 撤回原因、`observedAt`／`controlObservedAt`、`controlRelay` 与 phase 映射；以及下列 I6-1、H4 工作包。
 
 IPv6 出口（I6-1，`i61/ipv6-exit`，规格为 [IPv6 出口设计](/v2/node/ipv6-exit-design) 的 11 条拍板，行为定义见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)）：
 
@@ -42,6 +44,15 @@ Status 与可观测性（H4，`h4/status-observability`）：wire 6、`compilerV
 - roam fixture：controller 服务到 `roam-stop`（此前在 `roam-complete` 即退出），supervisor 等每个节点 `roam-down` 后才 `roam-stop`；此前节点 Control 若有请求在飞，`down` 等它 10 秒连接超时，超出 fixture 的 10 秒（`roam/flap`、`roam/nat` 偶发）。
 
 验证：daemon／CLI／Underlay 单测，Linux 无特权容器与隔离 NET_ADMIN 测试，lab `--cpus 0.02` 30 秒 ×3（含决定 1 后一轮 `retrying`），daemon 层启动占位测试；Planck 23 行矩阵 `20261017T035656Z-d07a17c4` 与最终 `20261017T095424Z-df6f8adf`（`ec9374c7`）全部通过。证据见 [H4](/v2/node/validation#h4)。
+
+Node 运行时库与实验 macOS 客户端（A1 `a1/node-runtime`、A2 `a2/apple-shell`、A3 `a3/apple-host`、B1 `b1/apple-exit-roam`、B2 `b2/apple-app-ui`、C1 `c1/apple-merged-smoke`；方向与边界见 [macOS App 设计](/v2/node/apple-design)）：wire、IPC 13、`compilerVersion` 与 Server schema 不因此变化；Release 产物仍只有 Linux musl 两个 target。
+
+- 结构（A1，Linux 行为不变；owner：`crates/meshway-node`）：运行协调器、持久意图、状态投影、控制调度、网络 plane／worker、DNS 装配、诊断与 IPC 类型化分派从 daemon 移入 `meshway-node`；宿主经 `host::Platform`／`Host` 提供 capture、包设备、受保护 socket、网络变化、系统 DNS 附着、MSS 与出口 driver。`meshwayd` 只负责参数、日志、信号、Unix socket 认证、systemd 与 Linux Host 装配，见[运行状态](/v2/node/runtime)。
+- 修复（不变量：运行中节点保存的缓存不在其签名租约内到期；owner：`meshway-control` netmap 缓存）：同内容续租的落盘步长取 1 小时与租约时长四分之一中较小者。此前固定 1 小时，短于 1 小时的租约在两次保存之间到期，离线重启时缓存已不能恢复授权，见[缓存语义](/v2/node/control)。
+- 实验 macOS（A2–C1，不属于 Linux 验收矩阵）：App 与 NetworkExtension Packet Tunnel system extension 薄壳；extension 经 UniFFI 桥接装配同一 `meshway-node` 与实验 Apple Host（受保护 socket、utun 包设备、保留的负向捕获、隧道内 Mesh DNS）；Mesh 客户端、IPv4 出口使用与方案清除、同接口中断恢复、XPC 认证的 IPC 13 客户端与流式取消，以及菜单栏面板与主窗口 UI。不含本机出口角色、实际 IPv6 出口转发、完整漫游、macOS CLI 与 Developer ID 分发。
+- fixture：`roam/direct` 按网段比较 Docker 规范化后的 IPv6 子网（此前以字符串比较，随机前缀含前导零时环境准备失败）。
+
+验证：macOS VM 行 `macos/upgrade`、`macos/ipc`、`macos/enrollment`、`macos/mesh`、`macos/dns`、`macos/offline`、`macos/lease`、`macos/restart`、`macos/exit`、`macos/roam`、`macos/merged-smoke`，见 [macOS 实验验收](/v2/node/validation#macos)；A1 Planck 24 行矩阵 `20261017T232852Z-d60fbbaa` 23 行通过、`exit/off` 单行复跑 `20261017T235832Z-b68d73ba` 通过；A3 共享边界的 Linux 回归 `20261018T050731Z-00914754` 22 行通过，`exit/off` 与 `roam/direct` 单行复跑 `20261018T052916Z-26203ee1`、`20261018T054418Z-7fc25ba0` 通过。
 
 ## v0.1.0-alpha.18
 
