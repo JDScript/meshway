@@ -78,17 +78,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         var found = 0
         let limit = min(getdtablesize(), 4096)
         for fd in 0..<limit {
-            var address = sockaddr_storage()
-            var addressSize = socklen_t(MemoryLayout.size(ofValue: address))
-            let result = withUnsafeMutablePointer(to: &address) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    getsockname(fd, $0, &addressSize)
-                }
-            }
-            guard result == 0, address.ss_family == AF_SYSTEM else { continue }
             var name = [CChar](repeating: 0, count: Int(IFNAMSIZ))
             var nameSize = socklen_t(name.count)
             // <net/if_utun.h>: UTUN_OPT_IFNAME = 2, level SYSPROTO_CONTROL.
+            // Kernel control sockets need not expose AF_SYSTEM via getsockname;
+            // query the utun option itself and validate the returned interface name.
             guard getsockopt(fd, SYSPROTO_CONTROL, 2, &name, &nameSize) == 0 else { continue }
             let interface = String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
             guard interface.hasPrefix("utun") else { continue }

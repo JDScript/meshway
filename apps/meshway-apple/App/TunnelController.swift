@@ -36,7 +36,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     @discardableResult
-    func start(defaultRoute: Bool, includeAllNetworks: Bool) async -> Bool {
+    func start(defaultRoute: Bool, includeAllNetworks: Bool, excludeLocalNetworks: Bool = false) async -> Bool {
         guard !busy else { return false }
         busy = true
         defer { busy = false }
@@ -49,6 +49,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             configuration.serverAddress = "Meshway shell lab"
             configuration.providerConfiguration = ["labDefaultRoute": defaultRoute]
             configuration.includeAllNetworks = includeAllNetworks
+            configuration.excludeLocalNetworks = excludeLocalNetworks
             manager.protocolConfiguration = configuration
             manager.localizedDescription = "Meshway Shell Lab"
             manager.isEnabled = true
@@ -62,10 +63,14 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func stop() {
-        client?.close()
-        client = nil
+        disconnectFrames()
         manager?.connection.stopVPNTunnel()
         message = "Tunnel stop requested"
+    }
+
+    func disconnectFrames() {
+        client?.close()
+        client = nil
     }
 
     @discardableResult

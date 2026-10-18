@@ -22,14 +22,24 @@ enum LabCommand {
             switch action {
             case "activate":
                 controller.activate { exit($0) }
-            case "start-private", "start-default", "start-all":
+            case "start-private", "start-default", "start-all", "start-default-local", "start-all-local":
                 let success = await controller.start(
-                    defaultRoute: action != "start-private", includeAllNetworks: action == "start-all")
+                    defaultRoute: action != "start-private", includeAllNetworks: action.hasPrefix("start-all"),
+                    excludeLocalNetworks: action.hasSuffix("-local"))
                 exit(success ? 0 : 1)
+            case "app-frame":
+                controller.send("meshway-app-frame")
+                try? await Task.sleep(for: .seconds(4))
+                print(controller.frames)
+                let passed = controller.frames.contains("meshway-app-frame")
+                    && controller.frames.components(separatedBy: "shell-fixture: runtime=absent").count >= 3
+                controller.disconnectFrames()
+                print(passed ? "PASS App controller echo + continuous pushes" : "FAIL App controller frames")
+                exit(passed ? 0 : 1)
             case "remove":
                 exit(await controller.removeConfiguration() ? 0 : 1)
             default:
-                print("Actions: activate, start-private, start-default, start-all, remove")
+                print("Actions: activate, start-private, start-default, start-all, start-default-local, start-all-local, app-frame, remove")
                 exit(64)
             }
         }
@@ -37,6 +47,6 @@ enum LabCommand {
             print("Timed out waiting for the system request; check VM approval dialogs")
             exit(124)
         }
-        NSApp.run()
+        withExtendedLifetime(controller) { NSApp.run() }
     }
 }
