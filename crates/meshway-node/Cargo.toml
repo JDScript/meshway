@@ -29,12 +29,21 @@ serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+socket2.workspace = true
+meshway-transport = { path = "../meshway-transport" }
 uuid.workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 nix = { version = "=0.31.3", default-features = false, features = ["net"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+meshway-dns = { path = "../meshway-dns", features = ["packet-service"] }
+
 [dev-dependencies]
+meshway-desired-fixture = { path = "../../tools/meshway-desired-fixture" }
 meshway-test-server = { path = "../../tools/meshway-test-server" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

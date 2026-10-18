@@ -22,24 +22,23 @@ enum LabCommand {
             switch action {
             case "activate":
                 controller.activate { exit($0) }
-            case "start-private", "start-default", "start-all", "start-default-local", "start-all-local":
+            case "start-private", "start-system", "start-default", "start-all", "start-default-local", "start-all-local":
                 let success = await controller.start(
-                    defaultRoute: action != "start-private", includeAllNetworks: action.hasPrefix("start-all"),
-                    excludeLocalNetworks: action.hasSuffix("-local"))
+                    defaultRoute: !["start-private", "start-system"].contains(action), includeAllNetworks: action.hasPrefix("start-all"),
+                    excludeLocalNetworks: action.hasSuffix("-local"), systemAuthorization: action == "start-system")
                 exit(success ? 0 : 1)
             case "app-frame":
                 controller.send("meshway-app-frame")
                 try? await Task.sleep(for: .seconds(4))
                 print(controller.frames)
-                let passed = controller.frames.contains("meshway-app-frame")
-                    && controller.frames.components(separatedBy: "shell-fixture: runtime=absent").count >= 3
+                let passed = controller.frames.contains("\"networkMode\":\"tun\"") && controller.frames.contains("\"version\":13")
                 controller.disconnectFrames()
-                print(passed ? "PASS App controller echo + continuous pushes" : "FAIL App controller frames")
+                print(passed ? "PASS App controller IPC 13 Status" : "FAIL App controller Status")
                 exit(passed ? 0 : 1)
             case "remove":
                 exit(await controller.removeConfiguration() ? 0 : 1)
             default:
-                print("Actions: activate, start-private, start-default, start-all, start-default-local, start-all-local, app-frame, remove")
+                print("Actions: activate, start-private, start-system (root), start-default, start-all, start-default-local, start-all-local, app-frame, remove")
                 exit(64)
             }
         }

@@ -1,17 +1,18 @@
 #![forbid(unsafe_code)]
 
-//! Owned Linux L3 TUN packet I/O.
+//! Owned L3 packet I/O: Linux TUN and macOS NetworkExtension utun.
 //!
-//! Creation configures a new, nonpersistent, kernel-named interface in the
+//! Linux [`Tun`] creation configures a new, nonpersistent, kernel-named interface in the
 //! calling thread's current network namespace. The host supplies that namespace
 //! and `/dev/net/tun`; this library never switches namespaces. Optional addresses
 //! cause the kernel to install its normal local/connected routes for this device.
 //! There is no route manager, DNS configuration, business policy, or forwarding here.
 //!
 //! A Tokio runtime with I/O enabled must be entered during creation and remain
-//! alive during I/O. The device owns its descriptor, has no background tasks, and
-//! is removed by the kernel when dropped. There is no adoption, persistence,
-//! descriptor export, multiqueue, Ethernet, or packet-information header.
+//! alive during I/O. Linux Tun owns its new descriptor and the kernel removes
+//! that interface on drop. macOS `Utun` accepts an owned NE descriptor and only
+//! closes that descriptor on drop; NE owns the interface and its settings.
+//! Neither backend has background packet tasks or exports descriptors.
 
 use std::{
     collections::BTreeMap,
@@ -20,6 +21,11 @@ use std::{
 
 mod device;
 pub use device::{Io, PacketDevice};
+
+#[cfg(target_os = "macos")]
+mod apple;
+#[cfg(target_os = "macos")]
+pub use apple::Utun;
 
 /// Largest inner packets the path toward a destination carries, as the
 /// packet owner knows them from its channels: per Mesh address of a peer,

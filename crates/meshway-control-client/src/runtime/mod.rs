@@ -99,6 +99,14 @@ pub struct Client {
     http: ClientWithMiddleware,
     limit: usize,
     request_timeout: Option<std::time::Duration>,
+    interrupt: Option<std::sync::Arc<dyn RequestInterrupt>>,
+}
+
+/// Host-owned transport changes, not control authority. Each finite HTTP
+/// operation obtains a new waiter; completion cancels its send/body future.
+/// SSE streams retain their separate caller-owned cancellation lifecycle.
+pub trait RequestInterrupt: Send + Sync + 'static {
+    fn interrupted(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 }
 
 impl Client {
@@ -128,6 +136,7 @@ impl Client {
             http: ClientBuilder::new(http).build(),
             limit: max_body_bytes,
             request_timeout: None,
+            interrupt: None,
         })
     }
 
@@ -143,6 +152,27 @@ impl Client {
     pub fn with_request_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.request_timeout = Some(timeout);
         self
+    }
+    pub fn with_request_interrupt(
+        mut self,
+        interrupt: Option<std::sync::Arc<dyn RequestInterrupt>>,
+    ) -> Self {
+        self.interrupt = interrupt;
+        self
+    }
+    async fn finite<T, P>(
+        &self,
+        operation: impl std::future::Future<Output = Result<T, ClientError<P>>>,
+    ) -> Result<T, ClientError<P>> {
+        let Some(interrupt) = &self.interrupt else {
+            return operation.await;
+        };
+        match futures_util::future::select(Box::pin(operation), interrupt.interrupted()).await {
+            futures_util::future::Either::Left((result, _)) => result,
+            futures_util::future::Either::Right(((), _)) => {
+                Err(ClientError::Network { status: None })
+            }
+        }
     }
 
     // Path/query values have already passed generated scalar validation. This
@@ -252,11 +282,14 @@ impl Client {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(buffer.bytes);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| network(&error, None))?;
-        Response::read(response, self.limit).await
+        self.finite(async {
+            let response = request
+                .send()
+                .await
+                .map_err(|error| network(&error, None))?;
+            Response::read(response, self.limit).await
+        })
+        .await
     }
 
     /// A body-less request whose success body is raw bytes of `media`.
@@ -272,11 +305,14 @@ impl Client {
         if let Some(timeout) = self.request_timeout {
             request = request.timeout(timeout);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| network(&error, None))?;
-        Response::read_media(response, self.limit, Some(media)).await
+        self.finite(async {
+            let response = request
+                .send()
+                .await
+                .map_err(|error| network(&error, None))?;
+            Response::read_media(response, self.limit, Some(media)).await
+        })
+        .await
     }
 
     fn request_builder<P>(

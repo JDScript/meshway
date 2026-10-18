@@ -132,6 +132,32 @@ async fn expired_cache_is_only_a_delta_base_until_the_server_renews_it() {
 }
 
 #[tokio::test]
+async fn short_lease_renewal_is_persisted_without_waiting_an_hour() {
+    let server = Server::start().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let (mut control, binding, script) = enrolled(&server, &proxy, "short-renewal").await;
+    let netmap = compiled(&binding, "short-renewal", None);
+    script.push(Ok(full(&binding, &netmap, 60_000)));
+    let initial = control.sync(&mut Facts::default()).await.unwrap().netmap;
+    let path = server.path("short-renewal");
+    let first = fs::read(path.join("netmap.json")).unwrap();
+    // Same content, a signed extension well below the normal one-hour write
+    // threshold but at least a quarter of this short lease's duration.
+    script.push(Ok(unchanged(&binding, &netmap, 80_000)));
+    let renewed = control.sync(&mut Facts::default()).await.unwrap().netmap;
+    assert_eq!(renewed.content.reference(), initial.content.reference());
+    assert!(renewed.lease.expires_at_ms > initial.lease.expires_at_ms);
+    assert_ne!(fs::read(path.join("netmap.json")).unwrap(), first);
+    control.shutdown().await.unwrap();
+    let restored = reopen(&path, &proxy.origin);
+    assert!(!restored.status().authenticated);
+    assert_eq!(restored.netmap().unwrap().lease, renewed.lease);
+    restored.shutdown().await.unwrap();
+    proxy.close().await;
+    server.close().await;
+}
+
+#[tokio::test]
 async fn forged_extended_or_altered_netmap_files_are_not_loaded() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;

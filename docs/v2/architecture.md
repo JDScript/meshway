@@ -9,6 +9,8 @@ apps/
   meshway-server/           # Rust Server
   meshway-daemon/           # binary: meshwayd
   meshway-cli/              # binary: meshway
+  meshway-apple/            # macOS App / Packet Tunnel System Extension
+    meshway-apple-bridge/   # UniFFI ABI：Node 生命周期、NE 回调与 IPC 字节流
   meshway-web-console/      # React pure SPA
 crates/
   meshway-model/            # 含 wire（严格对象声明）与 transport（协议键）
@@ -23,7 +25,7 @@ crates/
   meshway-connectivity/
   meshway-stun/
   meshway-underlay/
-  meshway-netns/            # SO_NETNS_COOKIE：workspace 唯一经审计的 unsafe
+  meshway-netns/            # SO_NETNS_COOKIE：Linux namespace 的经审计 unsafe 边界
   meshway-dataplane/        # 含 diagnostics（探测调度）
   meshway-tun/
   meshway-dns/
@@ -74,7 +76,7 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 | `meshway-control-client` | Node control、其他 Rust API 消费者 | 生成操作、严格解码和 HTTP／stream 接线 |
 | `meshway-transport` | 配置库、Server 目录（`spec`）；connectivity、dataplane、underlay、stream providers | `spec`：协议参数、默认规则、结构校验和能力类型；承载会话、batch／buffer 与背压接口；`tcp`／`udp`：Native TCP／UDP provider |
 | `meshway-private-storage` | Server、Node 运行时／control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
-| `meshway-logging` | Server、daemon、CLI 程序入口 | 统一 tracing subscriber、日志参数与 stderr 格式；见[运行日志](/v2/logging) |
+| `meshway-logging` | Server、daemon、CLI、Apple bridge 程序入口 | 统一 tracing subscriber、日志参数与格式；默认 stderr，Apple bridge 经平台 writer 回调送 os_log；见[运行日志](/v2/logging) |
 | `meshway-transport-stream` | Server 材料验证（`tls`）、HTTP client 装配、connectivity | `tls`：同一 ring provider、证书／密钥验证、精确叶证书信任、显式系统信任配置与既有流上的 TLS 握手；`vless`／`trojan`：既有流上的 TCP CONNECT 封装 |
 | `meshway-rules` | `tools/meshway-rules-cli`；规划中 Server `resources/`、Policy、Node control（R2a，尚未接线） | `MWRS` 规则集格式、确定性 builder、任意字节安全的校验 loader（只读入堆，无 `unsafe`）、域名／IP matcher、来源转换器与报告、签名规则目录；见[规则集引擎设计](/v2/rule-sets-design) |
 | `meshway-stun` | Server STUN 服务、Node connectivity | 有界 RFC 8489 Binding 编解码、映射观测与 UDP Service；见[连接获取](/v2/node/connectivity#stun-与-server-协调) |
@@ -99,15 +101,15 @@ Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway
 
 | 实际 crate | 实现归属与边界 |
 | --- | --- |
-| `meshway-node` | 供进程宿主复用的唯一运行协调器：持久意图、控制调度、Engine／包平面／DNS 装配、状态与诊断、已认证 IPC 分派；`host::Platform`／`Host` 隔离平台资源与执行器，Linux 实现在 `host/linux/`，Apple Host 尚未实现 |
+| `meshway-node` | 供进程宿主复用的唯一运行协调器：持久意图、控制调度、Engine／包平面／DNS 装配、状态与诊断、已认证 IPC 分派；`host::Platform`／`Host` 隔离平台资源与执行器，Linux 实现在 `host/linux/`，实验 Apple Host 在 `host/apple/`，实际范围见 [Apple 设计](/v2/node/apple-design) |
 | `meshway-control` | [接入、netmap 验证与发布、回执和报告顺序](/v2/node/control)的唯一生产 owner；不签发执行快照 |
 | `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane)；`diagnostics` 模块为[有界 source 探测调度、单调计时、窗口与结果](/v2/node/diagnostics)，借用同一 SecureNode，不持独立连接或密码状态；期望内容与包平面密钥来自 Engine |
 | `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理)；期望内容与包平面密钥来自 Engine，穿透上下文来自 control |
 | `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay)；期望内容来自 Engine，穿透类型来自 control |
 | `meshway-transport`（`tcp`／`udp`）、`meshway-transport-stream`（`vless`／`trojan`） | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
-| `meshway-tun` | `PacketDevice`：MTU、可取消有界批量读、保留已提交前缀的批量写与 `PathLimits`；Linux `Tun` 实现此接口，dataplane carrier 依赖接口而非具体设备 |
-| `meshway-netns` | 读取当前 network namespace 的 cookie（`SO_NETNS_COOKIE`）及唯一的 namespace 记录比较规则（`same`），Underlay 记录与系统 DNS 预约共用；workspace 唯一经审计的 `unsafe`（一次 `getsockopt`），见[生命周期](/v2/node/runtime#生命周期) |
-| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；期望内容来自 Engine |
+| `meshway-tun` | `PacketDevice`：MTU、可取消有界批量读、保留已提交前缀的批量写与 `PathLimits`；Linux `Tun` 与 macOS `Utun` 实现此接口，dataplane carrier 依赖接口而非具体设备；macOS 接受已拥有 fd，unsafe 原始 fd 处理只在 Apple 桥接 |
+| `meshway-netns` | 读取当前 network namespace 的 cookie（`SO_NETNS_COOKIE`）及唯一的 namespace 记录比较规则（`same`），Underlay 记录与系统 DNS 预约共用；此 Linux 桥接的一次 `getsockopt` 经审计，Apple ABI／fd 边界独立隔离在 `meshway-apple-bridge`，见[生命周期](/v2/node/runtime#生命周期) |
+| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；实验 macOS 的 `packet-service` 用 smoltcp 处理 DNS-only UDP／TCP 端点，复用同一 Dispatcher／回答许可；`upstream` 为各 Host 共用的 sealed-route 交换与校验。期望内容来自 Engine |
 
 `meshway-netstack` userspace 运行库尚未实现。
 
@@ -147,13 +149,14 @@ engine ──► configuration + model + policy
 Server ──► configuration + model + policy + private-storage + protocol + stun + transport + transport-stream
 control ──► configuration + control-client + engine + model + policy + private-storage + protocol
 dataplane ──► configuration + engine + model + policy + protocol + transport + tun
-dns ──► configuration + dataplane + engine + model + policy + private-storage + protocol
+dns ──► configuration + dataplane + engine + model + policy + private-storage + protocol + transport
 underlay ──► configuration + control + dns + engine + model + policy + private-storage
              + transport + transport-stream + tun
 connectivity ──► configuration + control + dataplane + engine + model + policy + protocol + stun
                  + transport + transport-stream + underlay
 node ──► configuration + connectivity + control + control-client + dataplane + dns + engine
-         + model + private-storage + protocol + rules + tun + underlay
+         + model + private-storage + protocol + rules + transport + tun + underlay
+apple-bridge ──► node + protocol + logging
 meshwayd ──► node + configuration + dns + private-storage + protocol
 meshway CLI ──► protocol
 

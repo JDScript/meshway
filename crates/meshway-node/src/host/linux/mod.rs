@@ -129,7 +129,7 @@ impl Attachment {
 }
 
 macro_rules! operation {
-    ($($name:ident),* $(,)?) => { $(fn $name(&mut self) -> Local<'_, Result<()>> { Box::pin(self.inner.$name()) })* };
+    ($($name:ident),* $(,)?) => { $(fn $name(&mut self) -> Local<'_, Result<()>> { Box::pin(async { self.inner.$name().await.map_err(Into::into) }) })* };
 }
 macro_rules! observation {
     ($($name:ident : $ty:ty),* $(,)?) => { $(fn $name(&self) -> $ty { self.inner.$name() })* };
@@ -143,7 +143,6 @@ impl Host for Attachment {
     }
     operation!(suspend, down, recover, repair, remove_dns_anchor);
     observation!(
-        client_builder: Result<reqwest::ClientBuilder>,
         network_changes: watch::Receiver<meshway_underlay::NetworkChange>,
         pool_overlap: watch::Receiver<Option<meshway_underlay::PoolOverlap>>,
         repairs: watch::Receiver<u64>,
@@ -151,15 +150,28 @@ impl Host for Attachment {
         ownership_ended: Option<meshway_underlay::OwnershipEnd>,
         recovery_at: Option<std::time::Instant>,
         repair_at: Option<std::time::Instant>,
-        kernel_changes: watch::Receiver<Option<meshway_underlay::KernelChangePending>>,
-        exit_cleanups: watch::Receiver<Option<meshway_underlay::RetryPending>>,
-        control_relay: watch::Receiver<Option<meshway_underlay::ControlRelayState>>,
     );
     fn install(&mut self, desired: Desired) -> Local<'_, Result<()>> {
-        Box::pin(self.inner.install(desired))
+        Box::pin(async { self.inner.install(desired).await.map_err(Into::into) })
     }
     fn shutdown(self: Box<Self>, keep: bool) -> Local<'static, Result<()>> {
-        Box::pin(self.inner.shutdown(keep))
+        Box::pin(async move { self.inner.shutdown(keep).await.map_err(Into::into) })
+    }
+    fn client_builder(&self) -> Result<reqwest::ClientBuilder> {
+        self.inner.client_builder().map_err(Into::into)
+    }
+    fn kernel_changes(
+        &self,
+    ) -> Option<watch::Receiver<Option<meshway_underlay::KernelChangePending>>> {
+        Some(self.inner.kernel_changes())
+    }
+    fn exit_cleanups(&self) -> Option<watch::Receiver<Option<meshway_underlay::RetryPending>>> {
+        Some(self.inner.exit_cleanups())
+    }
+    fn control_relay(
+        &self,
+    ) -> Option<watch::Receiver<Option<meshway_underlay::ControlRelayState>>> {
+        Some(self.inner.control_relay())
     }
     fn tun(&self) -> Option<&dyn meshway_tun::PacketDevice> {
         self.inner
@@ -176,7 +188,7 @@ impl Host for Attachment {
         Box::pin(self.inner.ended())
     }
     fn clamp_mss(&mut self, limits: meshway_tun::PathLimits) -> Result<()> {
-        self.inner.clamp_mss(limits)
+        self.inner.clamp_mss(limits).map_err(Into::into)
     }
     fn prepare_dns(
         &mut self,
@@ -241,7 +253,13 @@ impl Host for Attachment {
         &'a mut self,
         role: &'a meshway_configuration::netmap::ExitRole,
     ) -> Local<'a, Result<()>> {
-        Box::pin(async { self.inner.install_netmap_exit_role(role).await.map(|_| ()) })
+        Box::pin(async {
+            self.inner
+                .install_netmap_exit_role(role)
+                .await
+                .map(|_| ())
+                .map_err(Into::into)
+        })
     }
     fn start_exit(
         &self,

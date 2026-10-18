@@ -1,6 +1,7 @@
 mod datagram;
 mod traversal;
-pub use traversal::{DatagramAuthorization, TraversalDatagram};
+pub use crate::traversal::DatagramAuthorization;
+pub use traversal::TraversalDatagram;
 mod dns;
 pub use datagram::{DatagramCandidate, ProtectedDatagram};
 mod kernel;

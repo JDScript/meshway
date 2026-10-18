@@ -402,8 +402,17 @@ impl meshway_engine::Components for Plane {
         if let Err(error) = self.host.install(desired.clone()).await {
             tracing::warn!(%error, "Node capture installation failed");
             self.failure_detail = self.host.ownership_ended().map(|end| end.to_string());
+            if matches!(error, crate::host::Error::Unsupported(_)) {
+                self.failure_detail = Some(error.to_string());
+            }
             return Err(match error {
-                meshway_underlay::Error::Tun(_) => self.fail(Problem::Tun, ApplyFailure::Tun),
+                crate::host::Error::Tun(_)
+                | crate::host::Error::Linux(meshway_underlay::Error::Tun(_)) => {
+                    self.fail(Problem::Tun, ApplyFailure::Tun)
+                }
+                crate::host::Error::Unsupported(_) => {
+                    self.fail(Problem::UnsupportedMode, ApplyFailure::Validation)
+                }
                 _ => self.fail(Problem::Underlay, ApplyFailure::Underlay),
             });
         }

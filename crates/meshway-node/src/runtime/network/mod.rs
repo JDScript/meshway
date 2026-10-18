@@ -304,6 +304,7 @@ impl LeaseSink {
 }
 
 pub(super) struct Handle {
+    pub request_interrupt: Option<Arc<dyn meshway_control_client::RequestInterrupt>>,
     pub capabilities: crate::host::Capabilities,
     platform: Arc<dyn crate::host::Platform>,
     observation_plans: watch::Sender<Option<ObservationPlan>>,
@@ -336,13 +337,14 @@ impl Handle {
                 .open(directory, origin, options, dns_settings.clone())
                 .await?;
             let network_changes = host.network_changes();
+            let request_interrupt = host.request_interrupt();
             let kernel_changes = host.kernel_changes();
             let exit_cleanups = host.exit_cleanups();
             let control_relay = host.control_relay();
             reports.send_modify(|report| {
-                report.kernel_changes = Some(kernel_changes);
-                report.exit_cleanups = Some(exit_cleanups);
-                report.control_relay = Some(control_relay);
+                report.kernel_changes = kernel_changes;
+                report.exit_cleanups = exit_cleanups;
+                report.control_relay = control_relay;
             });
             let (commands, received) = mpsc::channel(8);
             let (observation_plans, plans_rx) = watch::channel(None);
@@ -370,6 +372,7 @@ impl Handle {
                 }))
             }));
             Ok(Self {
+                request_interrupt,
                 capabilities: platform.capabilities(),
                 platform,
                 observation_plans,

@@ -16,6 +16,8 @@ use meshway_protocol::ipc::{DataPlane, Problem};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
+#[cfg(target_os = "macos")]
+mod dns_packets;
 mod lifecycle;
 mod packets;
 mod peers;
@@ -87,6 +89,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut dns_reports = engine.components_mut().dns.take_reports();
     let mut exit_dns = engine.components().dns.exit_dns();
     let mut dns_queries = super::dns::mesh::Queries::default();
+    #[cfg(target_os = "macos")]
+    let mut dns_output: Option<meshway_dns::packet::Output> = None;
     let mut retry = Retry::default();
     let mut dns_failed = false;
     // A failure withdrew installed content and nothing installed since.
@@ -133,6 +137,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             }
         }
         enum Work {
+            #[cfg(target_os = "macos")]
+            DnsPacket(Option<meshway_dns::packet::Output>),
+            #[cfg(target_os = "macos")]
+            DnsPacketSent(Result<(), meshway_tun::Error>),
             DnsQuery(Box<super::dns::mesh::Query>),
             DnsReport(Box<meshway_protocol::DnsAssociationReport>),
             ObservationPlan,
@@ -152,12 +160,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             DnsFailure,
             /// The failed DNS owner re-proved its system installation.
             DnsRecovered,
-            Packet(
-                Result<
-                    Vec<Result<Packet, meshway_dataplane::PacketError>>,
-                    meshway_underlay::Error,
-                >,
-            ),
+            Packet(Result<Vec<Result<Packet, meshway_dataplane::PacketError>>, crate::host::Error>),
             Carrier(Vec<Event>),
             CarrierClosed,
             Tick,
@@ -169,13 +172,19 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             ExitFailed,
             /// The DNS owner's exit resolver fact changed.
             ExitDns,
-            ExitReply(Result<Vec<Vec<u8>>, meshway_underlay::Error>),
+            ExitReply(Result<Vec<Vec<u8>>, crate::host::Error>),
         }
         let live = engine.desired().is_some() && engine.components().secure().is_some();
         let expiry = engine.next_expiry();
         let engine_degraded = engine.degraded();
         let plane = engine.components_mut();
         let can_read = live && plane.packets.can_read(&pool);
+        #[cfg(target_os = "macos")]
+        let packet_dns = plane.host.dns_packets();
+        #[cfg(target_os = "macos")]
+        let read_tun = can_read || packet_dns.is_some();
+        #[cfg(not(target_os = "macos"))]
+        let read_tun = can_read;
         let can_take_replies = live && plane.packets.can_take_exit_replies(EXIT_REPLY_BATCH);
         let has_outputs = plane.packets.has_outputs();
         let mut wake_at = live.then(|| plane.packets.wake_at()).flatten();
@@ -257,13 +266,22 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 // Packet pressure must not starve incoming handshakes or lease
                 // work. Reconfiguration remains the outer priority.
                 tokio::select! {
+                    work = async {
+                        #[cfg(target_os = "macos")]
+                        { tokio::select! {
+                            output = dns_packets::receive(&packet_dns), if dns_output.is_none() => Work::DnsPacket(output),
+                            result = dns_packets::send(host.as_ref(), dns_output.as_ref()), if dns_output.is_some() => Work::DnsPacketSent(result),
+                        } }
+                        #[cfg(not(target_os = "macos"))]
+                        { std::future::pending::<Work>().await }
+                    } => work,
                     _ = async { match &mut health { Some(health) => { let _ = health.changed().await; }, None => std::future::pending().await } } => Work::ExitChanged,
                     reply = async { match exit.as_mut() { Some(exit) => exit.recv_batch(EXIT_REPLY_BATCH).await, None => std::future::pending().await } }, if can_take_replies => Work::ExitReply(reply),
                     _ = packets.sent(host.as_ref()), if has_outputs => Work::Tick,
                     _ = pool.ready(), if live && pool.has_pending() => Work::Tick,
                     result = async {
-                        match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
-                    }, if can_read => Work::Packet(result),
+                        match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(crate::host::Error::Tun), None => std::future::pending().await }
+                    }, if read_tun => Work::Packet(result),
                     event = async {
                         match manager {
                             Some(manager) => manager.recv_batch_with_data(can_read).await,
@@ -274,6 +292,14 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     else => std::future::pending().await,
                 }
             } => work,
+        };
+        #[cfg(target_os = "macos")]
+        let work = match work {
+            Work::DnsPacketSent(Err(error)) => {
+                dns_output = None;
+                Work::Packet(Err(crate::host::Error::Tun(error)))
+            }
+            work => work,
         };
         // Resource owners still observe the same lease end. Their EOF can win
         // the select against the Engine timer; it is the normal expiry, not a
@@ -929,8 +955,17 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Work::Packet(Ok(received)) => {
                 let packets = &mut engine.components_mut().packets;
                 for packet in received {
+                    #[cfg(target_os = "macos")]
+                    if let Ok(packet) = &packet
+                        && let Some(port) = &packet_dns
+                        && port.accepts(packet.as_bytes())
+                    {
+                        port.submit(packet.as_bytes().to_vec());
+                        continue;
+                    }
                     match packet {
-                        Ok(packet) => packets.enqueue(packet),
+                        Ok(packet) if can_read => packets.enqueue(packet),
+                        Ok(_) => packets.drop_packet("packet_plane_withdrawn"),
                         Err(meshway_dataplane::PacketError::Unsupported) => {
                             packets.drop_packet("unsupported_ip_or_local_control")
                         }
@@ -988,6 +1023,16 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
             }
             Work::Tick => {}
+            #[cfg(target_os = "macos")]
+            Work::DnsPacket(output) => {
+                dns_output = output;
+                continue;
+            }
+            #[cfg(target_os = "macos")]
+            Work::DnsPacketSent(_) => {
+                dns_output = None;
+                continue;
+            }
             Work::DiagnosticSent => {}
             Work::ExitChanged | Work::HostRecovery => unreachable!("mapped above"),
         }

@@ -50,6 +50,18 @@ impl Options {
     /// Validate before opening application storage or starting background tasks.
     /// Invalid directives fail startup instead of silently enabling another level.
     pub fn init(&self) -> Result<(), Error> {
+        self.init_with_writer(
+            io::stderr,
+            io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+        )
+    }
+
+    /// Embedded process hosts use the same filter and encoding with their
+    /// platform log writer. Install once at the entry point, never in a Node.
+    pub fn init_with_writer<W>(&self, writer: W, ansi: bool) -> Result<(), Error>
+    where
+        W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
+    {
         profile::configure()?;
         let filter = EnvFilter::builder()
             .with_regex(false)
@@ -57,8 +69,8 @@ impl Options {
             .map_err(|_| Error::Filter)?;
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(filter)
-            .with_writer(io::stderr)
-            .with_ansi(io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none());
+            .with_writer(writer)
+            .with_ansi(ansi);
         match self.format {
             Format::Text => subscriber.finish().try_init(),
             Format::Json => subscriber.with_ansi(false).json().finish().try_init(),

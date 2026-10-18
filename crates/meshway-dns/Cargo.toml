@@ -5,12 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 description = "DNS wire handling and published configuration selection for Node hosts"
 
+[features]
+packet-service = ["dep:smoltcp"]
+
 [dependencies]
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-policy = { path = "../meshway-policy" }
 meshway-engine = { path = "../meshway-engine" }
 meshway-dataplane = { path = "../meshway-dataplane" }
+meshway-transport = { path = "../meshway-transport" }
 meshway-model = { path = "../meshway-model" }
 meshway-protocol = { path = "../meshway-protocol" }
 meshway-private-storage = { path = "../meshway-private-storage" }
@@ -25,6 +29,7 @@ ipnet.workspace = true
 sha2.workspace = true
 tracing.workspace = true
 resolv-conf = "=0.7.6"
+smoltcp = { version = "=0.12.0", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "socket-udp"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 meshway-netns = { path = "../meshway-netns" }
@@ -32,6 +37,7 @@ zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
 rustix = { workspace = true, features = ["fs", "process", "net"] }
 
 [dev-dependencies]
+meshway-desired-fixture = { path = "../../tools/meshway-desired-fixture" }
 meshway-test-server = { path = "../../tools/meshway-test-server" }
 meshway-control = { path = "../meshway-control" }
 tempfile.workspace = true

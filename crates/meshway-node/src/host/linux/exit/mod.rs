@@ -40,6 +40,7 @@ impl crate::host::ExitDriver for Runtime {
                 .recv_batch(max)
                 .await
                 .map(|replies| replies.into_iter().map(|reply| reply.packet).collect())
+                .map_err(Into::into)
         })
     }
 }

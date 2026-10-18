@@ -3,6 +3,7 @@ members = [
     "apps/meshway-server",
     "apps/meshway-daemon",
     "apps/meshway-cli",
+    "apps/meshway-apple/meshway-apple-bridge",
     "crates/meshway-model",
     "crates/meshway-node",
     "crates/meshway-engine",

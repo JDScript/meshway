@@ -1,94 +1,173 @@
 import Foundation
 import NetworkExtension
+import Network
 import os
 import Synchronization
 import Darwin
 
-// NetworkExtension owns the provider lifecycle. Only the locked task/server slot
-// crosses callbacks; each settings object and URLSession is local to its task.
+private final class NodeLogs: LogSink, Sendable {
+    private let logger = Logger(subsystem: "dev.meshway.node", category: "node")
+    func line(line: String) { logger.info("\(line, privacy: .public)") }
+}
+
+// NE attachment only. Rust owns the unique Node and all control/packet policy.
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private struct Lifecycle {
         var server: FrameServer?
+        var node: NodeHandle?
         var task: Task<Void, Never>?
+        var monitor: NWPathMonitor?
+        var interface: String?
+        var pathFingerprint: String?
     }
     private let lifecycle = Mutex(Lifecycle())
-    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Meshway", category: "shell")
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping @Sendable (Error?) -> Void) {
-        let fullRoute = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["labDefaultRoute"] as? Bool ?? false
-        // Both probes originate inside the extension. No DNS or forwarding is installed.
+        let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration
+        let dnsAnchorAddress = configuration?["dnsAnchorAddress"] as? String
+        guard let origin = configuration?["serverOrigin"] as? String else {
+            completionHandler(CocoaError(.coderValueNotFound)); return
+        }
         lifecycle.withLock { state in
             state.task = Task { [self] in
-                await probe(label: "before-settings")
                 do {
                     try Task.checkCancellation()
-                    let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "10.203.0.1")
-                    let ipv4 = NEIPv4Settings(addresses: ["10.203.0.2"], subnetMasks: ["255.255.255.0"])
-                    ipv4.includedRoutes = fullRoute ? [.default()] : [NEIPv4Route(destinationAddress: "10.203.0.0", subnetMask: "255.255.255.0")]
-                    settings.ipv4Settings = ipv4
-                    settings.mtu = 1280
-                    try await setTunnelNetworkSettings(settings)
+                    let path = "/Library/Application Support/Meshway"
+                    // Node's private-storage owner independently validates the
+                    // directory and all identity files before opening them.
+                    if mkdir(path, 0o700) != 0 && errno != EEXIST { throw POSIXError(.EACCES) }
+                    // Create NE's packet queue with no address/capture before
+                    // handing it to Rust. All business settings come from Host.
+                    try await setTunnelNetworkSettings(NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1"))
                     try Task.checkCancellation()
-                    observeUtunDescriptors()
-                    let server = FrameServer()
+                    let (descriptor, name) = try utunDescriptor()
+                    let node = try start(config: StartConfig(stateDirectory: path, serverOrigin: origin, hostname: nil, dnsAnchorAddress: dnsAnchorAddress), logs: NodeLogs(), settings: SettingsSink(provider: self), utunFd: descriptor, utunName: name)
+                    lifecycle.withLock { $0.node = node }
+                    try Task.checkCancellation()
+                    let monitor = NWPathMonitor()
+                    monitor.pathUpdateHandler = { [weak self] path in
+                        guard let self else { return }
+                        let interface = path.availableInterfaces.first { path.usesInterfaceType($0.type) && !$0.name.hasPrefix("utun") && $0.name != "lo0" }?.name
+                        let gateways = path.gateways.map { String(describing: $0) }.sorted().joined(separator: ",")
+                        let fingerprint = "\(path.status)|\(interface ?? "")|\(path.supportsIPv4)|\(path.supportsIPv6)|\(gateways)"
+                        let (node, changed) = lifecycle.withLock { state in
+                            let changed = state.pathFingerprint != fingerprint
+                            state.interface = interface; state.pathFingerprint = fingerprint
+                            return (state.node, changed)
+                        }
+                        try? node?.pathChanged(interface: interface, path: changed)
+                    }
+                    lifecycle.withLock { $0.monitor = monitor }
+                    monitor.start(queue: DispatchQueue(label: "meshway.path"))
+                    let server = FrameServer(node: node)
                     lifecycle.withLock { $0.server = server }
                     server.start()
                     completionHandler(nil)
-                    await probe(label: "after-settings")
-                } catch { completionHandler(error) }
+                } catch {
+                    let node = lifecycle.withLock { $0.node }
+                    // startTunnel itself may have been cancelled. Cleanup is
+                    // joined in an uncancelled task, including the Rust join.
+                    await Task.detached { try? await node?.stop() }.value
+                    lifecycle.withLock { $0.node = nil }
+                    completionHandler(error)
+                }
             }
         }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping @Sendable () -> Void) {
-        let task = lifecycle.withLock { state in
-            state.task?.cancel()
-            return state.task
-        }
+        let task = lifecycle.withLock { state in state.task?.cancel(); return state.task }
         Task {
             await task?.value
-            let server = lifecycle.withLock { state in
-                let server = state.server
-                state.server = nil
-                state.task = nil
-                return server
+            let (server, node) = lifecycle.withLock { state in
+                let owned = (state.server, state.node)
+                state.monitor?.cancel()
+                state.monitor = nil
+                state.server = nil; state.node = nil; state.task = nil
+                return owned
             }
             server?.stop()
+            do { try await node?.stop() }
+            catch { Logger(subsystem: "dev.meshway.node", category: "node").error("Node shutdown failed: \(String(describing: error), privacy: .public)") }
             completionHandler()
         }
     }
 
-    private func probe(label: String) async {
-        guard let url = URL(string: "https://1.1.1.1/cdn-cgi/trace") else { return }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 8
-        configuration.timeoutIntervalForResource = 10
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-        do {
-            let (_, response) = try await session.data(from: url)
-            logger.notice("underlay-probe \(label, privacy: .public) HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
-        } catch {
-            logger.error("underlay-probe \(label, privacy: .public) error \(String(describing: error), privacy: .public)")
-        }
+    override func sleep(completionHandler: @escaping @Sendable () -> Void) {
+        refreshPath()
+        completionHandler()
     }
-
-    // Observation only: no fd ownership transfer, duplicate, read or write.
-    private func observeUtunDescriptors() {
-        var found = 0
-        let limit = min(getdtablesize(), 4096)
-        for fd in 0..<limit {
+    override func wake() { refreshPath() }
+    private func refreshPath() {
+        let (node, interface) = lifecycle.withLock { ($0.node, $0.interface) }
+        try? node?.pathChanged(interface: interface, path: false)
+    }
+    private func utunDescriptor() throws -> (Int32, String) {
+        var found: [(Int32, String)] = []
+        for descriptor in 0..<min(getdtablesize(), 4096) {
             var name = [CChar](repeating: 0, count: Int(IFNAMSIZ))
-            var nameSize = socklen_t(name.count)
-            // <net/if_utun.h>: UTUN_OPT_IFNAME = 2, level SYSPROTO_CONTROL.
-            // Kernel control sockets need not expose AF_SYSTEM via getsockname;
-            // query the utun option itself and validate the returned interface name.
-            guard getsockopt(fd, SYSPROTO_CONTROL, 2, &name, &nameSize) == 0 else { continue }
+            var count = socklen_t(name.count)
+            guard getsockopt(descriptor, SYSPROTO_CONTROL, 2, &name, &count) == 0 else { continue }
             let interface = String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-            guard interface.hasPrefix("utun") else { continue }
-            found += 1
-            logger.notice("utun-observation pid=\(getpid()) uid=\(getuid()) fd=\(fd) interface=\(interface, privacy: .public)")
+            if interface.hasPrefix("utun") { found.append((descriptor, interface)) }
         }
-        logger.notice("utun-observation scanned=\(limit) found=\(found)")
+        guard found.count == 1 else { throw CocoaError(.fileReadUnknown) }
+        return found[0]
+    }
+}
+
+// The Rust callback is synchronous on its blocking executor. Serialize NE
+// mutations and report completion only after NE's own completion handler.
+private final class SettingsSink: TunnelSettingsSink, @unchecked Sendable {
+    private weak var provider: PacketTunnelProvider?
+    private let queue = DispatchQueue(label: "meshway.ne.settings")
+    private let pending = Mutex(false)
+    init(provider: PacketTunnelProvider) { self.provider = provider }
+    func apply(settings: NetworkSettings?) throws {
+        try queue.sync {
+            guard let provider else { throw BridgeError.Stopped }
+            let network: NEPacketTunnelNetworkSettings?
+            if let settings {
+                let value = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
+                if !settings.routes4.isEmpty || settings.ipv4 != nil {
+                    let addresses = settings.ipv4.map { [$0] } ?? []
+                    let ipv4 = NEIPv4Settings(addresses: addresses, subnetMasks: addresses.map { _ in "255.255.255.255" })
+                    ipv4.includedRoutes = settings.routes4.map { NEIPv4Route(destinationAddress: $0.address, subnetMask: $0.netmask) }
+                    value.ipv4Settings = ipv4
+                }
+                if !settings.routes6.isEmpty || settings.ipv6 != nil {
+                    let addresses = settings.ipv6.map { [$0] } ?? []
+                    let ipv6 = NEIPv6Settings(addresses: addresses, networkPrefixLengths: addresses.map { _ in NSNumber(value: 128) })
+                    ipv6.includedRoutes = settings.routes6.map { NEIPv6Route(destinationAddress: $0.address, networkPrefixLength: NSNumber(value: $0.prefix)) }
+                    value.ipv6Settings = ipv6
+                }
+                value.mtu = NSNumber(value: settings.mtu)
+                if let dns = settings.dns {
+                    let resolver = NEDNSSettings(servers: [dns.server])
+                    resolver.matchDomains = dns.matchDomains
+                    resolver.searchDomains = dns.searchDomains
+                    resolver.matchDomainsNoSearch = true
+                    value.dnsSettings = resolver
+                }
+                network = value
+            } else { network = nil }
+            let completed = DispatchSemaphore(value: 0)
+            let failure = Mutex<String?>(nil)
+            try pending.withLock { pending in
+                guard !pending else { throw BridgeError.Startup(message: "Previous NE settings change is still pending; capture retained") }
+                pending = true
+            }
+            provider.setTunnelNetworkSettings(network) { [self] error in
+                failure.withLock { $0 = error?.localizedDescription }
+                pending.withLock { $0 = false }
+                completed.signal()
+            }
+            guard completed.wait(timeout: .now() + 5) == .success else {
+                // The OS outcome is unknown. Subsequent mutations are rejected
+                // until this callback completes; Node withdraws packet output.
+                throw BridgeError.Startup(message: "NE settings completion timed out; capture retained")
+            }
+            if let message = failure.withLock({ $0 }) { throw BridgeError.Startup(message: message) }
+        }
     }
 }
