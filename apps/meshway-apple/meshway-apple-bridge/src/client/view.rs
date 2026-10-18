@@ -276,6 +276,12 @@ pub struct ClientIdentity {
     pub key_generation: u64,
 }
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct ClientInstance {
+    pub instance_id: String,
+    pub generation: u64,
+    pub expires_at: std::time::SystemTime,
+}
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct ClientNetmapRef {
     pub revision: u64,
     pub serial: u64,
@@ -317,6 +323,7 @@ pub struct ClientStatus {
     pub enrollment_url: Option<String>,
     pub identity: Option<ClientIdentity>,
     pub authenticated: bool,
+    pub instance: Option<ClientInstance>,
     pub sync: ClientSync,
     pub last_sync_at: Option<std::time::SystemTime>,
     pub sync_error: Option<ClientSyncError>,
@@ -351,6 +358,12 @@ impl From<ipc::Status> for ClientStatus {
                 key_generation: v.keys.control.generation.get(),
             }),
             authenticated: v.authenticated,
+            instance: v.instance.map(|v| ClientInstance {
+                instance_id: v.instance_id.to_string(),
+                generation: v.generation.get(),
+                expires_at: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_millis(v.expires_at_ms),
+            }),
             sync: v.sync.into(),
             last_sync_at: v.last_sync_at.map(Into::into),
             sync_error: v.sync_error.map(Into::into),

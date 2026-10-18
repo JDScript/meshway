@@ -34,6 +34,8 @@ Preview states: `unenrolled`, `approval`, `running`, `error`. Rust constructs ac
 
 Use `--preview-section peers` or `--preview-section diagnostics` for a scrolled main-window capture. The fixed sample footer remains visible. Preview/model checks require the Debug Rust core (`MESHWAY_CORE_PROFILE=debug`); an optimized core retains binding metadata but rejects sample requests and contains no fixture values.
 
+Preview deliberately disables system-changing buttons, even for a running sample. In the live App, selection readiness comes from Status (`desiredUp`, identity, netmap and instance); Select also respects the assignment lock, and Use default requires a persistent requested profile. Rotate key requires an identity and excludes `leaving`; Logout requires an identity. In-flight operations disable duplicate submissions. These are display conditions: the Node still validates its current state and CAS for every command, and returns any additional refusal as a typed error.
+
 The VM-only `--lab` management and `--probe status|up|down` remain available for existing acceptance procedures. `--probe` prints the Rust-validated response and is not the packaged production CLI.
 
 Environment, signing and deployment: [`macos-lab.md`](../../docs/v2/node/macos-lab.md). Architecture and implementation boundaries: [`apple-design.md`](../../docs/v2/node/apple-design.md). VM GUI operation and packet-flow acceptance remain separate from codec/model tests and preview screenshots.

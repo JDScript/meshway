@@ -9,12 +9,12 @@ struct PeerRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack { Text(peer.node.hostname).font(.body.weight(.medium)); Spacer(); Text(peer.node.ipv4 ?? peer.node.ipv6 ?? "No address").font(.callout.monospaced()).foregroundStyle(.secondary) }
                 HStack(spacing: 6) {
-                    Text(human(peer.state)).foregroundStyle(peer.state == .direct ? Color.green : Color.secondary)
+                    Text(model.peerStateLabel(peer)).foregroundStyle(peer.state == .direct ? Color.green : Color.secondary)
                     if let transport = peer.transport { Text("· \(transport)") }
                     Spacer()
                     if let rtt = peer.rtt { Text(milliseconds(rtt.durationUs)).help("Measured " + rtt.observedAt.formatted()) }
                 }.font(.caption).foregroundStyle(.secondary)
-                Text(model.path(peer)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                if let detail = model.peerPathDetail(peer) { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
             }
         }.padding(.vertical, 12).contentShape(Rectangle())
     }
@@ -75,10 +75,10 @@ struct ProfilesView: View {
                         Text(summary(profile)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Select") { Task { await model.perform(.selectProfile(profile: profile.name)) } }.disabled(selection.locked || model.busy || model.sampleMode)
+                    Button("Select") { Task { await model.perform(.selectProfile(profile: profile.name)) } }.disabled(!model.canRequestSelection || selection.locked || model.busy || model.sampleMode)
                 }
             }
-            Button("Use default profile") { Task { await model.perform(.clearProfile) } }.disabled(model.busy || model.sampleMode || selection.requestedProfile == nil)
+            Button("Use default profile") { Task { await model.perform(.clearProfile) } }.disabled(!model.canRequestSelection || model.busy || model.sampleMode || selection.requestedProfile == nil)
         }.card()
     }
     private func summary(_ p: ClientProfile) -> String {

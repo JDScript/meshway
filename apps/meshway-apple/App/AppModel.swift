@@ -40,6 +40,13 @@ final class AppModel {
     var title: String { status?.node?.hostname ?? (status?.identity == nil ? "Join your network" : "This Mac") }
     var phase: String { status.map { label($0.phase) } ?? "Node status unavailable" }
     var selection: ClientSelection? { status?.netmap?.routing }
+    // Presentation readiness only. The Node still validates each request and CAS.
+    var canRequestSelection: Bool {
+        guard let status else { return false }
+        return status.desiredUp && status.identity != nil && status.netmap != nil && status.instance != nil
+    }
+    var canRotateKey: Bool { status?.identity != nil && status?.phase != .leaving }
+    var canLogout: Bool { status?.identity != nil }
     var netmapApplied: Bool {
         guard let reference = status?.netmap?.reference, let applied = status?.applied else { return false }
         return reference == applied
@@ -71,6 +78,26 @@ final class AppModel {
             }
         }
         return "Path not reported"
+    }
+    func peerStateLabel(_ peer: ClientPeer) -> String {
+        if peer.state == .idle || peer.state == .relayIdle, let idle = peer.idlePath {
+            switch idle.route {
+            case .direct: return "Direct · idle"
+            case .relay: return "Relay · idle"
+            case .none: break
+            }
+        }
+        return human(peer.state)
+    }
+    func peerPathDetail(_ peer: ClientPeer) -> String? {
+        if peer.state == .idle || peer.state == .relayIdle, let idle = peer.idlePath {
+            switch idle.route {
+            case .direct: return nil
+            case .relay: return "via " + idle.via.map(name).joined(separator: " → ")
+            case .none: break
+            }
+        }
+        return path(peer)
     }
     func accept(_ status: ClientStatus) {
         self.status = status

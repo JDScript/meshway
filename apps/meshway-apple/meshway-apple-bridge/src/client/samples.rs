@@ -70,6 +70,16 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
             status.phase = ipc::Phase::Running;
             status.data_plane = ipc::DataPlane::Ready;
             status.authenticated = true;
+            status.instance = Some(meshway_protocol::InstanceLease {
+                instance_id: "00000000-0000-4000-8000-000000000030"
+                    .parse()
+                    .expect("sample instance"),
+                generation: Version::MIN,
+                expires_at_ms: (now + Duration::minutes(10))
+                    .timestamp_millis()
+                    .try_into()
+                    .expect("sample timestamp"),
+            });
             let key = |number, algorithm| meshway_model::BoundNodeKey {
                 id: format!("00000000-0000-4000-8000-{number:012}")
                     .parse()
@@ -204,6 +214,8 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
                 }),
             });
             if matches!(sample, ClientSample::Error) {
+                status.authenticated = false;
+                status.instance = None;
                 status.phase = ipc::Phase::Blocked;
                 status.data_plane = ipc::DataPlane::Failed;
                 status.applied = None;

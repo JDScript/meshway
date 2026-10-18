@@ -25,10 +25,10 @@ struct MainView: View {
                     DiagnosticsView(model: model).id("diagnostics")
                     HStack {
                         Button("Rotate key", systemImage: "key.horizontal") { Task { await model.identityOperation(logout: false) } }
-                            .disabled(status.identity == nil || model.busy || model.sampleMode)
+                            .disabled(!model.canRotateKey || model.busy || model.sampleMode)
                         Spacer()
                         Button("Log out of network…", role: .destructive) { showLogout = true }
-                            .disabled(status.identity == nil || model.busy || model.sampleMode)
+                            .disabled(!model.canLogout || model.busy || model.sampleMode)
                     }
                 }
             }.padding(28).frame(maxWidth: 1000)
@@ -175,7 +175,7 @@ struct ApprovalCard: View {
     }
 }
 struct SampleBanner: View {
-    var body: some View { Label("SAMPLE DATA · Debug preview — no Node or VPN connection", systemImage: "testtube.2").font(.caption.weight(.semibold)).foregroundStyle(.orange) }
+    var body: some View { Label("SAMPLE DATA · Debug preview · actions disabled", systemImage: "testtube.2").font(.caption.weight(.semibold)).foregroundStyle(.orange).help("Preview only. No Node or VPN connection is opened, and system-changing actions are disabled.") }
 }
 struct NoticeCard: View {
     let title: String

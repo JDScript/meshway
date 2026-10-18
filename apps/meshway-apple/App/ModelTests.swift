@@ -16,6 +16,9 @@ enum ModelTests {
                 precondition(model.path(model.peers[0]) == "via meshway-tokyo")
                 model.search = "HOME"
                 precondition(model.path(model.peers[0]) == "Direct · idle")
+                precondition(model.peerStateLabel(model.peers[0]) == "Direct · idle")
+                precondition(model.peerPathDetail(model.peers[0]) == nil)
+                precondition(model.canRequestSelection && model.canRotateKey && model.canLogout)
                 precondition(model.selection?.requestedProfile == "work")
                 precondition(model.selection?.appliedProfile == "work")
                 precondition(model.netmapApplied)
@@ -29,10 +32,12 @@ enum ModelTests {
                 precondition(failed.status?.networkError?.problem == .dns)
                 precondition(failed.status?.node == nil && failed.peers.isEmpty)
                 precondition(!failed.netmapApplied)
+                precondition(!failed.canRequestSelection)
                 let down = try await PreviewMode.model(.unenrolled)
                 precondition(down.status?.node == nil)
                 precondition(down.status?.lastSyncAt == nil)
                 precondition(down.status?.netmap == nil)
+                precondition(!down.canRequestSelection && !down.canRotateKey && !down.canLogout)
                 print("PASS Swift model: codec fixtures, search, idle/relay paths, missing RTT, selection, approval, independent errors")
                 exit(0)
             } catch { print("FAIL Swift model: \(error)"); exit(1) }
