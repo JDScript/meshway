@@ -1,4 +1,5 @@
 //! Apple physical sockets; traversal checks are shared with Linux Underlay.
+mod dns;
 pub(super) mod resolver;
 mod tcp;
 mod udp;

@@ -27,7 +27,7 @@ MESHWAY_SERVER_URL=https://192.168.64.1:PORT /Applications/Meshway.app/Contents/
 
 `start-private` 保留 lab action 名，当前捕获完全由签名 netmap 决定，不再固定 `10.203.0.0/24`；旧默认路由 lab action 在此包拒绝。Server origin 经 NE providerConfiguration 交给 Node，远端必须 HTTPS 并通过平台信任；未重新设置环境变量时保留已有 VPN 配置的 origin，供 stop/start 离线恢复。`--probe up --server ORIGIN` 只核对正在运行的 Node origin，不改变 IPC 13 或切换网络。每个 probe 请求新建一条 XPC／Rust IPC 会话，完整帧上限 64 KiB＋4 字节；回包消费后 ACK，5 秒无 ACK 关闭。状态目录为 root 0700 的 `/Library/Application Support/Meshway`，日志为 os_log `dev.meshway.node`／`node`。
 
-DNS 地址决定见 [Apple Host](/v2/node/apple-design#apple-host)。决定前使用明确关闭 DNS 的隔离网络做 Mesh IP 验收；需要 DNS 的 netmap 会阻断 applied。A3 目标环境为独立 Server 数据目录／随机端口和带所有权标签的 Linux peer 容器，不使用另一工作流的 `127.0.0.1:8420`。接入、双向包流、租约／停机／恢复和离线载入当前均未取得 VM 证据。
+DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认 `198.18.255.254`，用 `MESHWAY_DNS_ANCHOR_ADDRESS` 可覆盖同一本机参数；冲突阻断 applied。A3 目标环境为独立 Server 数据目录／随机端口和带所有权标签的 Linux peer 容器，不使用另一工作流的 `127.0.0.1:8420`。接入、双向包流、系统 DNS、租约／停机／恢复和离线载入当前均未取得 VM 证据。
 
 下文 A2 0.1/2 的平台实验步骤与结果描述的是薄壳版本；其中 echo／定时 fixture 与固定路由开关已退出当前源码。保留这些结论仅用于界定已经验证的平台前提。
 

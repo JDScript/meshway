@@ -26,6 +26,7 @@ fn real_node_status_and_joined_sessions() {
             .into(),
         server_origin: "http://127.0.0.1:8430".into(),
         hostname: Some("apple-bridge-test".into()),
+        dns_anchor_address: None,
     };
     let node = start_control_only(config, Box::new(Logs)).unwrap();
     runtime().unwrap().block_on(async {

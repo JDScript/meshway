@@ -21,6 +21,7 @@ mod selection;
 mod service;
 mod system;
 mod tcp;
+pub mod upstream;
 mod wire;
 
 pub use association::{ASSOCIATION_WAIT, MAX_PENDING_REPORTS};
@@ -38,6 +39,8 @@ pub use selection::{
     ConfigurationError, ExitSelection, PublishedAnswer, PublishedDns, ResolverCandidate, Selection,
     SelectionUnavailable,
 };
+#[cfg(feature = "packet-service")]
+pub use service::packet;
 pub use service::{Service, ServiceLimits};
 pub use system::{
     DnsLinkIdentity, ExitDnsUnavailableReason, OwnedDnsLink, SystemDnsBackend, SystemDnsError,

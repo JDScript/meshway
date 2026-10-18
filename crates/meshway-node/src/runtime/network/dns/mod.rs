@@ -44,7 +44,7 @@ impl Runtime {
     /// calls SystemDnsOwner::prepare_reserved. This function binds real service
     /// sockets before any system-DNS mutation; Scope=None rejects all queries.
     pub async fn prepare(
-        system: Box<dyn crate::host::SystemDns>,
+        mut system: Box<dyn crate::host::SystemDns>,
         settings: SystemDnsSettings,
         exchange: Arc<dyn ResolverExchange>,
         exit_dns: watch::Sender<Option<ExitDns>>,
@@ -66,7 +66,7 @@ impl Runtime {
             .with_association_reports(reports),
         );
         let stop = CancellationToken::new();
-        let service = serve(&settings, &dispatcher, &stop).await?;
+        let service = serve(system.as_mut(), &settings, &dispatcher, &stop).await?;
         Ok(Self {
             system,
             settings,
@@ -307,16 +307,21 @@ impl Runtime {
     async fn recovered(&mut self) -> Result<(), SystemDnsFailure> {
         self.suspend();
         if self.service.is_finished() {
-            self.service = serve(&self.settings, &self.dispatcher, &self.stop)
-                .await
-                .map_err(|error| {
-                    SystemDnsFailure::new(error, "query_service")
-                        .expected(format!(
-                            "the DNS query service bound to {}",
-                            self.settings.bind
-                        ))
-                        .actual("bind failed")
-                })?;
+            self.service = serve(
+                self.system.as_mut(),
+                &self.settings,
+                &self.dispatcher,
+                &self.stop,
+            )
+            .await
+            .map_err(|error| {
+                SystemDnsFailure::new(error, "query_service")
+                    .expected(format!(
+                        "the DNS query service bound to {}",
+                        self.settings.bind
+                    ))
+                    .actual("bind failed")
+            })?;
         }
         if let Err(error) = self.system.recover().await {
             return Err(self.system_failure(error));
@@ -349,10 +354,17 @@ impl Runtime {
 
 /// Bind the real service sockets before any system-DNS mutation.
 async fn serve(
+    _system: &mut dyn crate::host::SystemDns,
     settings: &SystemDnsSettings,
     dispatcher: &Arc<OwnerDispatcher>,
     stop: &CancellationToken,
 ) -> Result<tokio::task::JoinHandle<std::io::Result<()>>, SystemDnsError> {
+    #[cfg(target_os = "macos")]
+    if let Some(transport) = _system.packet_transport()? {
+        let service = Service::new(dispatcher.clone(), Default::default())
+            .map_err(|_| SystemDnsError::Settings)?;
+        return Ok(tokio::spawn(service.run_packets(transport, stop.clone())));
+    }
     let udp = UdpSocket::bind(settings.bind)
         .await
         .map_err(|_| SystemDnsError::Backend)?;

@@ -109,7 +109,7 @@ Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway
 | `meshway-transport`（`tcp`／`udp`）、`meshway-transport-stream`（`vless`／`trojan`） | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
 | `meshway-tun` | `PacketDevice`：MTU、可取消有界批量读、保留已提交前缀的批量写与 `PathLimits`；Linux `Tun` 与 macOS `Utun` 实现此接口，dataplane carrier 依赖接口而非具体设备；macOS 接受已拥有 fd，unsafe 原始 fd 处理只在 Apple 桥接 |
 | `meshway-netns` | 读取当前 network namespace 的 cookie（`SO_NETNS_COOKIE`）及唯一的 namespace 记录比较规则（`same`），Underlay 记录与系统 DNS 预约共用；此 Linux 桥接的一次 `getsockopt` 经审计，Apple ABI／fd 边界独立隔离在 `meshway-apple-bridge`，见[生命周期](/v2/node/runtime#生命周期) |
-| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；期望内容来自 Engine |
+| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；实验 macOS 的 `packet-service` 用 smoltcp 处理 DNS-only UDP／TCP 端点，复用同一 Dispatcher／回答许可；`upstream` 为各 Host 共用的 sealed-route 交换与校验。期望内容来自 Engine |
 
 `meshway-netstack` userspace 运行库尚未实现。
 
@@ -149,7 +149,7 @@ engine ──► configuration + model + policy
 Server ──► configuration + model + policy + private-storage + protocol + stun + transport + transport-stream
 control ──► configuration + control-client + engine + model + policy + private-storage + protocol
 dataplane ──► configuration + engine + model + policy + protocol + transport + tun
-dns ──► configuration + dataplane + engine + model + policy + private-storage + protocol
+dns ──► configuration + dataplane + engine + model + policy + private-storage + protocol + transport
 underlay ──► configuration + control + dns + engine + model + policy + private-storage
              + transport + transport-stream + tun
 connectivity ──► configuration + control + dataplane + engine + model + policy + protocol + stun

@@ -19,6 +19,7 @@ required-features = ["bindgen"]
 meshway-node = { path = "../../../crates/meshway-node" }
 meshway-protocol = { path = "../../../crates/meshway-protocol" }
 meshway-logging = { path = "../../../crates/meshway-logging" }
+meshway-dns = { path = "../../../crates/meshway-dns" }
 tokio.workspace = true
 tokio-util.workspace = true
 thiserror.workspace = true

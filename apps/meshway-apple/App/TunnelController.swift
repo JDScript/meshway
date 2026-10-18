@@ -51,7 +51,10 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             let savedOrigin = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["serverOrigin"] as? String
             let origin = ProcessInfo.processInfo.environment["MESHWAY_SERVER_URL"] ?? savedOrigin ?? "http://127.0.0.1:8430"
             configuration.serverAddress = origin
-            configuration.providerConfiguration = ["serverOrigin": origin]
+            let savedAddress = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["dnsAnchorAddress"] as? String
+            var providerSettings = ["serverOrigin": origin]
+            if let address = ProcessInfo.processInfo.environment["MESHWAY_DNS_ANCHOR_ADDRESS"] ?? savedAddress { providerSettings["dnsAnchorAddress"] = address }
+            configuration.providerConfiguration = providerSettings
             configuration.includeAllNetworks = includeAllNetworks
             configuration.excludeLocalNetworks = excludeLocalNetworks
             manager.protocolConfiguration = configuration

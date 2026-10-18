@@ -22,7 +22,7 @@
 | `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 未验收（VM）；真实 Node control-only 分派已有原生单测，VM 尚未替换薄壳 |
 | `macos/enrollment` | enrollment key 接入、验签与保存 netmap、实际 applied／running／peer | 未验收 |
 | `macos/mesh` | utun ↔ Linux peer 的双向 IPv4／IPv6 ping、TCP、UDP；Rust provider underlay 绕行 | 未验收 |
-| `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 未验收；本机服务地址待决定，未安装 NE DNS |
+| `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 未验收（VM）；DNS 包服务、同一 OwnerDispatcher 的 UDP／TCP、排队回答撤回、地址／Mesh 池冲突已有组件测试 |
 | `macos/offline` | Server 停机，签名租约内持续通信 | 未验收 |
 | `macos/lease` | 短租约实际到期后包被丢弃且不落物理网络；Server 恢复后自动恢复 | 未验收 |
 | `macos/restart` | stopTunnel/startTunnel 后在 Server 离线时从 netmap.json 恢复，保持租约期限 | 未验收 |

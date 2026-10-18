@@ -15,6 +15,13 @@ pub struct NetworkSettings {
     pub routes4: Vec<Route>,
     pub routes6: Vec<Route>,
     pub mtu: u16,
+    pub dns: Option<DnsSettings>,
+}
+#[derive(uniffi::Record)]
+pub struct DnsSettings {
+    pub server: String,
+    pub match_domains: Vec<String>,
+    pub search_domains: Vec<String>,
 }
 #[uniffi::export(callback_interface)]
 pub trait TunnelSettingsSink: Send + Sync {
@@ -29,7 +36,7 @@ impl meshway_node::host::apple::TunnelSettingsSink for Sink {
         let callback = self.0.clone();
         let settings = settings.map(|settings| {
             let (mut routes4, mut routes6) = (Vec::new(), Vec::new());
-            for network in settings.routes {
+            for network in settings.included_routes() {
                 let route = Route {
                     address: network.network().to_string(),
                     prefix: network.prefix_len(),
@@ -47,6 +54,11 @@ impl meshway_node::host::apple::TunnelSettingsSink for Sink {
                 routes4,
                 routes6,
                 mtu: settings.mtu,
+                dns: settings.dns.map(|dns| DnsSettings {
+                    server: dns.server.to_string(),
+                    match_domains: dns.match_domains,
+                    search_domains: dns.search_domains,
+                }),
             }
         });
         Box::pin(async move {

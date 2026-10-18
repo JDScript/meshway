@@ -42,7 +42,7 @@ impl AsyncWrite for Stream {
     }
 }
 
-fn adopt(
+pub(super) fn adopt(
     stream: TcpStream,
     resource: Arc<Resource>,
     socket: &SocketOptions,
@@ -159,10 +159,14 @@ impl ListenerSocket for Listening {
             })
             .await?;
             let desired = self.factory.resources.execution(&self.socket.resource)?;
-            let resource = self
-                .factory
-                .resources
-                .acquire(&desired, self.socket.resource.purpose.clone())?;
+            let resource = self.factory.resources.acquire(
+                &desired,
+                self.socket
+                    .resource
+                    .purpose
+                    .clone()
+                    .ok_or(Error::Underlay)?,
+            )?;
             Ok(adopt(stream, resource, &self.options, &self.tcp)?)
         })
     }

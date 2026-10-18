@@ -1,4 +1,6 @@
 //! Bounded loopback-only DNS serving. Installing host DNS is a separate owner.
+#[cfg(feature = "packet-service")]
+pub mod packet;
 use crate::{
     Answer, Dispatcher, Query, ResponseTransport, TcpCodec, decode_query, encode_response,
 };

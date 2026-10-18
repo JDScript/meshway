@@ -24,6 +24,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping @Sendable (Error?) -> Void) {
         let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration
+        let dnsAnchorAddress = configuration?["dnsAnchorAddress"] as? String
         guard let origin = configuration?["serverOrigin"] as? String else {
             completionHandler(CocoaError(.coderValueNotFound)); return
         }
@@ -40,7 +41,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     try await setTunnelNetworkSettings(NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1"))
                     try Task.checkCancellation()
                     let (descriptor, name) = try utunDescriptor()
-                    let node = try start(config: StartConfig(stateDirectory: path, serverOrigin: origin, hostname: nil), logs: NodeLogs(), settings: SettingsSink(provider: self), utunFd: descriptor, utunName: name)
+                    let node = try start(config: StartConfig(stateDirectory: path, serverOrigin: origin, hostname: nil, dnsAnchorAddress: dnsAnchorAddress), logs: NodeLogs(), settings: SettingsSink(provider: self), utunFd: descriptor, utunName: name)
                     lifecycle.withLock { $0.node = node }
                     try Task.checkCancellation()
                     let monitor = NWPathMonitor()
@@ -141,6 +142,13 @@ private final class SettingsSink: TunnelSettingsSink, @unchecked Sendable {
                     value.ipv6Settings = ipv6
                 }
                 value.mtu = NSNumber(value: settings.mtu)
+                if let dns = settings.dns {
+                    let resolver = NEDNSSettings(servers: [dns.server])
+                    resolver.matchDomains = dns.matchDomains
+                    resolver.searchDomains = dns.searchDomains
+                    resolver.matchDomainsNoSearch = true
+                    value.dnsSettings = resolver
+                }
                 network = value
             } else { network = nil }
             let completed = DispatchSemaphore(value: 0)

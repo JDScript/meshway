@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 mod session;
 pub use session::{FrameSink, Session};
 mod settings;
-pub use settings::{NetworkSettings, Route, TunnelSettingsSink};
+pub use settings::{DnsSettings, NetworkSettings, Route, TunnelSettingsSink};
 #[allow(unsafe_code)]
 mod fd;
 
@@ -39,6 +39,7 @@ pub struct StartConfig {
     pub state_directory: String,
     pub server_origin: String,
     pub hostname: Option<String>,
+    pub dns_anchor_address: Option<String>,
 }
 
 #[uniffi::export(callback_interface)]
@@ -143,7 +144,7 @@ fn open(
         .map_err(|message| BridgeError::Startup {
             message: message.clone(),
         })?;
-    let settings = meshway_node::Settings::new(
+    let mut settings = meshway_node::Settings::new(
         config.state_directory.into(),
         &config.server_origin,
         config.hostname.as_deref(),
@@ -156,6 +157,19 @@ fn open(
     } else {
         meshway_protocol::ipc::NetworkMode::ControlOnly
     });
+    if let Some(address) = config.dns_anchor_address {
+        let dns = meshway_dns::SystemDnsSettings {
+            anchor_address: address.parse().map_err(|_| BridgeError::Startup {
+                message: "Invalid DNS anchor address".into(),
+            })?,
+            ..Default::default()
+        };
+        settings = settings
+            .with_dns_settings(dns)
+            .map_err(|message| BridgeError::Startup {
+                message: message.into(),
+            })?;
+    }
     let platform: Arc<dyn meshway_node::host::Platform> = match &apple {
         Some(apple) => apple.clone(),
         None => Arc::new(meshway_node::host::ControlOnly),

@@ -19,7 +19,8 @@ struct State {
     descriptors: Vec<Weak<Resource>>,
 }
 pub(super) struct Resource {
-    pub purpose: ResourceRef,
+    /// Peer resource, or a query-owned descriptor (never retained across reconfig).
+    pub purpose: Option<ResourceRef>,
     pub stop: CancellationToken,
     close: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     permit: Mutex<Option<OwnedSemaphorePermit>>,
@@ -66,10 +67,15 @@ impl Resources {
                 .is_some_and(|(old, new)| {
                     old.netmap().network_id == new.netmap().network_id
                         && old.netmap().node_id == new.netmap().node_id
-                        && meshway_underlay::netmap_resource_compatible(
-                            old.netmap(),
-                            new.netmap(),
-                            &resource.purpose,
+                        && resource.purpose.as_ref().map_or_else(
+                            || old.same(new),
+                            |purpose| {
+                                meshway_underlay::netmap_resource_compatible(
+                                    old.netmap(),
+                                    new.netmap(),
+                                    purpose,
+                                )
+                            },
                         )
                 });
             if !keep {
@@ -102,6 +108,25 @@ impl Resources {
         {
             return Err(io::ErrorKind::PermissionDenied.into());
         }
+        self.register(&mut state, Some(purpose))
+    }
+    pub fn resolver(&self, route: &meshway_dns::LocalResolverRoute) -> io::Result<Arc<Resource>> {
+        route.ensure_current().map_err(io::Error::other)?;
+        let mut state = self.installed.lock().map_err(|_| io::ErrorKind::Other)?;
+        if state
+            .desired
+            .as_ref()
+            .is_none_or(|desired| desired.reference() != route.netmap())
+        {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        self.register(&mut state, None)
+    }
+    fn register(
+        &self,
+        state: &mut State,
+        purpose: Option<ResourceRef>,
+    ) -> io::Result<Arc<Resource>> {
         let permit = self
             .capacity
             .clone()
@@ -197,7 +222,7 @@ mod tests {
     async fn dropping_packet_owner_closes_descriptor_even_with_retained_authorization_context() {
         let capacity = Arc::new(Semaphore::new(1));
         let resource = Arc::new(Resource {
-            purpose: ResourceRef::Listener { key: "test".into() },
+            purpose: Some(ResourceRef::Listener { key: "test".into() }),
             stop: CancellationToken::new(),
             close: Mutex::new(None),
             permit: Mutex::new(Some(capacity.clone().try_acquire_owned().unwrap())),

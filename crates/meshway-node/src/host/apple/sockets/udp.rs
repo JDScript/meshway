@@ -20,7 +20,7 @@ pub(super) struct Endpoint {
     grants: Mutex<[Grants; 2]>,
 }
 impl Endpoint {
-    fn bind(
+    pub(super) fn bind(
         factory: &Factory,
         resource: Arc<Resource>,
         local: SocketAddr,
@@ -120,7 +120,7 @@ impl Endpoint {
     ) -> Result<TraversalSocket, Error> {
         if !meshway_underlay::traversal::references(desired, &reference)
             .map_err(|_| Error::Authority)?
-            || reference.resource != self.socket.resource.purpose
+            || Some(&reference.resource) != self.socket.resource.purpose.as_ref()
             || reference.socket_id.len() != 64
             || !reference
                 .socket_id

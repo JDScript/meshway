@@ -39,6 +39,9 @@ uuid.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 nix = { version = "=0.31.3", default-features = false, features = ["net"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+meshway-dns = { path = "../meshway-dns", features = ["packet-service"] }
+
 [dev-dependencies]
 meshway-desired-fixture = { path = "../../tools/meshway-desired-fixture" }
 meshway-test-server = { path = "../../tools/meshway-test-server" }

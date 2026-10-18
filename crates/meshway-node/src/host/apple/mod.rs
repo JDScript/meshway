@@ -1,6 +1,9 @@
 //! NetworkExtension attachment. NE owns settings; Node owns all packet policy.
+mod dns;
+mod network_settings;
 mod resources;
 mod sockets;
+pub use dns::Settings as DnsSettings;
 #[cfg(test)]
 mod tests;
 use super::*;
@@ -21,6 +24,20 @@ pub struct TunnelSettings {
     pub ipv6: Option<std::net::Ipv6Addr>,
     pub routes: Vec<ipnet::IpNet>,
     pub mtu: u16,
+    #[serde(default)]
+    pub dns: Option<DnsSettings>,
+}
+impl TunnelSettings {
+    pub fn included_routes(&self) -> Vec<ipnet::IpNet> {
+        let mut routes = self.routes.clone();
+        if let Some(dns) = &self.dns {
+            let route = ipnet::IpNet::V4(ipnet::Ipv4Net::new(dns.server, 32).expect("host prefix"));
+            if !routes.contains(&route) {
+                routes.push(route);
+            }
+        }
+        routes
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -139,10 +156,13 @@ impl Platform for Apple {
         directory: Arc<meshway_private_storage::Directory>,
         _: &'a str,
         options: meshway_underlay::Options,
-        _: meshway_dns::SystemDnsSettings,
+        dns_settings: meshway_dns::SystemDnsSettings,
     ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, Problem>> {
         Box::pin(async move {
             options.validate().map_err(|_| Problem::Configuration)?;
+            dns_settings
+                .validate()
+                .map_err(|_| Problem::Configuration)?;
             if options.bootstrap_nameservers.is_some() {
                 return Err(Problem::Configuration);
             }
@@ -168,9 +188,24 @@ impl Platform for Apple {
                 if record.version != 1 {
                     return Err(Problem::Storage);
                 }
-                let restored = record.settings;
-                if restored.routes.len() > 128 || restored.mtu < 1280 {
+                let mut restored = record.settings;
+                if restored.routes.len() > 128
+                    || restored.mtu < 1280
+                    || restored.dns.as_ref().is_some_and(|dns| !dns.valid())
+                {
                     return Err(Problem::Storage);
+                }
+                if let Some(dns) = &restored.dns {
+                    let pools: Vec<_> = restored
+                        .routes
+                        .iter()
+                        .copied()
+                        .filter(|route| route.prefix_len() != 0)
+                        .collect();
+                    if let Err(failure) = dns::conflict(dns.server, &pools) {
+                        tracing::warn!(%failure, "DNS capture conflicts at restart; restoring Mesh capture only until DNS can install");
+                        restored.dns = None;
+                    }
                 }
                 self.sink
                     .apply(Some(restored.clone()))
@@ -192,10 +227,18 @@ impl Platform for Apple {
             Ok(Box::new(Attachment {
                 device,
                 name: self.name.clone(),
-                sink: self.sink.clone(),
                 paths: self.paths.clone(),
-                directory,
-                settings,
+                settings: Arc::new(tokio::sync::Mutex::new(network_settings::Owner {
+                    directory,
+                    sink: self.sink.clone(),
+                    current: settings,
+                    pools: Vec::new(),
+                    failed: false,
+                })),
+                dns: Arc::new(dns::Attachment::new(
+                    dns_settings.anchor_address,
+                    options.mtu,
+                )),
                 watched_routes,
                 check_at: std::time::Instant::now() + std::time::Duration::from_secs(1),
                 sockets: sockets.clone(),
@@ -221,10 +264,9 @@ struct Facts {
 struct Attachment {
     device: meshway_tun::Utun,
     name: String,
-    sink: Arc<dyn TunnelSettingsSink>,
     paths: watch::Sender<NetworkChange>,
-    directory: Arc<meshway_private_storage::Directory>,
-    settings: Option<TunnelSettings>,
+    settings: Arc<tokio::sync::Mutex<network_settings::Owner>>,
+    dns: Arc<dns::Attachment>,
     sockets: Arc<sockets::Factory>,
     facts: Facts,
     http: Arc<sockets::resolver::HttpResolver>,
@@ -233,6 +275,7 @@ struct Attachment {
 }
 impl Drop for Attachment {
     fn drop(&mut self) {
+        self.dns.close();
         self.http.stop.cancel();
         let _ = self.sockets.resources.apply(None);
     }
@@ -273,11 +316,13 @@ impl Host for Attachment {
     fn install(&mut self, desired: Desired) -> Local<'_, Result<()>> {
         Box::pin(async move {
             use meshway_tun::PacketDevice;
-            let mut routes = self
-                .settings
+            let mut owner = self.settings.lock().await;
+            let mut routes = owner
+                .current
                 .as_ref()
                 .map(|settings| settings.routes.clone())
                 .unwrap_or_default();
+            owner.pools.clear();
             for prefix in desired
                 .local()
                 .mesh_address_pools
@@ -288,6 +333,7 @@ impl Host for Attachment {
                 let route = prefix
                     .parse::<ipnet::IpNet>()
                     .map_err(|_| io::ErrorKind::InvalidData)?;
+                owner.pools.push(route);
                 if !routes.contains(&route) {
                     routes.push(route);
                 }
@@ -313,25 +359,16 @@ impl Host for Attachment {
                 ipv6: desired.local().addresses.ipv6,
                 routes,
                 mtu: self.device.mtu() as u16,
+                dns: owner
+                    .current
+                    .as_ref()
+                    .and_then(|settings| settings.dns.clone()),
             };
             self.watched_routes = settings.routes.clone();
             if self.observe_overlap()? {
                 return Err(io::ErrorKind::AddrInUse.into());
             }
-            if self.settings.as_ref() != Some(&settings) {
-                // Store only the negative capture boundary before asking NE;
-                // this record never authorizes packets or extends a lease.
-                let bytes = serde_json::to_vec(&CaptureRecord {
-                    version: 1,
-                    settings: settings.clone(),
-                })
-                .map_err(io::Error::other)?;
-                self.directory
-                    .replace(JOURNAL, &bytes)
-                    .map_err(|error| io::Error::other(error.to_string()))?;
-                self.sink.apply(Some(settings.clone())).await?;
-                self.settings = Some(settings);
-            }
+            owner.apply(Some(settings)).await?;
             if external {
                 self.sockets.resources.apply(None)?;
                 return Err(Error::Unsupported("Apple exit capture is not enabled"));
@@ -353,11 +390,8 @@ impl Host for Attachment {
     fn down(&mut self) -> Local<'_, Result<()>> {
         Box::pin(async {
             self.sockets.resources.apply(None)?;
-            self.sink.apply(None).await?;
-            self.directory
-                .remove(JOURNAL)
-                .map_err(|error| io::Error::other(error.to_string()))?;
-            self.settings = None;
+            self.dns.close();
+            self.settings.lock().await.apply(None).await?;
             self.watched_routes.clear();
             Ok(())
         })
@@ -380,11 +414,14 @@ impl Host for Attachment {
     fn tun(&self) -> Option<&dyn meshway_tun::PacketDevice> {
         Some(&self.device)
     }
+    fn dns_packets(&self) -> Option<Arc<meshway_dns::packet::Port>> {
+        self.dns.port()
+    }
     fn sockets(&self) -> Arc<dyn meshway_connectivity::SocketFactory> {
         self.sockets.clone()
     }
     fn resolver_exchange(&self) -> Arc<dyn meshway_dns::ResolverExchange> {
-        Arc::new(DnsUnavailable)
+        self.sockets.clone()
     }
     fn client_builder(&self) -> Result<reqwest::ClientBuilder> {
         meshway_control_client::http_client_builder()
@@ -441,15 +478,21 @@ impl Host for Attachment {
     fn prepare_dns(
         &mut self,
     ) -> Local<'_, std::result::Result<Box<dyn SystemDns>, meshway_dns::SystemDnsFailure>> {
-        Box::pin(async {
-            Err(meshway_dns::SystemDnsFailure::new(
-                meshway_dns::SystemDnsError::Unsupported,
-                "apple_dns_service_address_pending",
-            ))
-        })
+        Box::pin(self.dns.prepare(self.settings.clone()))
     }
     fn restore_dns(&mut self) -> Local<'_, std::result::Result<(), meshway_dns::SystemDnsError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async {
+            self.dns.close();
+            let mut owner = self.settings.lock().await;
+            if let Some(mut settings) = owner.current.clone() {
+                settings.dns = None;
+                owner
+                    .apply(Some(settings))
+                    .await
+                    .map_err(|_| meshway_dns::SystemDnsError::Backend)?;
+            }
+            Ok(())
+        })
     }
     fn remove_dns_anchor(&mut self) -> Local<'_, Result<()>> {
         Box::pin(async { Ok(()) })
@@ -495,17 +538,6 @@ impl Host for Attachment {
     }
     fn diagnostics(&self) -> Arc<dyn LocalDiagnostics> {
         Arc::new(Diagnostics)
-    }
-}
-struct DnsUnavailable;
-impl meshway_dns::ResolverExchange for DnsUnavailable {
-    fn exchange<'a>(
-        &'a self,
-        _: &'a meshway_dns::LocalResolverRoute,
-        _: bytes::Bytes,
-    ) -> meshway_dns::DnsFuture<'a, std::result::Result<bytes::Bytes, meshway_dns::GatewayError>>
-    {
-        Box::pin(async { Err(meshway_dns::GatewayError) })
     }
 }
 struct Diagnostics;

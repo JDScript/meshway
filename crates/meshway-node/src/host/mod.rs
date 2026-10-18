@@ -107,6 +107,10 @@ pub trait Host: Send {
     fn down(&mut self) -> Local<'_, Result<()>>;
     fn shutdown(self: Box<Self>, keep: bool) -> Local<'static, Result<()>>;
     fn tun(&self) -> Option<&dyn meshway_tun::PacketDevice>;
+    #[cfg(target_os = "macos")]
+    fn dns_packets(&self) -> Option<Arc<meshway_dns::packet::Port>> {
+        None
+    }
     fn sockets(&self) -> Arc<dyn meshway_connectivity::SocketFactory>;
     fn resolver_exchange(&self) -> Arc<dyn meshway_dns::ResolverExchange>;
     fn client_builder(&self) -> Result<reqwest::ClientBuilder>;
@@ -179,6 +183,13 @@ pub trait LocalDiagnostics: Send + Sync {
 /// System installation/provenance only; query scopes and DNS selection remain
 /// in meshway-dns and the Node's one DNS actor.
 pub trait SystemDns: Send {
+    #[cfg(target_os = "macos")]
+    fn packet_transport(
+        &mut self,
+    ) -> std::result::Result<Option<meshway_dns::packet::Transport>, meshway_dns::SystemDnsError>
+    {
+        Ok(None)
+    }
     fn install<'a>(
         &'a mut self,
         plan: &'a meshway_dns::SystemDnsPlan,
