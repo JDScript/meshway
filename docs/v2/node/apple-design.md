@@ -100,6 +100,10 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 
 桥接导出 `start(config, logs, settings, utun_fd, utun_name)`、显式 `start_control_only`、`NodeHandle::stop/path_changed/open_ipc_session`、`Session::send/close`。日志只在桥接入口安装一次，经 `meshway-logging` 的平台 writer 回调写入 os_log。Swift 绑定与 XCFramework 由 `scripts/build-core.sh` 生成并忽略，不手改生成物。工程、VM 与命令见 [macOS lab](/v2/node/macos-lab)。
 
+App 与 extension 链接同一 XCFramework，但运行在不同进程。App 只调用新增 `client` 模块：`ClientRequest(request_id, command)`、`frame()`、`decode(frame)`；它复用 `meshway_protocol::ipc::write/read`，不启动 Node、不联系 Server、不加载私有身份。解码先验证完整 IPC 13 封闭对象，再投影为 UniFFI record／enum；未知字段、未知枚举、缺失必填可空字段、错误版本／请求绑定／结果类型、重复或跳序 ping 帧均报错。每个请求一个 XPC 连接，ping 逐帧解码、消费后 ACK，取消关闭连接。App 的 `FrameClient` 只传 `Data`，`IPCExchange` 负责有界等待与连接生命周期；正式界面与 `--probe` 共用该客户端。`--probe` 的 stdout 由 Rust 对已验证响应序列化，不由 Swift 解 JSON。
+
+桥接中的可空字段保留协议字段语义：例如 `node`／RTT 为必填可空，`idlePath`／`networkError` 为可省略观察；未报告与显式 `unknown` 枚举不互换。类型投影不补测量、不生成状态时间。客户端超时不撤销已被 Node 接纳的持久命令，须先读取 Status 再决定是否重试。
+
 ### 生命周期
 
 | 系统事件 | 运行时行为 |
@@ -113,7 +117,19 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 
 ### App 界面
 
-菜单栏面板 + 主窗口，数据只来自 IPC Status 与命令：连接开关与 phase、本节点名称／Mesh IP、peers（名称、地址、`idlePath` 与实际通道）、出口方案选择（`SelectProfile`／`ClearProfile`）、netcheck、换钥、注销、接入等待批准页。不展示 IPC 未提供的事实，缺测不填零。
+SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swift 6 严格并发）。`AppModel` 只持有界面快照与在途操作，Node 状态每秒从 IPC 读取；读取失败后不继续把旧快照显示为当前运行状态。真实 GUI／XPC 操作仍须在隔离 VM 人工验收。
+
+| 界面 | 行为 |
+| --- | --- |
+| 连接 | 开关读 `desiredUp`，阶段读 `phase`；macOS VPN 状态独立显示。Connect 先启动既有 VPN manager，读取 revision 后提交 `Up`。Disconnect 提交 `Down`，等 Status 为 down 后停止 tunnel |
+| 接入 | 首次输入 Server URL（extension 启动参数），支持高级 enrollment key；不保存该密钥。`awaitingApproval` 的 `enrollmentUrl` 用浏览器打开一次，并提供重新打开按钮；没有 URL 时显示联系 Server 运维的提示。既有 VPN 的 Server 不提供切网入口 |
+| 本节点 | 已安装节点名称、Mesh IPv4／IPv6、netmap 租约、sync、dataPlane、`lastError` 与独立的 `networkError`；时间相对显示，悬停给出绝对时间 |
+| Peers | 搜索名称／地址／Node ID，显示实际 state／transport／endpoint／via、idlePath、已测 RTT；详情与复制。没有测量的 RTT 不填零，idle 不显示为已建立直连 |
+| 出口方案 | netmap 中的生效／请求／默认方案、锁定、auto 与允许方案摘要；`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示，生效仍等本机 netmap 与 applied |
+| 诊断与身份 | Netcheck、四次 ping 的流式本地判定／测量、取消 ping、RotateKey、带永久注销说明的 Logout 确认；身份操作先读 revision，不绕过 CAS |
+| 系统引导 | 读取 extension 属性与 VPN preferences，显示未安装／待批准／未启用／缺少配置；沿用 TunnelController 显式激活与创建 VPN。lab 命令与 Debug 菜单独立于正式主路径 |
+
+`--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；窗口与面板明确标注 SAMPLE DATA，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--model-tests` 使用同一组桥接样例检查 Swift 呈现模型。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
 
 ## 复用白名单 {#reuse}
 

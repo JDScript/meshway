@@ -13,10 +13,41 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     var report: ((String) -> Void)?
     private var activationCompletion: ((Int32) -> Void)?
     var frames = ""
+    var probeStatus: ClientStatus?
     var busy = false
+    var vpnStatus: NEVPNStatus = .invalid
+    var hasConfiguration = false
+    var preferencesLoaded = false
+    var preferencesError: String?
+    var serverOrigin: String?
+    var extensionState = "Not checked"
+    private var propertiesRequest: OSSystemExtensionRequest?
+    private var propertiesChecked = false
+    private var propertiesCheckedAt = Date.distantPast
     private var manager: NETunnelProviderManager?
-    private var client: FrameClient?
-    private var clientID: UUID?
+    private var frameTask: Task<Void, Never>?
+
+    func refresh() async {
+        do {
+            let identifier = try ShellConfiguration.value("MeshwayExtensionID")
+            if propertiesRequest == nil && (!propertiesChecked || Date().timeIntervalSince(propertiesCheckedAt) >= 5) {
+                propertiesChecked = true
+                propertiesCheckedAt = Date()
+                let request = OSSystemExtensionRequest.propertiesRequest(forExtensionWithIdentifier: identifier, queue: .main)
+                request.delegate = self
+                propertiesRequest = request
+                OSSystemExtensionManager.shared.submitRequest(request)
+            }
+            manager = try await NETunnelProviderManager.loadAllFromPreferences().first {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == identifier
+            }
+            hasConfiguration = manager != nil
+            preferencesLoaded = true
+            preferencesError = nil
+            vpnStatus = manager?.connection.status ?? .invalid
+            serverOrigin = (manager?.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["serverOrigin"] as? String
+        } catch { preferencesError = error.localizedDescription; message = error.localizedDescription }
+    }
 
     func activate(completion: ((Int32) -> Void)? = nil) {
         activationCompletion = completion
@@ -39,7 +70,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     @discardableResult
-    func start(defaultRoute: Bool, includeAllNetworks: Bool, excludeLocalNetworks: Bool = false, systemAuthorization: Bool = false) async -> Bool {
+    func start(defaultRoute: Bool, includeAllNetworks: Bool, excludeLocalNetworks: Bool = true, systemAuthorization: Bool = false, serverOrigin: String? = nil) async -> Bool {
         guard !defaultRoute, !includeAllNetworks else { message = "Default capture lab switches are not enabled for this Mesh-only package"; return false }
         guard !busy else { return false }
         busy = true
@@ -68,7 +99,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             let configuration = NETunnelProviderProtocol()
             configuration.providerBundleIdentifier = identifier
             let savedOrigin = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["serverOrigin"] as? String
-            let origin = ProcessInfo.processInfo.environment["MESHWAY_SERVER_URL"] ?? savedOrigin ?? "http://127.0.0.1:8430"
+            let origin = serverOrigin ?? ProcessInfo.processInfo.environment["MESHWAY_SERVER_URL"] ?? savedOrigin ?? "http://127.0.0.1:8430"
             configuration.serverAddress = origin
             let savedAddress = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["dnsAnchorAddress"] as? String
             var providerSettings = ["serverOrigin": origin]
@@ -77,7 +108,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             configuration.includeAllNetworks = includeAllNetworks
             configuration.excludeLocalNetworks = excludeLocalNetworks
             manager.protocolConfiguration = configuration
-            manager.localizedDescription = "Meshway Shell Lab"
+            if manager.localizedDescription == nil { manager.localizedDescription = "Meshway" }
             manager.isEnabled = true
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()
@@ -95,10 +126,8 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func disconnectFrames() {
-        let previous = client
-        client = nil
-        clientID = nil
-        previous?.close()
+        frameTask?.cancel()
+        frameTask = nil
     }
 
     @discardableResult
@@ -117,48 +146,42 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
 
     func send(_ text: String) {
         disconnectFrames()
-        do {
-            if client == nil {
-                let id = UUID()
-                clientID = id
-                client = try FrameClient(output: { [weak self] frame, acknowledge in
-                    Task { @MainActor in
-                        defer { acknowledge() }
-                        guard let self, self.clientID == id else { return }
-                        guard let body = try? Probe.body(frame) else { self.message = "Invalid IPC frame"; return }
-                        self.frames = String((self.frames + "\n" + String(decoding: body, as: UTF8.self)).suffix(8192))
-                    }
-                }, disconnected: { [weak self] in
-                    Task { @MainActor in
-                        guard let self, self.clientID == id else { return }
-                        self.client = nil; self.clientID = nil; self.message = "XPC disconnected"
-                    }
-                })
-            }
-            let (_, request) = try Probe.request(Probe.Command(type: "status"))
-            let id = clientID
-            client?.send(request) { [weak self] accepted in
-                Task { @MainActor in
-                    guard let self, self.clientID == id else { return }
-                    self.message = accepted ? "Frame acknowledged" : "Frame rejected / busy"
-                }
-            }
-        } catch { message = error.localizedDescription }
+        frameTask = Task {
+            do {
+                let exchange = IPCExchange()
+                if case .status(let status) = try await exchange.run(.status, text: true) { probeStatus = status }
+                frames = exchange.responseText ?? ""
+                message = "IPC Status received"
+            } catch { message = error.localizedDescription }
+        }
     }
 
     nonisolated func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         Task { @MainActor in
             message = "Approve Meshway in System Settings → General → Login Items & Extensions → Network Extensions"
+            extensionState = "Approval required"
             finishActivation(77)
         }
     }
     nonisolated func request(_ request: OSSystemExtensionRequest, didFinishWithResult result: OSSystemExtensionRequest.Result) {
         let text = result == .completed ? "Extension request completed" : "Extension request requires reboot"
-        Task { @MainActor in message = text; finishActivation(result == .completed ? 0 : 78) }
+        Task { @MainActor in message = text; extensionState = text; propertiesChecked = false; finishActivation(result == .completed ? 0 : 78) }
     }
     nonisolated func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         let text = error.localizedDescription
-        Task { @MainActor in message = text; finishActivation(1) }
+        let identity = ObjectIdentifier(request)
+        Task { @MainActor in
+            if propertiesRequest.map(ObjectIdentifier.init) == identity { extensionState = "Unable to inspect extension: \(text)"; propertiesRequest = nil }
+            else { message = text; extensionState = "Activation failed"; finishActivation(1) }
+        }
+    }
+    nonisolated func request(_ request: OSSystemExtensionRequest, foundProperties properties: [OSSystemExtensionProperties]) {
+        let state: String
+        if properties.contains(where: { $0.isEnabled }) { state = "Enabled" }
+        else if properties.contains(where: { $0.isAwaitingUserApproval }) { state = "Approval required" }
+        else if properties.isEmpty { state = "Not installed" }
+        else { state = "Installed, not enabled" }
+        Task { @MainActor in extensionState = state; propertiesRequest = nil }
     }
     private func finishActivation(_ status: Int32) {
         let completion = activationCompletion

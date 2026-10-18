@@ -1941,11 +1941,16 @@ dependencies = [
 name = "meshway-apple-bridge"
 version = "0.1.0-alpha.18"
 dependencies = [
+ "chrono",
  "libc",
+ "meshway-configuration",
+ "meshway-control",
  "meshway-dns",
  "meshway-logging",
+ "meshway-model",
  "meshway-node",
  "meshway-protocol",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

@@ -15,6 +15,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+mod client;
 mod session;
 pub use session::{FrameSink, Session};
 mod settings;
