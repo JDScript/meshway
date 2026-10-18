@@ -74,8 +74,18 @@ impl Clock {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::detail("control.clock", 2);
         let _profile = PROFILE.enter();
-        let wall = now()?;
-        let monotonic = Instant::now();
+        self.read(now, Instant::now)
+    }
+
+    /// The one place both clocks are read: the wall clock first (see
+    /// [`Self::observe`]), whatever delay follows before the monotonic read.
+    fn read(
+        &self,
+        wall: impl FnOnce() -> Result<u64, Error>,
+        monotonic: impl FnOnce() -> Instant,
+    ) -> Result<(u64, Instant), Error> {
+        let wall = wall()?;
+        let monotonic = monotonic();
         Ok((self.observe(wall, monotonic)?, monotonic))
     }
 
@@ -117,10 +127,9 @@ pub struct Started {
 }
 impl Started {
     pub fn now(clock: &Arc<Clock>) -> Result<Self, Error> {
-        let wall = now()?;
-        let monotonic = Instant::now();
+        let (wall, monotonic) = clock.read(now, Instant::now)?;
         Ok(Self {
-            wall: clock.observe(wall, monotonic)?,
+            wall,
             monotonic,
             clock: Arc::clone(clock),
         })
@@ -231,12 +240,34 @@ mod tests {
     #[test]
     fn a_delay_between_the_two_reads_never_puts_the_clock_ahead() {
         let clock = Clock::new().unwrap();
-        // Preempted after the wall read: the monotonic read comes 50 ms later.
-        let wall = now().unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-        clock.observe(wall, Instant::now()).unwrap();
-        let reading = clock.now().unwrap();
-        assert!(reading <= now().unwrap(), "clock ahead of the wall clock");
+        // Whichever clock is read second is read 50 ms late, as if the thread
+        // were preempted between the two reads.
+        let reads = std::cell::Cell::new(0);
+        let pause = || {
+            reads.set(reads.get() + 1);
+            if reads.get() == 2 {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let (reading, _) = clock
+            .read(
+                || {
+                    pause();
+                    now()
+                },
+                || {
+                    pause();
+                    Instant::now()
+                },
+            )
+            .unwrap();
+        assert_eq!(reads.get(), 2);
+        // Read the other way round, the 50 ms would be in the high-water mark.
+        assert!(reading <= now().unwrap(), "read ahead of the wall clock");
+        assert!(
+            clock.now().unwrap() <= now().unwrap(),
+            "clock left ahead of the wall clock"
+        );
     }
     #[test]
     fn response_transit_time_is_not_added_to_its_deadline() {

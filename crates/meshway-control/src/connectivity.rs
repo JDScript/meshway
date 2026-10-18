@@ -69,8 +69,7 @@ impl DiscoveryContext {
     /// this Node's wall clock says, so a lifetime the Server bounds by its own
     /// clock is expressed in it.
     pub fn server_now_ms(&self) -> u64 {
-        let (as_of, applied) = self.inner.as_of;
-        as_of.saturating_add(u64::try_from(applied.elapsed().as_millis()).unwrap_or(u64::MAX))
+        server_now(self.inner.as_of, Instant::now())
     }
     pub fn ensure_current(&self) -> Result<(), Error> {
         if !self.inner.deadline.valid() {
@@ -189,6 +188,21 @@ pub struct Discovery {
 pub enum AttemptView {
     Waiting(ValidatedOffer),
     Active(AttemptScope),
+}
+
+/// The Server's clock at `at`: its `asOf` reading plus the monotonic time
+/// since that answer was applied here. Transit before it only makes this
+/// earlier than the Server's own reading, never later.
+fn server_now((as_of, applied): (u64, Instant), at: Instant) -> u64 {
+    as_of.saturating_add(
+        u64::try_from(at.saturating_duration_since(applied).as_millis()).unwrap_or(u64::MAX),
+    )
+}
+
+/// A prepare request's expiry: the context's Server deadline, and at most the
+/// Server's lifetime bound from the Server's clock now.
+fn request_expiry(context_expires_ms: u64, server_now_ms: u64) -> u64 {
+    context_expires_ms.min(server_now_ms.saturating_add(MAX_UDP_TRAVERSAL_LIFETIME_MS))
 }
 
 /// Numeric unicast recipient validation shared with the protected socket gate.
@@ -674,11 +688,7 @@ pub fn prepare_request(
         request_id: RequestId::new(crate::random_id()?).map_err(|_| Error::Cryptography)?,
         // The Server bounds the lifetime by its own clock, from receipt; a Node
         // clock ahead of it must not make every request inadmissible.
-        expires_at_ms: context.expires_at_ms().min(
-            context
-                .server_now_ms()
-                .saturating_add(MAX_UDP_TRAVERSAL_LIFETIME_MS),
-        ),
+        expires_at_ms: request_expiry(context.expires_at_ms(), context.server_now_ms()),
         peer_id: peer.socket.node_id,
         carrier,
         local_candidate: local,
@@ -721,7 +731,32 @@ impl PeersCall {
 
 #[cfg(test)]
 mod tests {
-    use super::udp_recipient;
+    use super::{request_expiry, server_now, udp_recipient};
+    use meshway_protocol::connectivity::MAX_UDP_TRAVERSAL_LIFETIME_MS;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_request_lifetime_is_counted_on_the_server_clock_not_this_nodes() {
+        let clock = std::sync::Arc::new(crate::clock::Clock::new().unwrap());
+        // This Node's clock reads 5 s ahead (a skewed host, a raised floor).
+        clock.raise_floor(crate::clock::now().unwrap() + 5_000);
+        let node_now = clock.now().unwrap();
+        // The Server answered at `as_of`; the answer was applied 300 ms ago.
+        let as_of = node_now - 5_000;
+        let applied = Instant::now() - Duration::from_millis(300);
+        let at = Instant::now();
+        let server = server_now((as_of, applied), at);
+        assert!((as_of + 300..as_of + 400).contains(&server));
+        let expiry = request_expiry(u64::MAX, server);
+        // Admissible: at most the lifetime past the Server's reading, which
+        // the Server itself only reaches later (on receipt).
+        assert_eq!(expiry - server, MAX_UDP_TRAVERSAL_LIFETIME_MS);
+        assert!(expiry < node_now + MAX_UDP_TRAVERSAL_LIFETIME_MS);
+        // A nearer context deadline still caps it.
+        assert_eq!(request_expiry(as_of + 1_000, server), as_of + 1_000);
+        // An applied instant later than `at` never moves the Server clock back.
+        assert_eq!(server_now((as_of, at + Duration::from_secs(1)), at), as_of);
+    }
 
     #[test]
     fn acquisition_recipients_reject_local_services_and_scoped_aliases() {
