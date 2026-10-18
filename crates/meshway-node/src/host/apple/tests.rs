@@ -213,3 +213,111 @@ fn local_interface_address_conflicts_are_reported() {
     assert_eq!(failure.error, meshway_dns::SystemDnsError::Conflict);
     assert_eq!(failure.check, "apple_dns_interface_address");
 }
+
+#[test]
+fn exit_ranges_preserve_direct_holes_and_capture_both_ipv6_kinds() {
+    let plan = meshway_configuration::execution::EgressCapturePlan {
+        generation: meshway_model::Digest::from_bytes([0; 32]),
+        managed_ipv4: vec![("11.0.0.1".parse().unwrap(), "11.0.0.6".parse().unwrap())],
+        default_capture: false,
+        managed_ipv6: vec![("3ffe::1".parse().unwrap(), "3ffe::6".parse().unwrap())],
+        sink_ipv6: vec![("3ffe::10".parse().unwrap(), "3ffe::1f".parse().unwrap())],
+        unavailable: None,
+    };
+    let routes = capture::routes(Some(&plan)).unwrap();
+    for last in 0..=32 {
+        for prefix in ["11.0.0.", "3ffe::"] {
+            let address: IpAddr = if prefix == "3ffe::" {
+                format!("{prefix}{last:x}")
+            } else {
+                format!("{prefix}{last}")
+            }
+            .parse()
+            .unwrap();
+            let expected =
+                (1..=6).contains(&last) || (address.is_ipv6() && (16..=31).contains(&last));
+            assert_eq!(
+                routes.iter().any(|route| route.contains(&address)),
+                expected,
+                "{address}"
+            );
+        }
+    }
+    assert!(capture::routes(None).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn exit_clear_stages_union_and_failed_shrink_keeps_restart_boundary() {
+    struct Sink {
+        log: SettingsLog,
+        fail: std::sync::atomic::AtomicBool,
+    }
+    impl TunnelSettingsSink for Sink {
+        fn apply(&self, settings: Option<TunnelSettings>) -> SendFuture<'_, io::Result<()>> {
+            Box::pin(async move {
+                self.log.apply(settings.clone()).await?;
+                if self.fail.load(std::sync::atomic::Ordering::Relaxed)
+                    && settings
+                        .as_ref()
+                        .is_some_and(|settings| settings.egress_routes.is_empty())
+                {
+                    return Err(io::Error::other("NE completion failed"));
+                }
+                Ok(())
+            })
+        }
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    let directory = Arc::new(
+        meshway_private_storage::Directory::open(
+            &temporary.path().canonicalize().unwrap().join("node"),
+            "test.lock",
+        )
+        .unwrap(),
+    );
+    let sink = Arc::new(Sink {
+        log: SettingsLog::default(),
+        fail: false.into(),
+    });
+    let mut owner = network_settings::Owner {
+        directory: directory.clone(),
+        sink: sink.clone(),
+        current: None,
+        pools: vec![],
+        failed: false,
+    };
+    let exit = TunnelSettings {
+        ipv4: Some("100.64.0.1".parse().unwrap()),
+        ipv6: None,
+        routes: vec!["100.64.0.0/24".parse().unwrap()],
+        egress_routes: vec!["0.0.0.0/0".parse().unwrap(), "::/0".parse().unwrap()],
+        mtu: 1366,
+        dns: None,
+    };
+    owner.apply(Some(exit.clone())).await.unwrap();
+    let mesh = TunnelSettings {
+        egress_routes: vec![],
+        ..exit.clone()
+    };
+    sink.fail.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(owner.apply(Some(mesh.clone())).await.is_err());
+    let record: CaptureRecord =
+        serde_json::from_reader(directory.file(JOURNAL, false).unwrap().unwrap()).unwrap();
+    assert_eq!(record.settings, exit);
+    assert!(owner.failed);
+    sink.fail.store(false, std::sync::atomic::Ordering::Relaxed);
+    owner.apply(Some(mesh.clone())).await.unwrap();
+    let record: CaptureRecord =
+        serde_json::from_reader(directory.file(JOURNAL, false).unwrap().unwrap()).unwrap();
+    assert_eq!(record.settings, mesh);
+    assert_eq!(
+        sink.log.0.lock().unwrap().as_slice(),
+        &[
+            Some(exit.clone()),
+            Some(exit.clone()),
+            Some(mesh.clone()),
+            Some(exit),
+            Some(mesh)
+        ]
+    );
+}

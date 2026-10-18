@@ -1,4 +1,5 @@
 //! NetworkExtension attachment. NE owns settings; Node owns all packet policy.
+mod capture;
 mod dns;
 mod network_settings;
 mod resources;
@@ -23,6 +24,9 @@ pub struct TunnelSettings {
     pub ipv4: Option<std::net::Ipv4Addr>,
     pub ipv6: Option<std::net::Ipv6Addr>,
     pub routes: Vec<ipnet::IpNet>,
+    /// Resource boundary, not policy. Kept on suspend, replaced by a new Desired.
+    #[serde(default)]
+    pub egress_routes: Vec<ipnet::IpNet>,
     pub mtu: u16,
     #[serde(default)]
     pub dns: Option<DnsSettings>,
@@ -30,6 +34,7 @@ pub struct TunnelSettings {
 impl TunnelSettings {
     pub fn included_routes(&self) -> Vec<ipnet::IpNet> {
         let mut routes = self.routes.clone();
+        routes.extend(&self.egress_routes);
         if let Some(dns) = &self.dns {
             let route = ipnet::IpNet::V4(ipnet::Ipv4Net::new(dns.server, 32).expect("host prefix"));
             if !routes.contains(&route) {
@@ -177,10 +182,10 @@ impl Platform for Apple {
                 .map_err(|_| Problem::Storage)?
             {
                 let mut bytes = Vec::new();
-                file.take(65537)
+                file.take(capture::JOURNAL_BYTES + 1)
                     .read_to_end(&mut bytes)
                     .map_err(|_| Problem::Storage)?;
-                if bytes.len() > 65536 {
+                if bytes.len() as u64 > capture::JOURNAL_BYTES {
                     return Err(Problem::Storage);
                 }
                 let record: CaptureRecord =
@@ -190,6 +195,7 @@ impl Platform for Apple {
                 }
                 let mut restored = record.settings;
                 if restored.routes.len() > 128
+                    || restored.egress_routes.len() > capture::MAX_RETAINED_ROUTES
                     || restored.mtu < 1280
                     || restored.dns.as_ref().is_some_and(|dns| !dns.valid())
                 {
@@ -338,26 +344,22 @@ impl Host for Attachment {
                     routes.push(route);
                 }
             }
-            let external = desired.capture().is_some_and(|capture| {
-                !capture.managed_ipv4.is_empty()
-                    || !capture.managed_ipv6.is_empty()
-                    || !capture.sink_ipv6.is_empty()
-            });
-            if external {
-                for prefix in ["0.0.0.0/0", "::/0"] {
-                    let route = prefix.parse::<ipnet::IpNet>().expect("constant CIDR");
-                    if !routes.contains(&route) {
-                        routes.push(route);
-                    }
-                }
-            }
             if routes.len() > 128 {
                 return Err(Error::Unsupported("capture prefix capacity"));
             }
+            // NE also needs routes for static IPv6 sinks, which Linux rejects
+            // in nft without a route. If their CIDR expansion exceeds the NE
+            // budget, first install a negative boundary; never leave new exit
+            // destinations on the physical network because capture is too big.
+            let (egress_routes, capture_error) = match capture::routes(desired.capture()) {
+                Ok(routes) => (routes, None),
+                Err(error) => (capture::negative(), Some(error)),
+            };
             let settings = TunnelSettings {
                 ipv4: desired.local().addresses.ipv4,
                 ipv6: desired.local().addresses.ipv6,
                 routes,
+                egress_routes,
                 mtu: self.device.mtu() as u16,
                 dns: owner
                     .current
@@ -369,9 +371,9 @@ impl Host for Attachment {
                 return Err(io::ErrorKind::AddrInUse.into());
             }
             owner.apply(Some(settings)).await?;
-            if external {
+            if let Some(error) = capture_error {
                 self.sockets.resources.apply(None)?;
-                return Err(Error::Unsupported("Apple exit capture is not enabled"));
+                return Err(error);
             }
             self.sockets.resources.apply(if desired.local().enabled {
                 Some(desired)

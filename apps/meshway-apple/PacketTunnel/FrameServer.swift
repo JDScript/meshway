@@ -101,7 +101,11 @@ final class FrameSession: NSObject, FrameService, FrameSink, @unchecked Sendable
                 state.rust = nil
                 return session
             }
-            Task { await session?.close() }
+            let pid = connection.processIdentifier
+            Task { [logger] in
+                await session?.close()
+                logger.notice("Rust IPC transport joined peer-pid=\(pid)")
+            }
         }
     }
 

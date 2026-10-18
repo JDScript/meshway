@@ -25,7 +25,7 @@ enum LabCommand {
             case "start-private", "start-system", "start-default", "start-all", "start-default-local", "start-all-local":
                 let success = await controller.start(
                     defaultRoute: !["start-private", "start-system"].contains(action), includeAllNetworks: action.hasPrefix("start-all"),
-                    excludeLocalNetworks: action.hasSuffix("-local"), systemAuthorization: action == "start-system")
+                    excludeLocalNetworks: true, systemAuthorization: action == "start-system")
                 exit(success ? 0 : 1)
             case "app-frame":
                 controller.send("meshway-app-frame")

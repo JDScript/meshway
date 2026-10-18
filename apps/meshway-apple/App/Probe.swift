@@ -8,7 +8,11 @@ enum Probe {
         let type: String
         var expectedRevision: UInt64?
         var enrollmentKey: String?
+        var profile: String?
+        var target: Target?
+        var count: UInt16?
     }
+    struct Target: Encodable { let type = "name"; let name: String }
     struct Request: Encodable {
         let version = 13
         let requestId: String
@@ -56,11 +60,40 @@ enum Probe {
             do {
                 let arguments = Array(CommandLine.arguments.drop { $0 != "--probe" }.dropFirst())
                 let action = arguments.first ?? "status"
-                guard ["status", "up", "down"].contains(action) else { throw CocoaError(.coderInvalidValue) }
+                guard ["status", "up", "down", "exit", "ping"].contains(action) else { throw CocoaError(.coderInvalidValue) }
+                if action == "ping" {
+                    guard arguments.count == 2 else { throw CocoaError(.coderInvalidValue) }
+                    let (id, frame) = try request(Command(type: "ping", target: Target(name: arguments[1]), count: 1000))
+                    let received = Mutex(0)
+                    let failed = Mutex(false)
+                    let client = try FrameClient(output: { frame, acknowledge in
+                        defer { acknowledge() }
+                        do {
+                            let data = try body(frame)
+                            let response = try JSONDecoder().decode(Response.self, from: data)
+                            guard response.version == 13, response.requestId == id, response.result.type == "ping" else { throw CocoaError(.coderReadCorrupt) }
+                            received.withLock { $0 += 1 }
+                            FileHandle.standardOutput.write(data + Data([10]))
+                        } catch { failed.withLock { $0 = true } }
+                    }, disconnected: { failed.withLock { $0 = true } })
+                    client.send(frame) { accepted in if !accepted { failed.withLock { $0 = true } } }
+                    try await Task.sleep(for: .seconds(5))
+                    let success = received.withLock { $0 >= 2 } && !failed.withLock { $0 }
+                    client.close()
+                    print("probe stream disconnected after five seconds")
+                    exit(success ? 0 : 1)
+                }
                 let (status, statusData) = try await exchange(Command(type: "status"))
                 guard let current = status.result.status else { throw CocoaError(.coderReadCorrupt) }
                 if action == "status" {
                     print(String(decoding: statusData, as: UTF8.self)); exit(0)
+                }
+                if action == "exit" {
+                    guard arguments.count == 2 else { throw CocoaError(.coderInvalidValue) }
+                    let command = arguments[1] == "--default" ? Command(type: "clearProfile") : Command(type: "selectProfile", profile: arguments[1])
+                    let (response, data) = try await exchange(command)
+                    print(String(decoding: data, as: UTF8.self))
+                    exit(response.result.type == "error" ? 1 : 0)
                 }
                 var key: String?
                 if let index = arguments.firstIndex(of: "--enrollment-key") {

@@ -15,6 +15,37 @@ impl Owner {
         }
         self.failed = true;
         if let Some(settings) = &next {
+            // A failed or interrupted NE replacement must not forget an old
+            // negative boundary at restart. Stage the union before shrinking.
+            let mut retained = settings.clone();
+            if let Some(previous) = &self.current {
+                retained.routes.extend(&previous.routes);
+                retained.routes.sort();
+                retained.routes.dedup();
+                retained.egress_routes.extend(&previous.egress_routes);
+                retained.egress_routes = ipnet::IpNet::aggregate(&retained.egress_routes);
+            }
+            if retained.routes.len() > 128 {
+                return Err(io::Error::other("capture transition prefix capacity"));
+            }
+            if retained.egress_routes.len() > capture::MAX_RETAINED_ROUTES {
+                retained.egress_routes = capture::negative();
+            }
+            let bytes = serde_json::to_vec(&CaptureRecord {
+                version: 1,
+                settings: retained.clone(),
+            })
+            .map_err(io::Error::other)?;
+            self.directory
+                .replace(JOURNAL, &bytes)
+                .map_err(io::Error::other)?;
+            self.current = Some(retained.clone());
+            if retained != *settings {
+                self.sink.apply(Some(retained)).await?;
+            }
+        }
+        self.sink.apply(next.clone()).await?;
+        if let Some(settings) = &next {
             let bytes = serde_json::to_vec(&CaptureRecord {
                 version: 1,
                 settings: settings.clone(),
@@ -23,9 +54,7 @@ impl Owner {
             self.directory
                 .replace(JOURNAL, &bytes)
                 .map_err(io::Error::other)?;
-        }
-        self.sink.apply(next.clone()).await?;
-        if next.is_none() {
+        } else {
             self.directory.remove(JOURNAL).map_err(io::Error::other)?;
         }
         self.current = next;

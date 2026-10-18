@@ -128,6 +128,14 @@ private final class SettingsSink: TunnelSettingsSink, @unchecked Sendable {
             guard let provider else { throw BridgeError.Stopped }
             let network: NEPacketTunnelNetworkSettings?
             if let settings {
+                // This is a preferences property, not a per-apply NE setting.
+                // Refuse enlarged capture unless the saved manager opted in to
+                // preserving local networking (including the VM management link).
+                if settings.routes4.contains(where: { $0.prefix == 0 }) || settings.routes6.contains(where: { $0.prefix == 0 }) {
+                    guard (provider.protocolConfiguration as? NETunnelProviderProtocol)?.excludeLocalNetworks == true else {
+                        throw BridgeError.Startup(message: "Default capture requires excludeLocalNetworks=true in the saved VPN configuration")
+                    }
+                }
                 let value = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
                 if !settings.routes4.isEmpty || settings.ipv4 != nil {
                     let addresses = settings.ipv4.map { [$0] } ?? []
@@ -138,7 +146,16 @@ private final class SettingsSink: TunnelSettingsSink, @unchecked Sendable {
                 if !settings.routes6.isEmpty || settings.ipv6 != nil {
                     let addresses = settings.ipv6.map { [$0] } ?? []
                     let ipv6 = NEIPv6Settings(addresses: addresses, networkPrefixLengths: addresses.map { _ in NSNumber(value: 128) })
-                    ipv6.includedRoutes = settings.routes6.map { NEIPv6Route(destinationAddress: $0.address, networkPrefixLength: NSNumber(value: $0.prefix)) }
+                    // NE does not promote a ULA-only tunnel to the IPv6 default
+                    // service. Explicit half-defaults preserve the exact ::/0
+                    // boundary without depending on default-service election.
+                    ipv6.includedRoutes = settings.routes6.flatMap { route in
+                        if route.prefix == 0 {
+                            return [NEIPv6Route(destinationAddress: "::", networkPrefixLength: 1),
+                                    NEIPv6Route(destinationAddress: "8000::", networkPrefixLength: 1)]
+                        }
+                        return [NEIPv6Route(destinationAddress: route.address, networkPrefixLength: NSNumber(value: route.prefix))]
+                    }
                     value.ipv6Settings = ipv6
                 }
                 value.mtu = NSNumber(value: settings.mtu)
