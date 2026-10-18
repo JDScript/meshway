@@ -23,14 +23,16 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     var extensionState = "Not checked"
     private var propertiesRequest: OSSystemExtensionRequest?
     private var propertiesChecked = false
+    private var propertiesCheckedAt = Date.distantPast
     private var manager: NETunnelProviderManager?
     private var frameTask: Task<Void, Never>?
 
     func refresh() async {
         do {
             let identifier = try ShellConfiguration.value("MeshwayExtensionID")
-            if !propertiesChecked {
+            if propertiesRequest == nil && (!propertiesChecked || Date().timeIntervalSince(propertiesCheckedAt) >= 5) {
                 propertiesChecked = true
+                propertiesCheckedAt = Date()
                 let request = OSSystemExtensionRequest.propertiesRequest(forExtensionWithIdentifier: identifier, queue: .main)
                 request.delegate = self
                 propertiesRequest = request
