@@ -44,7 +44,6 @@ pub(in crate::linux::kernel) enum Failure {
 pub(in crate::linux::kernel) struct Output {
     pub success: bool,
     pub stdout: Vec<u8>,
-    #[cfg(test)]
     pub stderr: Vec<u8>,
 }
 
@@ -100,11 +99,32 @@ impl Commands {
             .map_err(|_| Failure::Worker)?;
         let end = Instant::now() + BUDGET;
         let fence = self.fence.clone();
+        // What was run, for the failure log below: the subcommand words.
+        let command: Vec<String> = arguments
+            .iter()
+            .filter(|argument| !argument.starts_with('-'))
+            .take(4)
+            .cloned()
+            .collect();
         self.pending = Some(tokio::task::spawn_blocking(move || {
             let _permit = permit;
             execute(tool, &arguments, &input, end, fence.as_ref())
         }));
-        let output = self.settle().await?.ok_or(Failure::Worker);
+        let output = match self.settle().await {
+            Ok(Some(output)) => {
+                if !output.success {
+                    tracing::debug!(tool = tool.path(), command = ?command,
+                        stderr = %String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(512)]).trim_end(),
+                        "Kernel tool failed");
+                }
+                Ok(output)
+            }
+            Ok(None) => Err(Failure::Worker),
+            Err(error) => {
+                tracing::debug!(tool = tool.path(), command = ?command, %error, "Kernel tool failed");
+                Err(error)
+            }
+        };
         #[cfg(test)]
         if lost {
             // The kernel applied it; the tool's answer was lost (its budget),
@@ -217,7 +237,7 @@ fn execute(
         };
         let written = writer.join().map_err(|_| Failure::Worker)?;
         let stdout = reader.join().map_err(|_| Failure::Worker)??;
-        let _stderr = errors.join().map_err(|_| Failure::Worker)??;
+        let stderr = errors.join().map_err(|_| Failure::Worker)??;
         let status = status?;
         if Instant::now() > end {
             return Err(Failure::Limit);
@@ -230,8 +250,7 @@ fn execute(
         Ok(Output {
             success: status.success(),
             stdout,
-            #[cfg(test)]
-            stderr: _stderr,
+            stderr,
         })
     })
 }

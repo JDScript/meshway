@@ -180,7 +180,7 @@ R3 真机（`meshway-vm`，同一扰动，sha 与 it7 运行 alpha.14、只读�
 
 ### roam/relay 行 {#roam-relay-row}
 
-`roam/relay`（`--netmap-scenario roam-relay`）在 `roam/nat` 的拓扑上增加公网中继 R（WAN 上的已发布 listener，A、B 都拨它；A–R、R–B 常驻），无 `via`，Policy 的候选为 `[A, B]` 与 `[A, R, B]`。除主流量外 A 每 250 ms 用一个新 5 元组发一个 UDP 报文（每个都是新流）；A 的 status 失去对 B 的直连时启动第二条 100 pps UDP 流（“中继流”），恢复直连 2 秒后再启动第三条（“恢复后流”）4 秒；R 的收包计数每 250 ms 采样。门槛在 `roam/nat` 的之外：旧直连流的最长中断 ≤ 重新获取＋1 秒；空窗内（失去直连 0.25 秒后至恢复前 0.25 秒）至少有一个新流，且每个新流都在 1 秒内经 R 得到回复，R 在中继流启动前的收包速率 > 0；直连恢复后中继流仍经 R（R 收包 ≥ 150 pps）且最长中断 ≤ 1 秒；恢复后流得到回复且让 R 的收包增加 < 50 pps（不经 R）；扰动前的 circuit 全部仍在（空窗内新增一条经 R 的）。
+`roam/relay`（`--netmap-scenario roam-relay`）在 `roam/nat` 的拓扑上增加公网中继 R（WAN 上的已发布 listener，A、B 都拨它；A–R、R–B 常驻），无 `via`，Policy 的候选为 `[A, B]` 与 `[A, R, B]`。除主流量外 A 每 250 ms 用一个新 5 元组发一个 UDP 报文（每个都是新流）；A 的 status 失去对 B 的直连时启动第二条 100 pps UDP 流（“中继流”），恢复直连 2 秒后再启动第三条（“恢复后流”）4 秒；R 的收包计数每 250 ms 采样。门槛在 `roam/nat` 的之外：旧直连流的最长中断 ≤ 重新获取＋1 秒；空窗内（失去直连 0.25 秒后至恢复前 0.25 秒，长度记为 `gapWindowS`）的每个新流都在 1 秒内经 R 得到回复，且 R 在中继流启动前的收包速率 > 0；新流每 250 ms 一个，重新获取很快时窗内可能没有新流，此项为不适用（`newFlowsThroughR: null`，不是通过，也不掩盖其他检查），未测到失去直连或恢复时刻仍为失败；直连恢复后中继流仍经 R（R 收包 ≥ 150 pps）且最长中断 ≤ 1 秒；恢复后流得到回复且让 R 的收包增加 < 50 pps（不经 R）；扰动前的 circuit 全部仍在（空窗内新增一条经 R 的）。
 
 | 格 | main：旧流中断／重新获取，空窗新流，中继流 | R2：旧流中断／重新获取，空窗新流，中继流，恢复后流 |
 | --- | --- | --- |
@@ -448,13 +448,39 @@ Planck 23 行矩阵 `20261017T035656Z-d07a17c4`（`673c17be`，与本分支 `307
 | run | 失败行 | 签名 | 归因 |
 | --- | --- | --- | --- |
 | `20261017T053722Z-1a07d234`、`…060640Z-a914c818` | `roam/flap` | 结束时节点 `down` 超过 fixture 的 10 秒 | fixture：controller 在 `roam-complete` 即退出，`roam-down` 与 `roam-stop` 同时发出；节点的 Control 正有请求在飞时等其 10 秒连接超时。`20261017T091216Z-074139d9` 的 `roam/nat` 同一签名。已修：supervisor 等每个节点 `roam-down` 后才 `roam-stop`（至多 40 秒），controller 服务到 `roam-stop` |
-| `…053722Z-1a07d234`、`…082502Z-2e0eefcf` | `nat/resolved` | 租约到期恢复后 `ping` 60 秒停在 `path_handshake`：R 等待 R→B 认证通道，B 的穿透 `prepare` 一直 `NotAvailable` | 中继侧通道获取；H4 未改动该路径。同一时段 main `f58def1b` 全量 `20261017T080104Z-70baa7e4` 全部通过 |
+| `…053722Z-1a07d234`、`…082502Z-2e0eefcf` | `nat/resolved` | 租约到期恢复后 `ping` 60 秒停在 `path_handshake`：R 等待 R→B 认证通道，B 的穿透 `prepare` 一直 `NotAvailable` | 节点时钟超前使 prepare 期限超过 Server 的 10 秒，见 [N6](#n6) |
 | `…064349Z-19673857` | `exit/off` | Docker `all predefined address pools have been fully subnetted` | 已知并发网络数（见 [roam/flap 行](#roam-flap-row)的 `20261015T233743Z-e3b061a6` 记录） |
-| `…070252Z-9b56eb4d`、`…074258Z-6ebe6e29`、`…093221Z-b49150f4` | `exit/off` | 全局方案下新连接 3 秒内未经 E（circuit 3 秒才就绪）；echo 投影峰值 33（上限 32）；echo 299/300 | 高负载下的 fixture 计时与上限 |
-| `…072236Z-ad684c7a`、`…084541Z-e7a66243`（并行 4） | `roam/relay` | `newFlowsThroughR`：0.6–0.75 秒的空窗内新流 0–1 个、未经 R 回复 | 空窗过短的门槛 |
-| `…074258Z-6ebe6e29` | `nat/resolved` | 持续窗口初始 IPv4 UDP 无 echo | 高负载 |
+| `…070252Z-9b56eb4d`、`…074258Z-6ebe6e29`、`…093221Z-b49150f4` | `exit/off` | 全局方案下新连接 3 秒内未经 E（circuit 3 秒才就绪）；echo 投影峰值 33（上限 32）；echo 299/300 | 分别为 fixture 记录晚于回复、上限低于负载的合法峰值、E 出口投影安装 netlink 失败（X16），见 [N6](#n6) |
+| `…072236Z-ad684c7a`、`…084541Z-e7a66243`（并行 4） | `roam/relay` | `newFlowsThroughR`：0.6–0.75 秒的空窗内新流 0–1 个、未经 R 回复 | 空窗无样本（现为不适用）；`…084541Z` 的一个新流确实丢失（R4），见 [N6](#n6) |
+| `…074258Z-6ebe6e29` | `nat/resolved` | 持续窗口初始 IPv4 UDP 无 echo | 与上面 `nat/resolved` 同一根因（恢复访问后 27 秒 `NotAvailable`），见 [N6](#n6) |
 
 这些签名都不经过 H4 改动的代码（Status 投影、失败撤回／重装的发布与日志、控制中继状态发布）。证据 `.meshway/validation/h4/matrix2/`–`matrix12/`、`matrix-main-baseline/`、`matrix4/`（修 fixture 前后 `roam/flap` 单行各 4／1 次通过）。
+
+### N6 高负载矩阵偶发失败 {#n6}
+
+H4 十轮全量的偶发失败逐一归因如下（证据 `.meshway/validation/h4/matrix2/`–`matrix12/`，N6 的复现与矩阵在 `.meshway/validation/n6/`）。
+
+| 签名 | 根因 | 处理 |
+| --- | --- | --- |
+| `nat/resolved` 租约到期恢复后（`matrix2`、`matrix9`）或恢复访问后（`matrix8`）一端的 `prepare` 一直 `notAvailable`，R 一直等认证通道 | 产品：Control 的 UTC 高水位时钟先读单调时钟后读墙钟，两次读取之间的延迟（抢占、CPU 配额）被永久计入，节点时钟比真实时间快；prepare 以“本机时间＋10 秒”为期限，Server 按自己的时钟拒绝寿命超过 10 秒的请求。只有上下文期限离到期不足 10 秒、把请求期限压下来时才偶尔通过（三次失败的恢复时刻都与此吻合：`matrix2` 05:51:05.45 的请求被上下文期限 05:51:14.468 截住、此前一秒的请求超 26 ms） | 时钟先读墙钟（`Clock::read`）；prepare 期限改以 Server 时间表达（[协调穿透](/v2/node/connectivity)）。确定性单测：第二次读取延迟 50 ms 时高水位不超前（旧顺序下失败），本机时钟快 5 秒时请求期限仍为 Server 读数＋10 秒 |
+| `exit/off` 第 11 阶段 `global:E` 下新连接“未经 E”（`matrix6`） | fixture：E 的抓包显示该连接在 0.14 秒内完成回显；外部服务先回复、后写访问日志，高负载下 fixture 读日志时尚未写入 | 服务在回复前写入访问记录 |
+| `exit/off` 第 15 阶段 echo 投影峰值 33（上限 32，`matrix8`） | fixture 门槛：投影数是速率 × 寿命，寿命含往返时间（该轮 ping 最大 RTT 1.9 秒）；各轮中位数 22–23，负载结束后归零，无泄漏 | 上限改为该负载能同时存活的数目 46（见[第 15 阶段](#exit-scenario)） |
+| `exit/off` 第 15 阶段 echo 299／300（`matrix12`） | 产品：丢失的序号 186 到达 E，但其出口投影安装因 `kernel netlink operation failed` 失败，该包被丢弃 | 未修，登记为 X16（见[剩余边界](#remaining-boundaries)）；本次只增加可诊断性 |
+| `roam/relay` `newFlowsThroughR`，空窗内 0 个新流（`matrix7`，窗口 0.10 秒） | fixture 门槛：新流每 250 ms 一个，短空窗没有样本 | 不适用（`null`），记录 `gapWindowS` |
+| `roam/relay` 同一检查，空窗内 1 个新流无回复（`matrix10`） | 产品：该流发出时 A 的重新穿透已开始（attempt active），新直连通道尚未认证；它从未得到回复，中继 circuit 当时正常 | 未修，登记为 R4（见[剩余边界](#remaining-boundaries)） |
+| `exit/off` Docker 地址池耗尽（`matrix5`） | 运维环境：同机多个矩阵共用默认地址池 | 见[矩阵入口](/v2/development#validation-matrix)，不改产品 |
+
+复现：修复后 `nat/resolved` 在并发负载下（每批两个远程 run 各 `nat/resolved`＋`udp/off`＋`tcp/off`，启动 load 3–7）连续 10 次通过，另两次单独运行通过；12 次三端日志中 prepare 的 `notAvailable` 为 0（H4 失败轮为 27–46 次）。
+
+全量 24 行矩阵（并行 8，同机无其他矩阵；`8f251c35`，第 4、5 轮为 `d3f677a4`）：
+
+| 轮 | run | 结果 | 失败行与签名 |
+| --- | --- | --- | --- |
+| 1 | `20261018T031044Z-04aa8f36` | 23／24 | `exit/off` echo 299／300：X16，`step: route`，路由规则 dump `errno 16`（EBUSY） |
+| 2 | `20261018T033112Z-db458b73` | 24／24 | — |
+| 3 | `20261018T035558Z-121bc50a` | 22／24 | `exit/off` X16（同上）；`roam/direct` 建网时 `srv6 must be the requested internal IPv6 bridge`：fixture 以文本比较随机 IPv6 前缀，带前导零的十六进制组被规范化后不等（约 1/8），已改为按网络比较 |
+| 4 | `20261018T041809Z-20a90cbd` | 24／24 | — |
+| 5 | `20261018T044655Z-89ef1b80` | 23／24 | `exit/off` 第 16 阶段压力步 iperf3 50 秒超时：E 角色未停止、无内核失败日志，未定位（见[剩余边界](#remaining-boundaries)） |
 
 ### 当前验证证据
 
@@ -547,6 +573,12 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 
 **节点持有的 peer 事实可早于其租约到期**（X8 发现，P1 已修复）：此前 Server 只在事实内容变化时唤醒 sync hold、hold 只以租约为界，而事实按报告者 `observedAt` + 60 秒到期，节点在 hold 期间或 Node HTTP 中断时可在租约到期前失去出口就绪事实，新出口流在本地被拒（`netmap_denied`）。现在 hold 也以节点持有事实的最早截止 − 5 秒为界（[sync hold](/v2/node/netmap-design#sync-transport)），且过期的出口就绪事实按最后已知值继续可选（[最后已知事实](/v2/node/connectivity#last-known-facts)）；`exit/off` 第 15 阶段等待 A 取得一次 sync 的绕过已去掉，第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。P1 Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；单行 `exit/off` 复跑 `20261015T065227Z-9645d57c`（行 `20261015T065230Z-44e5de7b`）中 A 关于 E 的事实在首个路径租约到期前 7 秒过期，此后两条链路各 3 个新 UDP 出口流建立、无拒绝（main 上此时 `netmap_denied`）。同批另有两次失败：第 15 阶段 E 在角色重装进行中如实报告未就绪、A 据当前事实拒绝了一次出口 DNS 查询（`20261015T055930Z-782e79b3`；是 fixture 断言过严，第 15 阶段已改为中断窗界定，见[出口场景](#exit-scenario)）；两个 `exit/off` 并发时第 16 阶段 iperf3 超时（`20261015T065357Z-b98749cc`，与 P1 无关）。断言修改后（`f9115a91`）`exit/off` 单跑两次通过：`20261015T123419Z-c3f16022`（行 `20261015T123716Z-7753f918`，A 关于 E 的事实在首个租约到期前 3 秒过期，之后两条链路各 1 个新出口流成功）与 `20261015T125059Z-2a2f87b5`（行 `20261015T125103Z-83765480`，第 15 阶段中断窗 2.5 秒内 3 次查询失败 2 次、上限 7、窗外 0 次）。
 
+**出口投影安装的 netlink 失败丢首包**（X16，未修）：E 为新流安装出口投影时一次内核操作失败，该流的首包被丢弃（不停止角色）。N6 在 `Exit projection operation failed` 日志加了失败步骤 `step`，netlink 失败另记 `errno`／超时，nft 失败记子命令与 stderr；N6 矩阵两次都是 `step: route`、路由规则 dump `errno 16`（EBUSY，dump 期间规则集变化）。按 X12 的“读取失败为未知→重读→重试”口径，首包应留在 held 队列等一次重试。频率约每 10 轮全量一次（`exit/off` 第 15 阶段 echo 299／300）；证据 H4 `matrix12/`，N6 第 1、3 轮。
+
+**重新穿透交接期的新流丢失**（R4，未修）：`roam/relay` 中 A 换上联后，重新穿透已开始（attempt active）而新直连通道尚未认证时发出的单报文新流没有任何回复，同一时刻经 R 的中继流正常。频率约每 10 轮一次；证据 H4 `matrix10/`（行 `20261017T090359Z-49e94e80`，hard 格 flow 151）。
+
+**`exit/off` 第 16 阶段压力步 iperf3 超时**（未定位）：echo 安装旁的出口 TCP 流 50 秒未结束；E 的角色保持安装、无内核失败日志，抓包已在该阶段之前结束。此前 P1 的单行 `20261015T065357Z-b98749cc` 有同一症状（当时与另一出口行的吞吐阶段并发）；N6 第 5 轮 `exit/off` 行 `20261018T045847Z-d65d2124` 同机没有其他吞吐阶段，启动 load 8.8。
+
 V1 及中间候选的 STUN 候选为空、完整路径握手／状态发布不收敛等失败证据保留在各自原始报告和 V2 私有归档中；它们不被改写为通过。短模式只证明其工具和诊断行为，仍不计入本表完整验收。
 
 ## 入口
@@ -625,7 +657,7 @@ mise run validate:remote -- --ref <commit> --rows exit/off
 
 第 12 阶段（ICMP 错误，E1）：拓扑另有 router 容器（只开 IPv4 转发，无 Meshway 进程），连接 `external` 网段与第二个公网分类网段 `far`；external 服务的 far 地址经 E → router → far 到达，router 的 far 接口 MTU 为 1280（其余 1500，服务自己的接口不变，因此 TCP 对端通告的 MSS 不限制 A）。E 上临时加一条 far 网段经 router 的路由，阶段结束删除。A 的原始 ICMP socket 记录 A 收到的全部 ICMPv4 错误。`traceroute -I`（每跳 1 个、默认并发探测、等待 2 秒）必须给出第 1 跳为 E 的地址（E 本机 time exceeded）、第 2 跳为 router、第 3 跳为目标，且后续跳 RTT 比第 1 跳多出不超过 20 ms（各探测的出口投影同轮安装）；64 KiB 的 TCP echo 经 router 的 fragmentation needed 收敛并完整返回，A 的路由缓存为 `mtu 1280`，`ping -M do -s 1300` 失败、`-s 1252` 成功，A 记录到来自 router 的 3/4、MTU 1280 错误；A 保持一条到 external 服务的 UDP 流时，router 伪造 5 条引用不存在 tuple 的 time exceeded（E 的 conntrack 无关联，内核丢弃）与 30 条引用该流 NAT 后 tuple 的错误：A 只收到后者，且在每流每秒 10 条的预算之内（至少 1 条）。数据面的引用匹配、来源规则与限速另由 `meshway-dataplane` 的流表、报文与 A→R→E 运行测试覆盖；伪造错误被数据面拒绝的计数（`related_counters`）不经 IPC 暴露，行内以 A 的接收结果为准。随后（M1，[通道 MTU](/v2/node/dataplane#channel-mtu)）把 A–R 链路两端 MTU 设为 1400：A 的 `status` 中到 R 的通道变为 `1400/1286`；A 的 MSS 表限为 1246；经 E 的 64 KiB TCP echo 不限 MSS 也完整返回（A 的 `TCP_MAXSEG` ≤ 1246，服务回包不超过 A–R 通道）；`ping -M do -s 1259` 失败并报告 `Frag needed … (mtu = 1286)`，A 的原始 socket 记录到来自目标地址的 3/4、MTU 1286 错误（A 自己的数据面合成），路由缓存 `mtu 1286`，`-s 1258` 成功；结束恢复 1500 并清空路由缓存。
 
-第 15 阶段（echo 寿命、容量与出口角色恢复，X8；`dev/exit-fixture/echo.py`）：在第 12 阶段之后。① 容量：A 对 external 服务地址 `ping -i 0.2` 60 秒（300 个请求），同时每 2 秒一次 `traceroute -I -q 1 -w 2 -m 5`；每 0.5 秒读取 E 的出口 journal，投影数峰值不超过 32（容量 128 的四分之一），A 收到全部 300 个回复，traceroute 全部到达目标，E 的角色始终已安装。② CT 换代（OPS8 的触发）：A 以 0.5 秒间隔 ping 40 次，其间 E 两次 `conntrack -D -p icmp -s <A>` 删除该 echo 连接的条目（如 ICMP conntrack 超时），后一序号新建条目；回复至多少于删除次数，E 的角色保持安装，E 的日志没有新的 `Exit owner stopping`。③ 恢复：A 持续 ping 时删除 E 出口回程表中 A 的 `/32` 路由：E 的日志出现 `Exit role failed; withdrawing it alone`，角色在 25 秒窗口内重装，窗口内 E 每次采样都 running、data plane ready、applied 非空、sync connected 无错误，A 的 MagicDNS（本地）与普通名称（经 R 到 E 的 resolver）每 0.5 秒各解析一次：MagicDNS 全部成功；普通名称只允许在角色中断窗内失败——E 撤回角色时如实报告未就绪，A 按这一当前事实拒绝经 E 的出口 DNS 查询是正确的 fail closed，不是缺陷。中断窗用 E 自己的时间戳界定：起点为删除路由后 E 日志的 `Exit-owned kernel object removed outside its owner; stopping the exit role`，终点为 E 的 Status 中重装后第一份就绪能力（`observedAt` 晚于起点）所在 State 报告被确认（E 日志 `State candidate publication acknowledged`）再加 1 秒（Server 对内容变化立即回答 A 的 hold、A 应用该事实）。与窗有交集的查询可失败，失败次数不超过 `ceil(窗长 / 0.5 s) + 1`（相邻查询起点至少相隔 0.5 秒）；窗外的普通名称查询 100% 成功。窗、窗内查询数、失败数与上限记录在 `echo-capacity.json` 的 `recovery.dnsOutage`。A 的 ping 在重装后恢复。组件测试 `exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role` 在同一隔离容器形态下覆盖：CT 换代后旧序号退役与新序号安装不冲突、删除回程路由只停角色且清理精确、Host 的新 serial 照常安装、角色重装后投影可用。证据 `echo-capacity.json`、`components/recovery.log`。
+第 15 阶段（echo 寿命、容量与出口角色恢复，X8；`dev/exit-fixture/echo.py`）：在第 12 阶段之后。① 容量：A 对 external 服务地址 `ping -i 0.2` 60 秒（300 个请求），同时每 2 秒一次 `traceroute -I -q 1 -w 2 -m 5`；每 0.5 秒读取 E 的出口 journal，投影数峰值不超过该负载能同时存活的上限 46（每个 echo 序号一条流，回复后 2 秒、无回复 10 秒结束：ping 5／秒 ×（等待 2 秒＋2 秒）＋1，加 ⌈10 秒 ÷ 间隔 2 秒⌉ 轮 traceroute × 5 个探测；与往返时间无关，远低于容量 128，且回复后不结束的 echo 仅 ping 即达 50）（N6 之前为容量的四分之一 32，低于该负载在高负载 RTT 下的合法峰值），A 收到全部 300 个回复，traceroute 全部到达目标，E 的角色始终已安装。② CT 换代（OPS8 的触发）：A 以 0.5 秒间隔 ping 40 次，其间 E 两次 `conntrack -D -p icmp -s <A>` 删除该 echo 连接的条目（如 ICMP conntrack 超时），后一序号新建条目；回复至多少于删除次数，E 的角色保持安装，E 的日志没有新的 `Exit owner stopping`。③ 恢复：A 持续 ping 时删除 E 出口回程表中 A 的 `/32` 路由：E 的日志出现 `Exit role failed; withdrawing it alone`，角色在 25 秒窗口内重装，窗口内 E 每次采样都 running、data plane ready、applied 非空、sync connected 无错误，A 的 MagicDNS（本地）与普通名称（经 R 到 E 的 resolver）每 0.5 秒各解析一次：MagicDNS 全部成功；普通名称只允许在角色中断窗内失败——E 撤回角色时如实报告未就绪，A 按这一当前事实拒绝经 E 的出口 DNS 查询是正确的 fail closed，不是缺陷。中断窗用 E 自己的时间戳界定：起点为删除路由后 E 日志的 `Exit-owned kernel object removed outside its owner; stopping the exit role`，终点为 E 的 Status 中重装后第一份就绪能力（`observedAt` 晚于起点）所在 State 报告被确认（E 日志 `State candidate publication acknowledged`）再加 1 秒（Server 对内容变化立即回答 A 的 hold、A 应用该事实）。与窗有交集的查询可失败，失败次数不超过 `ceil(窗长 / 0.5 s) + 1`（相邻查询起点至少相隔 0.5 秒）；窗外的普通名称查询 100% 成功。窗、窗内查询数、失败数与上限记录在 `echo-capacity.json` 的 `recovery.dnsOutage`。A 的 ping 在重装后恢复。组件测试 `exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role` 在同一隔离容器形态下覆盖：CT 换代后旧序号退役与新序号安装不冲突、删除回程路由只停角色且清理精确、Host 的新 serial 照常安装、角色重装后投影可用。证据 `echo-capacity.json`、`components/recovery.log`。
 
 第 16 阶段（出口吞吐与队列压力，X10；`dev/exit-fixture/throughput.py`）：在第 15 阶段之后。① A 对 E 的 Mesh 地址（同一 A→R→E 通道，Access `tcp:5201`、Mesh 路由经 R）与经 E 对 external 服务各跑 iperf3 TCP 20 秒，正向与反向（`-R`，反向即 E 或 external 发送、回程经 E 的 NAT 与出口 TUN）；记录接收速率、发送方重传与 A／E 的链路、SNMP、qdisc 计数，不作断言（数值属于宿主；矩阵为 debug 构建，只比较同一行内的比例）。② A 经 E 的一条 iperf3 TCP 流持续 20 秒，同时 A 以 0.2 秒间隔 ping 同一服务（每个 echo 请求是一条新出口流，E 在 TCP 流旁不断安装与退役投影）：每个 1 秒区间都有数据（不低于 0.1 Mbit/s），echo 回复不少于 95 %，E 的角色保持安装。抓包在本阶段前停止、之后以第二段续抓（各段的包数上限不被本阶段耗尽），第 7／9 阶段的检查读取全部分段。证据 `exit-throughput.json`。
 

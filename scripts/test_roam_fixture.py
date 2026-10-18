@@ -26,8 +26,9 @@ class TraversalGateTests(unittest.TestCase):
 class RelayGateTests(unittest.TestCase):
     def test_new_flows_of_the_gap_need_flows_replies_and_relay_traffic(self):
         self.assertTrue(evidence.through_relay({1: 0.0, 2: 0.25}, {1, 2}, 12.0))
-        # An empty window, a missing reply, no or zero relay traffic: no evidence.
-        self.assertFalse(evidence.through_relay({}, set(), 12.0))
+        # An empty window has no sample: not applicable, not a pass.
+        self.assertIsNone(evidence.through_relay({}, set(), 12.0))
+        # A missing reply, no or zero relay traffic: no evidence.
         self.assertFalse(evidence.through_relay({1: 0.0, 2: 0.25}, {1}, 12.0))
         self.assertFalse(evidence.through_relay({1: 0.0}, {1}, None))
         self.assertFalse(evidence.through_relay({1: 0.0}, {1}, 0.0))

@@ -418,7 +418,7 @@ impl super::super::super::Kernel {
                                 let mut installed = installed.into_iter();
                                 for (incarnation, guard) in incarnations.iter().zip(&guards) {
                                     let result = installed.next().unwrap_or(Err(Error::Worker));
-                                    if let Err(error) = &result { tracing::debug!(operation = "install", %error, "Exit projection operation failed"); }
+                                    if let Err(error) = &result { tracing::debug!(operation = "install", step = backend.take_failed_step(*incarnation), %error, "Exit projection operation failed"); }
                                     let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
                                     if result.is_err() && retrying.reconcile(&mut backend, "install", *incarnation).await.is_err() { failed = true; break; }
                                     if let Some(slot) = results.iter_mut().find(|slot| slot.is_none()) { *slot = Some(result); }

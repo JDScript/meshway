@@ -130,7 +130,7 @@ Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分�
 
 Underlay 对每个穿透 socket 按其确切 `SocketReference` 授权尝试目标。instance 换代（Server 重启、instance 租约断续后重新取得）时 Manager 在同一内容上把每个穿透 socket 的引用连同 Underlay 授权一起改绑到新 instance（`Manager::set_instance`），旧 discovery 与尝试目标随之失效，已选定通道保留自己的期限；改绑前的尝试在激活时被拒（`target_not_authorized`），不会因 instance 变化长期无法打洞。
 
-每次准备、接受及获取授权均检查双方当前身份、实例、精确 UDP 邻接及共同的业务或诊断完整路径许可。诊断 witness 另绑定同一 ObservationId、source instance、service 和完整路径，只用于获准诊断连接，不授予业务包权限；可见 peer 不自动获得非相邻 socket 端点。offer 的 nonce、候选对、粗粒度 endpoint source、digest 和期限固定；寿命最多 10 秒，且不超过原候选、报告、session／instance／execution 与所选许可期限。每节点最多八个活动尝试，每网络最多 256 条记录、进程最多 4,096 条记录；同一无序 peer 对／地址族不并行安装不同活动尝试。
+每次准备、接受及获取授权均检查双方当前身份、实例、精确 UDP 邻接及共同的业务或诊断完整路径许可。诊断 witness 另绑定同一 ObservationId、source instance、service 和完整路径，只用于获准诊断连接，不授予业务包权限；可见 peer 不自动获得非相邻 socket 端点。offer 的 nonce、候选对、粗粒度 endpoint source、digest 和期限固定；寿命最多 10 秒（Server 按自己的时钟、自收到 prepare 起计，请求期限更远即 `notAvailable`），且不超过原候选、报告、session／instance／execution 与所选许可期限。节点以 Server 时间表达请求期限：取所用查询回答的 `asOf` 加此后的单调时钟经过时间（不会超前于 Server），而不是本机墙钟，因此本机时钟快于 Server 不会使 prepare 一律不可用。每节点最多八个活动尝试，每网络最多 256 条记录、进程最多 4,096 条记录；同一无序 peer 对／地址族不并行安装不同活动尝试。
 
 Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发送，由唯一 receiver 分流响应。候选的真实 State 上报获确认后，才参与 offer。双方 Active 后从同一 socket 发包，签名握手额外绑定 offer 的 nonce／digest；接入前再次验证原尝试与接收槽，旧尝试不能借新 channel scope 延期。获取成功后，通道由当前执行许可和认证健康检查维持，不依赖过期的 STUN 观测续命。
 

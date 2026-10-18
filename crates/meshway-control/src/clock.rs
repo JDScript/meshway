@@ -34,9 +34,10 @@ pub struct Clock {
 }
 impl Clock {
     pub fn new() -> Result<Self, Error> {
+        let wall = now()?;
         Ok(Self {
             born: Instant::now(),
-            offset: AtomicU64::new(now()?),
+            offset: AtomicU64::new(wall),
             changed: tokio::sync::Notify::new(),
         })
     }
@@ -46,6 +47,9 @@ impl Clock {
         let _ = self.observe(floor_ms, Instant::now());
     }
 
+    /// `monotonic` must be read after `wall`: the offset then never exceeds
+    /// the true one, so a delay between the two reads (preemption, CPU quota)
+    /// cannot leave this clock permanently ahead of the wall clock.
     fn observe(&self, wall: u64, monotonic: Instant) -> Result<u64, Error> {
         let elapsed: u64 = monotonic
             .duration_since(self.born)
@@ -70,8 +74,19 @@ impl Clock {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::detail("control.clock", 2);
         let _profile = PROFILE.enter();
-        let monotonic = Instant::now();
-        Ok((self.observe(now()?, monotonic)?, monotonic))
+        self.read(now, Instant::now)
+    }
+
+    /// The one place both clocks are read: the wall clock first (see
+    /// [`Self::observe`]), whatever delay follows before the monotonic read.
+    fn read(
+        &self,
+        wall: impl FnOnce() -> Result<u64, Error>,
+        monotonic: impl FnOnce() -> Instant,
+    ) -> Result<(u64, Instant), Error> {
+        let wall = wall()?;
+        let monotonic = monotonic();
+        Ok((self.observe(wall, monotonic)?, monotonic))
     }
 
     pub async fn wait_until(
@@ -112,9 +127,9 @@ pub struct Started {
 }
 impl Started {
     pub fn now(clock: &Arc<Clock>) -> Result<Self, Error> {
-        let monotonic = Instant::now();
+        let (wall, monotonic) = clock.read(now, Instant::now)?;
         Ok(Self {
-            wall: clock.observe(now()?, monotonic)?,
+            wall,
             monotonic,
             clock: Arc::clone(clock),
         })
@@ -221,6 +236,38 @@ mod tests {
         clock.observe(wall, Instant::now()).unwrap();
         assert!(!deadline.valid());
         assert!(Deadline::from_response(Started::now(&clock).unwrap(), wall + 60_000).is_err());
+    }
+    #[test]
+    fn a_delay_between_the_two_reads_never_puts_the_clock_ahead() {
+        let clock = Clock::new().unwrap();
+        // Whichever clock is read second is read 50 ms late, as if the thread
+        // were preempted between the two reads.
+        let reads = std::cell::Cell::new(0);
+        let pause = || {
+            reads.set(reads.get() + 1);
+            if reads.get() == 2 {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let (reading, _) = clock
+            .read(
+                || {
+                    pause();
+                    now()
+                },
+                || {
+                    pause();
+                    Instant::now()
+                },
+            )
+            .unwrap();
+        assert_eq!(reads.get(), 2);
+        // Read the other way round, the 50 ms would be in the high-water mark.
+        assert!(reading <= now().unwrap(), "read ahead of the wall clock");
+        assert!(
+            clock.now().unwrap() <= now().unwrap(),
+            "clock left ahead of the wall clock"
+        );
     }
     #[test]
     fn response_transit_time_is_not_added_to_its_deadline() {

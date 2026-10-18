@@ -4,6 +4,16 @@
 
 ## 未发布
 
+矩阵偶发失败（N6，`n6/matrix-flakes`）：wire、IPC、Server schema 与 HTTP 契约均不变。
+
+- 时钟（不变量：Control 的 UTC 高水位不晚于实际读到的墙钟；owner：`meshway-control` `clock.rs`）：先读墙钟再读单调时钟。此前两次读取之间的延迟被永久计入，高负载下节点时钟快数十毫秒。
+- 协调穿透期限（不变量：prepare 无论本机墙钟如何都可被 Server 接纳；owner：Control 的 `DiscoveryContext`）：请求期限以 Server 时间（查询 `asOf`＋单调经过时间）表达。此前节点时钟快于 Server 时每次 prepare 都 `notAvailable`（H4 `nat/resolved` 偶发）。
+- 出口投影安装可诊断性（X16 前置）：失败日志带 `step`，netlink 记 `errno`，nft 记子命令与 stderr；行为不变。
+- fixture：出口外部服务回复前写访问记录；第 15 阶段投影上限按负载的 echo 寿命求得（46，原为容量的四分之一 32）；`roam/relay` 空窗无新流时该项不适用并记录窗口长度；roam fixture 按网络比较随机 IPv6 前缀。
+- 已登记未修：X16（出口投影安装 netlink 失败丢首包）、R4（重新穿透交接期新流丢失）、`exit/off` 第 16 阶段压力步 iperf3 超时（未定位），见 [剩余边界](/v2/node/validation#remaining-boundaries)。
+
+验证：`nat/resolved` 负载下 10／10（另 2 次单独运行），prepare `notAvailable` 0 次；Planck 24 行矩阵 5 轮，见 [N6](/v2/node/validation#n6)。
+
 范围：⚠ 断网窗口——`compilerVersion` `meshway-netmap-3` → `meshway-netmap-4`（[升级方式](/v2/install#compiler-version-upgrade)），IPC 12 → 13（`exit.capability` 按族；另含下列 H4 的可省略 Status 字段；CLI 与 daemon 一起升级）；wire 6 与 Server schema 8 不变；HTTP 契约变化见下（OpenAPI／SDK 已重生成）。I6-1：IPv6 出口第一切片（NAT66）；H4：Status 撤回原因、`observedAt`／`controlObservedAt`、`controlRelay` 与 phase 映射；以及下列 I6-1、H4 工作包。
 
 IPv6 出口（I6-1，`i61/ipv6-exit`，规格为 [IPv6 出口设计](/v2/node/ipv6-exit-design) 的 11 条拍板，行为定义见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)）：
