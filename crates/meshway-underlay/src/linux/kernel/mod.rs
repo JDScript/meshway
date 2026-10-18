@@ -334,7 +334,11 @@ where
 {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut result = Vec::new();
-        while let Some(message) = stream.try_next().await.map_err(|_| Error::Netlink)? {
+        while let Some(message) = stream
+            .try_next()
+            .await
+            .map_err(|error| netlink_failure("dump", error))?
+        {
             if result.len() == limit {
                 return Err(Error::Capacity);
             }
@@ -343,7 +347,7 @@ where
         Ok(result)
     })
     .await
-    .map_err(|_| Error::Netlink)?
+    .map_err(|_| netlink_timeout("dump"))?
 }
 
 async fn execute(
@@ -351,8 +355,27 @@ async fn execute(
 ) -> Result<()> {
     tokio::time::timeout(Duration::from_secs(5), operation)
         .await
-        .map_err(|_| Error::Netlink)?
-        .map_err(|_| Error::Netlink)
+        .map_err(|_| netlink_timeout("request"))?
+        .map_err(|error| netlink_failure("request", error))
+}
+
+/// The kernel's own reason for a failed netlink operation, at debug: callers
+/// only see `Error::Netlink`.
+fn netlink_failure(operation: &'static str, error: rtnetlink::Error) -> Error {
+    match &error {
+        rtnetlink::Error::NetlinkError(message) => tracing::debug!(
+            operation,
+            errno = -message.raw_code(),
+            "Kernel netlink operation failed"
+        ),
+        error => tracing::debug!(operation, %error, "Kernel netlink operation failed"),
+    }
+    Error::Netlink
+}
+
+fn netlink_timeout(operation: &'static str) -> Error {
+    tracing::debug!(operation, "Kernel netlink operation timed out");
+    Error::Netlink
 }
 
 async fn get_rules(handle: &Handle, limit: usize) -> Result<Vec<RuleMessage>> {

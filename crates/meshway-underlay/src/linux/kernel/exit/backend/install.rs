@@ -54,16 +54,28 @@ impl Backend {
                     })
                 }
                 .await;
+                if result.is_err() {
+                    self.failed.insert(item.incarnation, "replay");
+                }
                 results[index] = Some(result);
                 continue;
             }
             match self.admit(item, &accepted, &items).await {
                 Ok(()) => accepted.push(index),
-                Err(error) => results[index] = Some(Err(error)),
+                Err(error) => {
+                    self.failed.insert(item.incarnation, "admit");
+                    results[index] = Some(Err(error));
+                }
             }
         }
         if !accepted.is_empty() {
-            let installed = self.install_accepted(&items, &accepted).await;
+            let mut steps = vec![""; accepted.len()];
+            let installed = self.install_accepted(&items, &accepted, &mut steps).await;
+            for (step, index) in steps.iter().zip(&accepted) {
+                if !step.is_empty() {
+                    self.failed.insert(items[*index].incarnation, step);
+                }
+            }
             for (index, result) in accepted.iter().zip(installed) {
                 results[*index] = Some(result);
             }
@@ -131,10 +143,12 @@ impl Backend {
     }
 
     /// The kernel part of [`Self::install_batch`] for admitted projections.
+    /// `steps` names, per accepted projection, the step that failed it.
     async fn install_accepted(
         &mut self,
         items: &[Install],
         accepted: &[usize],
+        steps: &mut [&'static str],
     ) -> Vec<Result<ProjectionAck>> {
         let all = |error: Error| {
             accepted
@@ -145,6 +159,7 @@ impl Backend {
         // Ownership of the tables and of every listed element: one dump for
         // the round, before anything of it is written.
         if let Err(error) = self.verify().await {
+            steps.fill("verify");
             return all(error);
         }
         let mut results: Vec<Option<Result<ProjectionAck>>> =
@@ -156,6 +171,7 @@ impl Backend {
             let owned = match conntrack::lookup_owned(tuple, self.ledger.program.mark).await {
                 Ok(owned) => owned,
                 Err(_) => {
+                    steps[slot] = "conntrack";
                     results[slot] = Some(Err(Error::Conflict));
                     continue;
                 }
@@ -170,6 +186,7 @@ impl Backend {
                     .any(|live| live.valid() && live.tuple.same_connection(tuple))
                     && self.attributable(None, tuple, &entry);
                 if !shared {
+                    steps[slot] = "conntrack_owned";
                     results[slot] = Some(Err(Error::Conflict));
                 }
             }
@@ -189,6 +206,7 @@ impl Backend {
                     .iter()
                     .any(|flow| flow.slot == *slot)
             }) else {
+                steps[slot] = "journal_slot";
                 results[slot] = Some(Err(Error::Capacity));
                 continue;
             };
@@ -202,6 +220,11 @@ impl Backend {
             });
         }
         if let Err(error) = self.store.persist(&self.ledger).await {
+            for (step, result) in steps.iter_mut().zip(&results) {
+                if result.is_none() {
+                    *step = "journal";
+                }
+            }
             return results
                 .into_iter()
                 .map(|result| result.unwrap_or_else(|| Err(replicate(&error))))
@@ -234,6 +257,7 @@ impl Backend {
                 vacant.insert(routed);
             }
             if let Some(Err(error)) = pairs.get(&pair) {
+                steps[slot] = "route";
                 results[slot] = Some(Err(replicate(error)));
             }
         }
@@ -247,7 +271,10 @@ impl Backend {
                 Ok(seconds) => {
                     gates.insert(slot, seconds);
                 }
-                Err(error) => results[slot] = Some(Err(error)),
+                Err(error) => {
+                    steps[slot] = "deadline";
+                    results[slot] = Some(Err(error));
+                }
             }
         }
         let elements: Vec<(usize, Value)> = gates
@@ -279,7 +306,10 @@ impl Backend {
                         Ok(_) => {
                             submitted.insert(*slot, now);
                         }
-                        Err(error) => results[*slot] = Some(Err(error)),
+                        Err(error) => {
+                            steps[*slot] = "nft_add";
+                            results[*slot] = Some(Err(error));
+                        }
                     }
                 }
             }
@@ -293,12 +323,14 @@ impl Backend {
             Ok(present) => {
                 for (slot, found) in submitted.keys().zip(present) {
                     if !found {
+                        steps[*slot] = "readback_missing";
                         results[*slot] = Some(Err(Error::Conflict));
                     }
                 }
             }
             Err(error) => {
                 for slot in submitted.keys() {
+                    steps[*slot] = "readback";
                     results[*slot] = Some(Err(replicate(&error)));
                 }
             }
@@ -314,6 +346,7 @@ impl Backend {
                 || item.scope.revoked.is_cancelled()
                 || !item.deadline.valid()
             {
+                steps[*slot] = "gate";
                 results[*slot] = Some(match self.close_projection(item.incarnation).await {
                     Ok(()) => Err(Error::Expired),
                     Err(error) => Err(error),
@@ -333,6 +366,7 @@ impl Backend {
                     view.insert(item.incarnation, live);
                 }
                 Err(_) => {
+                    steps[*slot] = "view";
                     results[*slot] = Some(Err(Error::Worker));
                     continue;
                 }
@@ -343,8 +377,9 @@ impl Backend {
         }
         self.ledger.pending = false;
         if let Err(error) = self.store.persist(&self.ledger).await {
-            for result in &mut results {
+            for (step, result) in steps.iter_mut().zip(&mut results) {
                 if matches!(result, Some(Ok(_))) {
+                    *step = "journal";
                     *result = Some(Err(replicate(&error)));
                 }
             }

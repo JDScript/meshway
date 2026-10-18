@@ -53,6 +53,7 @@ pub(in crate::linux::kernel) async fn recover(
         live: BTreeMap::new(),
         local: Vec::new(),
         stop: CancellationToken::new(),
+        failed: BTreeMap::new(),
     };
     backend.close_observed(false).await
 }

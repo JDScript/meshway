@@ -42,9 +42,16 @@ pub(super) struct Backend {
     pub live: BTreeMap<super::ExitIncarnation, Live>,
     pub local: Vec<IpAddr>,
     pub stop: CancellationToken,
+    /// The step that failed each projection install not yet reported (see
+    /// [`Self::take_failed_step`]); the kernel's own reason is logged at it.
+    pub failed: BTreeMap<super::ExitIncarnation, &'static str>,
 }
 
 impl Backend {
+    /// The step that failed `incarnation`'s last install, once.
+    pub fn take_failed_step(&mut self, incarnation: super::ExitIncarnation) -> &'static str {
+        self.failed.remove(&incarnation).unwrap_or("unknown")
+    }
     pub async fn create(
         mut store: Store,
         ledger: Ledger,
@@ -67,6 +74,7 @@ impl Backend {
             live: BTreeMap::new(),
             local,
             stop,
+            failed: BTreeMap::new(),
         };
         backend.ledger.pending = true;
         backend.store.persist(&backend.ledger).await?;
