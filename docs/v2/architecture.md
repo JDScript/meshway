@@ -19,6 +19,7 @@ crates/
   meshway-private-storage/
   meshway-engine/           # 含 keys（包平面密钥）
   meshway-control/
+  meshway-node/             # Node 运行协调、IPC 分派与平台 Host 接缝
   meshway-connectivity/
   meshway-stun/
   meshway-underlay/
@@ -50,9 +51,9 @@ mise.toml                   # 工具链版本、workspace 任务与 CI 入口
 references/                 # 独立上游参考 checkout
 ```
 
-daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`runtime/network/` 装配 underlay、Manager、SecureNode、自动需求和安装结果，不另持流表或控制凭据；`ipc/` 负责本机服务和 socket 归属。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway_protocol::ipc::Client`。Node 能力范围见 [Node](/v2/node)。
+`meshway-node` 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`runtime/network/` 装配 Host、Manager、SecureNode、自动需求和安装结果，不另持流表或控制凭据；`ipc/` 对已认证连接做类型化分派。`host/` 定义平台接口，`host/linux/` 包装现有 underlay、系统 DNS 与出口 driver。daemon 只装配参数、日志、信号、Unix socket／UID 认证、systemd 与进程输出。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway_protocol::ipc::Client`。Node 能力范围见 [Node](/v2/node)。
 
-`runtime/network` 还持有 dataplane 的有界 crypto pool：批量 TUN／Manager 输入先经唯一 SecureNode 准备，再交给不访问 authority 的工作线程，结果保序交回 owner 提交 replay／端点流，最后按冻结 channel 批次发送或写入 TUN。pool、guard 与存储实现在 dataplane；daemon 只装配和驱动，L3／L4 性能工具复用同一入口。
+`meshway-node::runtime::network` 还持有 dataplane 的有界 crypto pool：批量包设备／Manager 输入先经唯一 SecureNode 准备，再交给不访问 authority 的工作线程，结果保序交回 owner 提交 replay／端点流，最后按冻结 channel 批次发送或写入包设备。pool、guard 与存储实现在 dataplane；Node 运行时只装配和驱动，L3／L4 性能工具复用同一入口。
 
 ## 命名规则
 
@@ -69,10 +70,10 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 | `meshway-model` | Server、Node、各 Rust 契约库 | ID、基础引用、实体与 State 值类型；`transport` 协议键与外层 socket 分类；`wire` 共同对象／判别联合声明（`object!`／`tagged!`／`string_enum!`）、map-only 和重复键检查 |
 | `meshway-configuration` | Server、Node | Config／执行类型、基础规范化与字段约束、digest／delta |
 | `meshway-policy` | Server、Node 数据面 | Access／routing／topology 语义、主体匹配、纯编译与执行许可判定 |
-| `meshway-protocol` | Server、生成客户端；`ipc` 由 daemon、CLI 使用 | HTTP／SSE 请求响应、认证消息、错误与分页；`ipc` 为本机命令、查询、事件与客户端；引用上面的类型 |
+| `meshway-protocol` | Server、生成客户端；`ipc` 由 Node 运行时、daemon、CLI 使用 | HTTP／SSE 请求响应、认证消息、错误与分页；`ipc` 为本机命令、查询、事件与客户端；引用上面的类型 |
 | `meshway-control-client` | Node control、其他 Rust API 消费者 | 生成操作、严格解码和 HTTP／stream 接线 |
 | `meshway-transport` | 配置库、Server 目录（`spec`）；connectivity、dataplane、underlay、stream providers | `spec`：协议参数、默认规则、结构校验和能力类型；承载会话、batch／buffer 与背压接口；`tcp`／`udp`：Native TCP／UDP provider |
-| `meshway-private-storage` | Server、Node control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
+| `meshway-private-storage` | Server、Node 运行时／control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
 | `meshway-logging` | Server、daemon、CLI 程序入口 | 统一 tracing subscriber、日志参数与 stderr 格式；见[运行日志](/v2/logging) |
 | `meshway-transport-stream` | Server 材料验证（`tls`）、HTTP client 装配、connectivity | `tls`：同一 ring provider、证书／密钥验证、精确叶证书信任、显式系统信任配置与既有流上的 TLS 握手；`vless`／`trojan`：既有流上的 TCP CONNECT 封装 |
 | `meshway-rules` | `tools/meshway-rules-cli`；规划中 Server `resources/`、Policy、Node control（R2a，尚未接线） | `MWRS` 规则集格式、确定性 builder、任意字节安全的校验 loader（只读入堆，无 `unsafe`）、域名／IP matcher、来源转换器与报告、签名规则目录；见[规则集引擎设计](/v2/rule-sets-design) |
@@ -86,9 +87,9 @@ Server 验证 VLESS 等配置时使用 `meshway_transport::spec`；Server 链接
 
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
-| `meshway-engine` | daemon（唯一装配）；connectivity、dataplane、underlay、dns（读取 `Desired`）；control（读取私钥） | 唯一期望状态 owner：`Engine::reconfig(Option<&Netmap>)`、租约计时（`next_expiry`／`expire`）、共享 `LocalCompiler` 的不可变 `Desired`；本身份已登记的包平面密钥 `DataPlaneKeys` 与逐跳证明 transcript（不是授权，不含租约或期限） |
+| `meshway-engine` | Node 运行时（唯一装配）；connectivity、dataplane、underlay、dns（读取 `Desired`）；control（读取私钥） | 唯一期望状态 owner：`Engine::reconfig(Option<&Netmap>)`、租约计时（`next_expiry`／`expire`）、共享 `LocalCompiler` 的不可变 `Desired`；本身份已登记的包平面密钥 `DataPlaneKeys` 与逐跳证明 transcript（不是授权，不含租约或期限） |
 
-Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway-engine` 是租约的唯一计时者，并按固定顺序把同一 `Desired` 应用到各组件：Host（capture／TUN／负向 DNS／exit 角色）→ 邻接 Manager → SecureNode（流／circuit／exit 投影）→ DNS 查询权限；撤回时顺序相反，每个组件都应用空期望。组件不持有租约、代际、继承物或可转让的输出权限；到期 fail closed 由空期望保证，不靠逐包检查期限。基准与 fixture 的静态内容只位于 `tools/`（`meshway-desired-fixture`），`meshwayd` 只装配 Control 与 Engine。
+Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway-engine` 是租约的唯一计时者，并按固定顺序把同一 `Desired` 应用到各组件：Host（capture／TUN／负向 DNS／exit 角色）→ 邻接 Manager → SecureNode（流／circuit／exit 投影）→ DNS 查询权限；撤回时顺序相反，每个组件都应用空期望。组件不持有租约、代际、继承物或可转让的输出权限；到期 fail closed 由空期望保证，不靠逐包检查期限。基准与 fixture 的静态内容只位于 `tools/`（`meshway-desired-fixture`），`meshway-node` 装配 Control 与 Engine，`meshwayd` 驱动其公开运行入口。
 
 `meshway-plugin`／`meshway-plugin-host` 是规划中的插件 SDK／装载边界，当前没有对应 crate 或可用动态 ABI，见[插件与能力（规划）](/v2/node/plugins)。
 
@@ -98,16 +99,17 @@ Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway
 
 | 实际 crate | 实现归属与边界 |
 | --- | --- |
+| `meshway-node` | 供进程宿主复用的唯一运行协调器：持久意图、控制调度、Engine／包平面／DNS 装配、状态与诊断、已认证 IPC 分派；`host::Platform`／`Host` 隔离平台资源与执行器，Linux 实现在 `host/linux/`，Apple Host 尚未实现 |
 | `meshway-control` | [接入、netmap 验证与发布、回执和报告顺序](/v2/node/control)的唯一生产 owner；不签发执行快照 |
 | `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane)；`diagnostics` 模块为[有界 source 探测调度、单调计时、窗口与结果](/v2/node/diagnostics)，借用同一 SecureNode，不持独立连接或密码状态；期望内容与包平面密钥来自 Engine |
 | `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理)；期望内容与包平面密钥来自 Engine，穿透上下文来自 control |
 | `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay)；期望内容来自 Engine，穿透类型来自 control |
 | `meshway-transport`（`tcp`／`udp`）、`meshway-transport-stream`（`vless`／`trojan`） | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
-| `meshway-tun` | Linux TUN 设备 I/O |
+| `meshway-tun` | `PacketDevice`：MTU、可取消有界批量读、保留已提交前缀的批量写与 `PathLimits`；Linux `Tun` 实现此接口，dataplane carrier 依赖接口而非具体设备 |
 | `meshway-netns` | 读取当前 network namespace 的 cookie（`SO_NETNS_COOKIE`）及唯一的 namespace 记录比较规则（`same`），Underlay 记录与系统 DNS 预约共用；workspace 唯一经审计的 `unsafe`（一次 `getsockopt`），见[生命周期](/v2/node/runtime#生命周期) |
 | `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；期望内容来自 Engine |
 
-出口转发与 `meshway-netstack` 运行库尚未实现。
+`meshway-netstack` userspace 运行库尚未实现。
 
 ### 跨入口复用
 
@@ -115,10 +117,10 @@ Node 的每项业务规则和可变状态都有唯一实现归属。多个入口
 
 | 共同逻辑 | 实现归属 | 复用入口 |
 | --- | --- | --- |
-| 上线、下线、网络切换与期望状态协调 | daemon 的运行协调器 | CLI 命令、启动恢复、运行目标变化 |
+| 上线、下线与期望状态协调 | `meshway-node` 的运行协调器 | 已认证 IPC 命令、启动恢复、运行目标变化；切换 Meshway 网络尚未实现 |
 | 规则语义、递归路段展开、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
-| netmap 租约计时与期望内容（`Desired`）、组件应用顺序 | `meshway-engine` | daemon 事件循环驱动 `next_expiry`／`expire` |
-| netmap 验证、保存、发布与 Server 绑定 | `meshway-control` | daemon 装配；基准静态内容限于 `tools/` |
+| netmap 租约计时与期望内容（`Desired`）、组件应用顺序 | `meshway-engine` | Node 事件循环驱动 `next_expiry`／`expire` |
+| netmap 验证、保存、发布与 Server 绑定 | `meshway-control` | Node 运行时装配；基准静态内容限于 `tools/` |
 | 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN；规划中的 userspace IP 包入口 |
 | 获准邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan stream、Native UDP 显式端点与协调穿透 |
 | 内核 capture／sink、资源归属与用途受限 socket | `meshway-underlay` | Server bootstrap、获准候选、daemon TUN 安装 |
@@ -150,8 +152,9 @@ underlay ──► configuration + control + dns + engine + model + policy + pri
              + transport + transport-stream + tun
 connectivity ──► configuration + control + dataplane + engine + model + policy + protocol + stun
                  + transport + transport-stream + underlay
-meshwayd ──► configuration + connectivity + control + control-client + dataplane + dns + engine
-             + model + private-storage + protocol + tun + underlay
+node ──► configuration + connectivity + control + control-client + dataplane + dns + engine
+         + model + private-storage + protocol + rules + tun + underlay
+meshwayd ──► node + configuration + dns + private-storage + protocol
 meshway CLI ──► protocol
 
 tools/test-server ──► configuration + control + control-client + model + policy + protocol + Server
@@ -167,7 +170,7 @@ tools/runtime-fixture ──► configuration + control-client + dns + model + p
                           + protocol + Server + transport
 ```
 
-生产依赖不反向依赖 App。control、connectivity、dataplane、underlay、dns、engine 的测试只经 dev-dependency `tools/meshway-test-server` 启动真实 Server（进程内、临时数据目录、随机端口）、完成账号／网络／enrollment，并通过钉钥代理与签名 sync 回复投递自编译 netmap；它们不直接依赖 `meshway-server` 或 `meshway-control-client`。control-client 的 SDK 测试与 daemon／CLI 生命周期测试仍直接启动 Server，CLI 测试另使用 `meshway-daemon`；`tools/` 的 packet／runtime fixture 以普通依赖链接 Server App。underlay／connectivity 保留 Control 的穿透类型依赖，但打开内核 owner、受保护 socket 和静态邻接不要求创建 Control 或联系 Server。
+生产依赖不反向依赖 App。node、control、connectivity、dataplane、underlay、dns、engine 的组件测试经 dev-dependency `tools/meshway-test-server` 启动真实 Server（进程内、临时数据目录、随机端口）、完成账号／网络／enrollment，并通过钉钥代理与签名 sync 回复投递自编译 netmap。control-client 的 SDK 测试与 daemon／CLI 生命周期测试仍直接启动 Server；CLI 测试使用 `meshway-node` 的正式入口与认证测试传输，daemon 的进程测试验证真实二进制、Unix socket、信号和进程输出。`tools/` 的 packet／runtime fixture 以普通依赖链接 Server App。underlay／connectivity 保留 Control 的穿透类型依赖，但打开内核 owner、受保护 socket 和静态邻接不要求创建 Control 或联系 Server。
 
 provider 通过合同交互，不读取另一 provider 的私有容器；Rust 类型依赖不表示允许跨动态库直接传递 Rust 内部对象。
 

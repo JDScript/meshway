@@ -162,7 +162,7 @@ async fn send(
 /// One intersection of original packet lifetimes for each TUN syscall. Partial
 /// writes advance only the returned prefix; the suffix keeps every original cap.
 pub async fn deliver_batch(
-    tun: &meshway_tun::Tun,
+    tun: &dyn meshway_tun::PacketDevice,
     pending: Vec<PendingAction>,
 ) -> Result<(), Error> {
     Delivery::new(pending).write(tun).await
@@ -190,7 +190,7 @@ impl Delivery {
         }
     }
 
-    pub async fn write(&mut self, tun: &meshway_tun::Tun) -> Result<(), Error> {
+    pub async fn write(&mut self, tun: &dyn meshway_tun::PacketDevice) -> Result<(), Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("carrier.deliver.poll");
         PROFILE

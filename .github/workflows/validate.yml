@@ -20,6 +20,7 @@ on:
       - "crates/meshway-policy/**"
       - "crates/meshway-rules/**"
       - "crates/meshway-engine/**"
+      - "crates/meshway-node/**"
       - "crates/meshway-connectivity/**"
       - "crates/meshway-control/**"
       - "crates/meshway-underlay/**"

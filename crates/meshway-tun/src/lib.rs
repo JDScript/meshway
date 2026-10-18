@@ -18,6 +18,9 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
+mod device;
+pub use device::{Io, PacketDevice};
+
 /// Largest inner packets the path toward a destination carries, as the
 /// packet owner knows them from its channels: per Mesh address of a peer,
 /// and for every destination outside the Mesh. A host clamps the TCP MSS of
@@ -149,6 +152,20 @@ impl std::fmt::Debug for PacketBatch {
 }
 
 impl PacketBatch {
+    /// Add one normalized packet, enforcing the shared bounded read contract.
+    pub fn push(&mut self, packet: Vec<u8>) -> Result<(), Error> {
+        if packet.is_empty()
+            || self.packets.len() >= 32
+            || self.packets.iter().map(Vec::len).sum::<usize>() + packet.len() > 65536
+        {
+            return Err(Error::InvalidPacketSize {
+                mtu: 65536,
+                actual: packet.len(),
+            });
+        }
+        self.packets.push(packet);
+        Ok(())
+    }
     pub fn packets(&self) -> &[Vec<u8>] {
         &self.packets
     }

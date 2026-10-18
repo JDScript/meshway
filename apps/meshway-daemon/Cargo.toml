@@ -10,41 +10,32 @@ name = "meshwayd"
 path = "src/main.rs"
 
 [dependencies]
-meshway-engine = { path = "../../crates/meshway-engine" }
-meshway-rules = { path = "../../crates/meshway-rules" }
-chrono.workspace = true
-getrandom.workspace = true
-ipnet.workspace = true
-nix = { version = "=0.31.3", default-features = false, features = ["net"] }
+meshway-node = { path = "../../crates/meshway-node" }
 clap = { workspace = true, features = ["env"] }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
-meshway-control = { path = "../../crates/meshway-control" }
-meshway-underlay = { path = "../../crates/meshway-underlay" }
-meshway-tun = { path = "../../crates/meshway-tun" }
-meshway-connectivity = { path = "../../crates/meshway-connectivity" }
-meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-dns = { path = "../../crates/meshway-dns" }
 meshway-logging = { path = "../../crates/meshway-logging" }
-meshway-model = { path = "../../crates/meshway-model" }
 meshway-private-storage = { path = "../../crates/meshway-private-storage" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
-meshway-control-client = { path = "../../crates/meshway-control-client" }
-reqwest.workspace = true
-rustix = { workspace = true, features = ["system"] }
-serde.workspace = true
-serde_json.workspace = true
+rustix.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-uuid.workspace = true
 
 [target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
 mimalloc = { version = "=0.1.52", default-features = false }
 
 [dev-dependencies]
+reqwest.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+meshway-control = { path = "../../crates/meshway-control" }
+meshway-model = { path = "../../crates/meshway-model" }
+meshway-control-client = { path = "../../crates/meshway-control-client" }
 axum.workspace = true
 meshway-server = { path = "../meshway-server" }
-meshway-test-server = { path = "../../tools/meshway-test-server" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

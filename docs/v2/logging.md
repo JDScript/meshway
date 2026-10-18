@@ -13,7 +13,7 @@ Server、`meshwayd`、`meshway`、`reset-password` 和 `ip-datasets` 使用共�
 日志统一写入 stderr。CLI `--json` 只控制 stdout 的公开状态结果，与 `--log-format json` 独立。Server／daemon 的现有 stdout 就绪行继续供进程管理器读取；重定向 stderr 可单独保存日志。格式化与写出使用 subscriber 的同步 stderr writer，无后台日志队列。文件持久化和轮转由进程管理器或外部收集器负责。
 
 ```sh
-RUST_LOG=info,meshway_daemon=debug ./target/debug/meshwayd \
+RUST_LOG=info,meshway_daemon=debug,meshway_node=debug ./target/debug/meshwayd \
   --data-dir "$PWD/.meshway/node" --server http://127.0.0.1:8430 \
   --log-format json 2>node.log
 

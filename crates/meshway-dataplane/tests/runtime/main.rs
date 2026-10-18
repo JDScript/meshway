@@ -13,6 +13,7 @@ mod netmap_flow;
 mod netmap_lifecycle;
 mod netmap_mtu;
 mod netmap_paths;
+mod packet_device;
 mod support;
 
 use support::packet;

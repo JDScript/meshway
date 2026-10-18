@@ -22,7 +22,7 @@ from validation_support import build_lock, cargo_target, report_directory, bind_
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 # Built with --all-targets: dev-dependencies are part of the candidate too.
-PACKAGES = ("meshway-daemon", "meshway-cli", "meshway-runtime-fixture", "meshway-underlay", "meshway-dns")
+PACKAGES = ("meshway-daemon", "meshway-node", "meshway-cli", "meshway-runtime-fixture", "meshway-underlay", "meshway-dns")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
 BOOTSTRAP_BINARY = "meshway-underlay-bootstrap-tests"
 LIFECYCLE_BINARY = "meshway-daemon-lifecycle-tests"
@@ -30,7 +30,7 @@ UNDERLAY_NETMAP_BINARY = "meshway-underlay-netmap-tests"
 LIFECYCLE_TEST = "cleanup::blocked_down_retries_real_dns_reservation_cleanup_without_going_online"
 OWNER_CONFLICT_TEST = "runtime::control::tests::live_tun_owner_conflict_retries_and_recovers_without_new_up"
 PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests"),
-                     "platform-daemon": ("meshway_daemon", "meshway-daemon-platform-tests")}
+                      "platform-daemon": ("meshway_node", "meshway-node-platform-tests")}
 ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, UNDERLAY_NETMAP_BINARY,
              *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
@@ -612,7 +612,7 @@ def main():
             # Exit driver cases require their own NET_ADMIN/NAT/service topology
             # and are run by exit/off, not this no-capability platform check.
             create(role, ["--include-ignored", "--skip", OWNER_CONFLICT_TEST,
-                          "--skip", "runtime::network::exit::tests::", "--nocapture", "--test-threads=4"], executable=binary,
+                          "--skip", "host::linux::exit::tests::", "--nocapture", "--test-threads=4"], executable=binary,
                    environment={"MESHWAY_DNS_ISOLATED": "1", "MESHWAY_DNS_BIND_MOUNT_FILE": "/etc/resolv.conf"})
             result = execute(role)
             passed = not any(result.values()) and "test result: ok." in (report / f"{role}.log").read_text()

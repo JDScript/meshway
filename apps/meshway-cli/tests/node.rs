@@ -8,6 +8,8 @@ use meshway_protocol::{
 use std::{path::Path, process::Output, time::Duration};
 use tokio::{sync::oneshot, time::Instant};
 
+mod support;
+
 fn id() -> RequestId {
     let mut b = [0; 16];
     getrandom::fill(&mut b).unwrap();
@@ -119,11 +121,11 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
         .unwrap();
     let path = root.join("daemon");
     let socket = path.join("control.sock");
-    let settings = meshway_daemon::Settings::new(path.clone(), &origin, Some("cli-node"))
+    let settings = meshway_node::Settings::new(path.clone(), &origin, Some("cli-node"))
         .unwrap()
         .with_network_mode(meshway_protocol::ipc::NetworkMode::ControlOnly);
     let (stop, stopped) = oneshot::channel();
-    let daemon = tokio::spawn(meshway_daemon::run(settings, async {
+    let daemon = tokio::spawn(support::run_node(settings, async {
         let _ = stopped.await;
     }));
     status(&socket, Phase::Down).await;
