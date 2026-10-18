@@ -276,7 +276,6 @@ impl SocketFactory for meshway_underlay::SocketFactory {
     }
 }
 
-#[cfg(target_os = "linux")]
 impl DatagramAuthorization for meshway_underlay::DatagramAuthorization {
     fn rebind(
         &self,

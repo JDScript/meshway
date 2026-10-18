@@ -1870,6 +1870,7 @@ dependencies = [
 name = "meshway-apple-bridge"
 version = "0.1.0-alpha.18"
 dependencies = [
+ "libc",
  "meshway-logging",
  "meshway-node",
  "meshway-protocol",
@@ -2255,7 +2256,9 @@ dependencies = [
 name = "meshway-node"
 version = "0.1.0-alpha.18"
 dependencies = [
+ "bytes",
  "chrono",
+ "futures-util",
  "getrandom 0.3.4",
  "ipnet",
  "meshway-configuration",
@@ -2263,6 +2266,7 @@ dependencies = [
  "meshway-control",
  "meshway-control-client",
  "meshway-dataplane",
+ "meshway-desired-fixture",
  "meshway-dns",
  "meshway-engine",
  "meshway-logging",
@@ -2271,6 +2275,7 @@ dependencies = [
  "meshway-protocol",
  "meshway-rules",
  "meshway-test-server",
+ "meshway-transport",
  "meshway-tun",
  "meshway-underlay",
  "nix 0.31.3",
@@ -2278,7 +2283,9 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "socket2",
  "tempfile",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",

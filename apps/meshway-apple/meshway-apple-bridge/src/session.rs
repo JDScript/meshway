@@ -36,8 +36,9 @@ impl Task {
     pub(crate) async fn close(&self) {
         self.stop.cancel();
         let mut task = self.task.lock().await;
-        if let Some(task) = task.take() {
-            let _ = task.await;
+        if let Some(running) = task.as_mut() {
+            let _ = running.await;
+            task.take();
         }
     }
 }

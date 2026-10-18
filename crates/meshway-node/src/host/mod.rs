@@ -8,10 +8,41 @@ use tokio::sync::watch;
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::Linux;
+#[cfg(target_os = "macos")]
+pub mod apple;
+
+pub(crate) fn owns_file(name: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        name == apple::JOURNAL
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = name;
+        false
+    }
+}
 
 pub type Local<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 pub type SendFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-pub type Result<T> = std::result::Result<T, meshway_underlay::Error>;
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Linux(#[from] meshway_underlay::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Tun(#[from] meshway_tun::Error),
+    #[error("platform capability is unavailable: {0}")]
+    Unsupported(&'static str),
+}
+impl From<std::io::ErrorKind> for Error {
+    fn from(kind: std::io::ErrorKind) -> Self {
+        Self::Io(kind.into())
+    }
+}
 /// Construct the owner future on its executor, rather than moving a !Send
 /// future between threads. The Linux adapter alone chooses blocking + block_on.
 pub type Worker = Box<dyn FnOnce() -> Local<'static, std::result::Result<(), Problem>> + Send>;
@@ -79,6 +110,9 @@ pub trait Host: Send {
     fn sockets(&self) -> Arc<dyn meshway_connectivity::SocketFactory>;
     fn resolver_exchange(&self) -> Arc<dyn meshway_dns::ResolverExchange>;
     fn client_builder(&self) -> Result<reqwest::ClientBuilder>;
+    fn request_interrupt(&self) -> Option<Arc<dyn meshway_control_client::RequestInterrupt>> {
+        None
+    }
     fn network_changes(&self) -> watch::Receiver<meshway_underlay::NetworkChange>;
     fn pool_overlap(&self) -> watch::Receiver<Option<meshway_underlay::PoolOverlap>>;
     fn repairs(&self) -> watch::Receiver<u64>;
@@ -95,9 +129,19 @@ pub trait Host: Send {
     fn recover(&mut self) -> Local<'_, Result<()>>;
     fn repair_at(&self) -> Option<std::time::Instant>;
     fn repair(&mut self) -> Local<'_, Result<()>>;
-    fn kernel_changes(&self) -> watch::Receiver<Option<meshway_underlay::KernelChangePending>>;
-    fn exit_cleanups(&self) -> watch::Receiver<Option<meshway_underlay::RetryPending>>;
-    fn control_relay(&self) -> watch::Receiver<Option<meshway_underlay::ControlRelayState>>;
+    fn kernel_changes(
+        &self,
+    ) -> Option<watch::Receiver<Option<meshway_underlay::KernelChangePending>>> {
+        None
+    }
+    fn exit_cleanups(&self) -> Option<watch::Receiver<Option<meshway_underlay::RetryPending>>> {
+        None
+    }
+    fn control_relay(
+        &self,
+    ) -> Option<watch::Receiver<Option<meshway_underlay::ControlRelayState>>> {
+        None
+    }
     fn clamp_mss(&mut self, limits: meshway_tun::PathLimits) -> Result<()>;
     fn prepare_dns(
         &mut self,

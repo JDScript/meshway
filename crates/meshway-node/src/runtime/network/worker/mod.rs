@@ -152,12 +152,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             DnsFailure,
             /// The failed DNS owner re-proved its system installation.
             DnsRecovered,
-            Packet(
-                Result<
-                    Vec<Result<Packet, meshway_dataplane::PacketError>>,
-                    meshway_underlay::Error,
-                >,
-            ),
+            Packet(Result<Vec<Result<Packet, meshway_dataplane::PacketError>>, crate::host::Error>),
             Carrier(Vec<Event>),
             CarrierClosed,
             Tick,
@@ -169,7 +164,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             ExitFailed,
             /// The DNS owner's exit resolver fact changed.
             ExitDns,
-            ExitReply(Result<Vec<Vec<u8>>, meshway_underlay::Error>),
+            ExitReply(Result<Vec<Vec<u8>>, crate::host::Error>),
         }
         let live = engine.desired().is_some() && engine.components().secure().is_some();
         let expiry = engine.next_expiry();
@@ -262,7 +257,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     _ = packets.sent(host.as_ref()), if has_outputs => Work::Tick,
                     _ = pool.ready(), if live && pool.has_pending() => Work::Tick,
                     result = async {
-                        match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
+                        match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(crate::host::Error::Tun), None => std::future::pending().await }
                     }, if can_read => Work::Packet(result),
                     event = async {
                         match manager {

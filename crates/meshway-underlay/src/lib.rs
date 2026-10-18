@@ -8,7 +8,9 @@
 
 mod resource;
 mod target;
+pub mod traversal;
 pub use resource::netmap_resource_compatible;
+pub use traversal::DatagramAuthorization;
 
 /// Names of this crate's private files in the directory given to `Host::open`.
 mod files {
@@ -48,10 +50,10 @@ use std::{
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCutoff,
-    ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport,
-    ExitWrite, ExitWriter, Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram,
-    TraversalDatagram, ephemeral_ports, port_holders,
+    CtConfirmation, DatagramCandidate, EgressCapture, ExitCutoff, ExitIncarnation, ExitReply,
+    ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport, ExitWrite, ExitWriter,
+    Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram, TraversalDatagram,
+    ephemeral_ports, port_holders,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 
@@ -210,7 +212,8 @@ impl Default for Options {
 }
 
 impl Options {
-    fn validate(&self) -> Result<()> {
+    /// Validate local resource budgets before a platform opens resources.
+    pub fn validate(&self) -> Result<()> {
         if !(1280..=65535).contains(&self.mtu)
             || !(1..=128).contains(&self.max_pools)
             || !(1..=1024).contains(&self.max_sockets)

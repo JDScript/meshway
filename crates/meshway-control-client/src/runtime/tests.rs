@@ -50,6 +50,75 @@ async fn server(router: Router, limit: usize) -> (Client, Server) {
 async fn fetch(client: &Client, path: &str) -> Result<Response, ClientError<Problem>> {
     client.send(Method::GET, path, None, None::<&()>).await
 }
+
+struct PathChanged(tokio::sync::watch::Receiver<u64>);
+impl RequestInterrupt for PathChanged {
+    fn interrupted(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        let mut path = self.0.clone();
+        path.borrow_and_update();
+        Box::pin(async move {
+            let _ = path.changed().await;
+        })
+    }
+}
+
+#[tokio::test]
+async fn transport_change_cancels_headers_and_body_but_not_the_next_request() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let headers = entered.clone();
+    let body = entered.clone();
+    let router = Router::new()
+        .route(
+            "/headers",
+            get(move || {
+                let entered = headers.clone();
+                async move {
+                    entered.notify_one();
+                    std::future::pending::<HttpResponse<Body>>().await
+                }
+            }),
+        )
+        .route(
+            "/body",
+            get(move || {
+                let entered = body.clone();
+                async move {
+                    let stream = futures_util::stream::once(async move {
+                        entered.notify_one();
+                        Ok::<_, Infallible>(bytes::Bytes::from_static(b"{"))
+                    })
+                    .chain(futures_util::stream::pending());
+                    HttpResponse::builder()
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from_stream(stream))
+                        .unwrap()
+                }
+            }),
+        )
+        .route(
+            "/ready",
+            get(|| async { json(200, r#"{"value":"ready"}"#) }),
+        );
+    let (client, mut server) = server(router, 4096).await;
+    let (path, received) = tokio::sync::watch::channel(0);
+    let client = client.with_request_interrupt(Some(Arc::new(PathChanged(received))));
+    for (next, route) in [(1, "/headers"), (2, "/body")] {
+        let sending = client.clone();
+        let task = tokio::spawn(async move { fetch(&sending, route).await });
+        entered.notified().await;
+        path.send_replace(next);
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_millis(500), task)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(ClientError::Network { .. })
+        ));
+        assert!(fetch(&client, "/ready").await.is_ok());
+    }
+    server.0.abort();
+    let _ = (&mut server.0).await;
+}
 fn json(status: u16, body: &'static str) -> HttpResponse<Body> {
     HttpResponse::builder()
         .status(status)

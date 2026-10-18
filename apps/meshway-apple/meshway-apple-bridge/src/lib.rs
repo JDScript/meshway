@@ -3,7 +3,8 @@
 #![deny(unsafe_code)]
 
 // UniFFI emits extern ABI functions and pointer conversion glue. This module
-// is the only generated-code exception; handwritten code has no unsafe.
+// permits generated-code unsafe. The separate fd module audits one integer-only
+// dup syscall and adoption of its successful fresh result.
 #[allow(unsafe_code)]
 mod abi {
     uniffi::setup_scaffolding!();
@@ -16,6 +17,10 @@ use tokio_util::sync::CancellationToken;
 
 mod session;
 pub use session::{FrameSink, Session};
+mod settings;
+pub use settings::{NetworkSettings, Route, TunnelSettingsSink};
+#[allow(unsafe_code)]
+mod fd;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum BridgeError {
@@ -77,6 +82,7 @@ fn runtime() -> Result<&'static tokio::runtime::Runtime, BridgeError> {
 
 #[derive(uniffi::Object)]
 pub struct NodeHandle {
+    apple: Option<Arc<meshway_node::host::apple::Apple>>,
     ipc: meshway_node::ipc::Handle,
     stop: CancellationToken,
     task: Mutex<Option<tokio::task::JoinHandle<Result<(), &'static str>>>>,
@@ -90,6 +96,37 @@ pub struct NodeHandle {
 pub fn start_control_only(
     config: StartConfig,
     logs: Box<dyn LogSink>,
+) -> Result<Arc<NodeHandle>, BridgeError> {
+    open(config, logs, None)
+}
+
+/// The provider must have exclusive packet I/O on this utun. We duplicate its
+/// descriptor; NE retains ownership of the original and performs no flow reads.
+#[uniffi::export]
+pub fn start(
+    config: StartConfig,
+    logs: Box<dyn LogSink>,
+    settings: Box<dyn TunnelSettingsSink>,
+    utun_fd: i32,
+    utun_name: String,
+) -> Result<Arc<NodeHandle>, BridgeError> {
+    let descriptor = fd::duplicate(utun_fd).map_err(|error| BridgeError::Startup {
+        message: error.to_string(),
+    })?;
+    let sink = Arc::new(settings::Sink(Arc::from(settings)));
+    let apple =
+        meshway_node::host::apple::Apple::new(descriptor, utun_name, sink).map_err(|error| {
+            BridgeError::Startup {
+                message: error.to_string(),
+            }
+        })?;
+    open(config, logs, Some(Arc::new(apple)))
+}
+
+fn open(
+    config: StartConfig,
+    logs: Box<dyn LogSink>,
+    apple: Option<Arc<meshway_node::host::apple::Apple>>,
 ) -> Result<Arc<NodeHandle>, BridgeError> {
     static LOGGING: OnceLock<Result<(), String>> = OnceLock::new();
     LOGGING
@@ -114,13 +151,18 @@ pub fn start_control_only(
     .map_err(|message| BridgeError::Startup {
         message: message.into(),
     })?
-    .with_network_mode(meshway_protocol::ipc::NetworkMode::ControlOnly);
+    .with_network_mode(if apple.is_some() {
+        meshway_protocol::ipc::NetworkMode::Tun
+    } else {
+        meshway_protocol::ipc::NetworkMode::ControlOnly
+    });
+    let platform: Arc<dyn meshway_node::host::Platform> = match &apple {
+        Some(apple) => apple.clone(),
+        None => Arc::new(meshway_node::host::ControlOnly),
+    };
     let runtime = runtime()?;
     let node = runtime
-        .block_on(meshway_node::Node::open(
-            settings,
-            Arc::new(meshway_node::host::ControlOnly),
-        ))
+        .block_on(meshway_node::Node::open(settings, platform))
         .map_err(|message| BridgeError::Startup {
             message: message.into(),
         })?;
@@ -129,6 +171,7 @@ pub fn start_control_only(
     let shutdown = stop.clone();
     let task = runtime.spawn(async move { node.run(shutdown.cancelled()).await });
     Ok(Arc::new(NodeHandle {
+        apple,
         ipc,
         stop,
         task: Mutex::new(Some(task)),
@@ -139,6 +182,19 @@ pub fn start_control_only(
 
 #[uniffi::export(async_runtime = "tokio")]
 impl NodeHandle {
+    pub fn path_changed(&self, interface: Option<String>, path: bool) -> Result<(), BridgeError> {
+        if self.stop.is_cancelled() {
+            return Err(BridgeError::Stopped);
+        }
+        if let Some(apple) = &self.apple {
+            apple
+                .path_changed(interface, path)
+                .map_err(|error| BridgeError::Startup {
+                    message: error.to_string(),
+                })?;
+        }
+        Ok(())
+    }
     pub async fn stop(&self) -> Result<(), BridgeError> {
         let sessions: Vec<_> = {
             let sessions = self.sessions.lock().map_err(|_| BridgeError::Stopped)?;
@@ -151,8 +207,10 @@ impl NodeHandle {
         }
         // Keep the mutex through join so concurrent stops also wait for exit.
         let mut task = self.task.lock().await;
-        if let Some(task) = task.take() {
-            task.await
+        if let Some(running) = task.as_mut() {
+            let result = running.await;
+            task.take();
+            result
                 .map_err(|error| BridgeError::Startup {
                     message: error.to_string(),
                 })?

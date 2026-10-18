@@ -262,11 +262,15 @@ pub(super) async fn run(
             };
             let opened = {
                 let settings = settings.clone();
+                let interrupt = network
+                    .as_ref()
+                    .and_then(|network| network.request_interrupt.clone());
                 tokio::task::spawn_blocking(move || {
-                    Control::open(
+                    Control::open_with_interrupt(
                         &settings.data_dir.join(IDENTITY_DIRECTORY),
                         &settings.server,
                         builder,
+                        interrupt,
                     )
                 })
                 .await

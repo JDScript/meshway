@@ -185,6 +185,17 @@ impl Control {
     /// Remote origins require HTTPS; plaintext is limited to numeric loopback.
     /// The supplied builder retains the host's socket/resolver protection.
     pub fn open(path: &Path, origin: &str, http: reqwest::ClientBuilder) -> Result<Self, Error> {
+        Self::open_with_interrupt(path, origin, http, None)
+    }
+
+    /// Direct native hosts interrupt in-flight finite HTTP operations when the
+    /// physical path changes. Linux's socket relay continues using `open`.
+    pub fn open_with_interrupt(
+        path: &Path,
+        origin: &str,
+        http: reqwest::ClientBuilder,
+        interrupt: Option<Arc<dyn meshway_control_client::RequestInterrupt>>,
+    ) -> Result<Self, Error> {
         let origin = server_origin(origin)?;
         let client = Client::new(
             &origin,
@@ -195,7 +206,8 @@ impl Control {
             storage::LIMIT,
         )
         .map_err(|_| Error::Endpoint)?
-        .with_request_timeout(Duration::from_secs(20));
+        .with_request_timeout(Duration::from_secs(20))
+        .with_request_interrupt(interrupt);
         let directory = Arc::new(meshway_private_storage::Directory::open(
             path,
             "node-control.lock",

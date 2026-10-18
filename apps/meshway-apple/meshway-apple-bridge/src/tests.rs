@@ -67,7 +67,35 @@ fn real_node_status_and_joined_sessions() {
             node.open_ipc_session(Box::new(Frames(send))),
             Err(BridgeError::Capacity)
         ));
-        node.stop().await.unwrap();
+        // Hold completion after the real Node exits. Cancelling one FFI stop
+        // waiter must not detach the join or let another waiter finish early.
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let reached = entered.clone();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let original = node.task.lock().await.take().unwrap();
+        *node.task.lock().await = Some(tokio::spawn(async move {
+            let result = original.await.unwrap();
+            reached.notify_one();
+            let _ = released.await;
+            result
+        }));
+        {
+            let stopping = node.stop();
+            tokio::pin!(stopping);
+            tokio::select! {
+                _ = entered.notified() => {},
+                result = &mut stopping => panic!("stop finished before join: {result:?}"),
+            }
+        }
+        let stopping = node.stop();
+        tokio::pin!(stopping);
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(stopping.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        release.send(()).unwrap();
+        stopping.await.unwrap();
         assert!(held.iter().all(|session| session.is_closed()));
         node.stop().await.unwrap();
     });

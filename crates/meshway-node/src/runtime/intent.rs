@@ -111,6 +111,7 @@ fn owned(name: &str) -> bool {
         || name == crate::ipc::SOCKET_FILE
         || name == super::control::IDENTITY_DIRECTORY
         || meshway_underlay::owns_file(name)
+        || crate::host::owns_file(name)
         || meshway_private_storage::is_staging(name)
 }
 
