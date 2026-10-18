@@ -2,9 +2,13 @@
 
 `meshway-mac-vm` 是 [macOS App 设计](/v2/node/apple-design)的独立 Tart 验收机。App 在宿主 Xcode 构建，在 VM 内安装、激活与运行；网络使用 Tart 默认 NAT。VM 的 SIP／AMFI 开发设置只用于无 provisioning profile 的平台实验，不是发布方式。
 
+## C1 合并后冒烟
+
+当前 VM 为 **0.1/10** App／extension（`c0aacd66`），基于 A3＋B1＋B2 合并 `3f9dce34`，经 0.1/9→0.1/10 同身份替换，固定 VPN UUID 不变、无 GUI 再批准。App 消费后先 ACK，再关闭短请求连接；provider 取消时立即唤醒等待回调并 join Rust transport。合并后 Mesh／出口冒烟及收尾的精确结论见 [macOS 验收行](/v2/node/validation#macos)，私有证据与有界编排位于仓库公共根 `.meshway/macos-lab/c1/`。构建、部署和 probe 命令沿用下文。
+
 ## B1 出口、接口恢复与流式 IPC
 
-当前 VM 为 **0.1/8** App／extension（`6dfee4b8`），沿用下文 A3 的已批准 VPN、Server 身份和 Linux peer。0.1/5→0.1/6→0.1/7→0.1/8 均经同身份 `.replace` 激活，无 GUI 再批准；固定 UUID 不变。B1 证据在仓库公共根 `.meshway/macos-lab/b1/`，验收结论只在 [macOS 验收行](/v2/node/validation#macos)维护。
+B1 验收使用 **0.1/8** App／extension（`6dfee4b8`），沿用下文 A3 的已批准 VPN、Server 身份和 Linux peer。0.1/5→0.1/6→0.1/7→0.1/8 均经同身份 `.replace` 激活，无 GUI 再批准；固定 UUID 不变。B1 证据在仓库公共根 `.meshway/macos-lab/b1/`，验收结论只在 [macOS 验收行](/v2/node/validation#macos)维护。
 
 | 资源 | 配置 |
 | --- | --- |
@@ -26,6 +30,7 @@ nohup sh -c 'sleep 180; scutil --nc stop 8FFD2452-D3B2-48F2-A81D-9CD4900DCAB5' \
 kill -0 "$!"
 # 仅需改已有 manager 参数时使用；lab 保存 excludeLocalNetworks=true。
 /Applications/Meshway.app/Contents/MacOS/Meshway --lab start-private
+/Applications/Meshway.app/Contents/MacOS/Meshway --lab inspect-preferences
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe up
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe exit b1-exit
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe status
@@ -43,11 +48,13 @@ dscacheutil -q host -a name sample.b1.test
 
 漫游最小场景仅在来宾独立脚本中 `/sbin/ifconfig en0 down`，3 秒后 up；同时维持 20 秒 TCP／UDP 回显。恢复脚本不依赖 SSH，Tart 进程不动。真实换接口／NAT 与 sleep／wake 尚未测试，不能将这行替代 Linux 漫游矩阵。流式取消用 `--probe ping a3-linux`（5 秒正常关闭）或在 sample 出现后 SIGTERM **对应 App 客户端 PID**；核对相同 PID 的 `session cancelled`／`Rust IPC transport joined` 和持续接纳，不能终止 provider 代替取消。
 
+`--lab inspect-preferences` 只加载既有 manager，输出 provider identifier、`includeAllNetworks` 与 `excludeLocalNetworks`，不保存或创建配置。`start-private` 与正式 App 共用 `TunnelController.start` 的默认本地网络排除参数；固定 UUID 另用 `scutil --nc list` 核对。
+
 结束时清除源方案、Node Down、停止固定 tunnel；Linux 节点 Down 后停止具名容器，保留独立身份／卷与证据。固定 VPN 与已激活 extension 始终保留。一次 lease 观测中的 SSH timeout 与接续原到期窗口的成功结果分别保存，精确结论见验收行。
 
 ## A3 Node 接线与部署基础
 
-源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。A3 验收时通过 scp 部署 **0.1/5**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4→0.1/5 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在仓库公共根 `.meshway/macos-lab/a3/`；当前部署见页首 B1。
+源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。A3 验收时通过 scp 部署 **0.1/5**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4→0.1/5 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在仓库公共根 `.meshway/macos-lab/a3/`；当前部署见页首 C1。
 
 VPN 配置已由用户批准，固定 UUID 为 **8FFD2452-D3B2-48F2-A81D-9CD4900DCAB5**，名称 `Meshway Shell Lab`。此后不得移除或重建；启停用该 UUID 的 `scutil --nc start/stop`，修改参数时 load 现有 manager 后 save。实测把 Server origin 改为隔离 Server 时保存无再次确认、UUID 不变。provider 已在 root 下接入并 running，双栈包流与系统 DNS 的精确结果见[验收范围](/v2/node/validation#macos)。此前新建配置的确认与 root AuthorizationRef 失败记录保留在私有证据中。
 
@@ -108,7 +115,7 @@ DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认
 | 网络 | Tart 默认 shared NAT；不传 `--net-bridged`、`--net-softnet`，不修改宿主 DNS／路由／防火墙 |
 | 构建 | `apps/meshway-apple/build/DerivedData`，macOS 26+、arm64、Swift 6 严格并发 |
 | 安装 | VM 的 `/Applications/Meshway.app`；extension 位于 App 的 `Contents/Library/SystemExtensions` |
-| 当前程序 | B1 0.1/8 App／extension；已批准固定 UUID 的 VPN 配置，须保留 |
+| 当前程序 | C1 0.1/10 App／extension；已批准固定 UUID 的 VPN 配置，须保留 |
 
 当前 VM IP 为 `192.168.64.2`，SSH 专用密钥可用；显示状态见上节。SIP disabled、AMFI 开发参数、developer mode 与虚拟机标记的 A2 读回见下文。A2 的薄壳实验与 A3 的真实 Node 结果分别保留；下文历史操作不用于移除当前固定 VPN。
 
