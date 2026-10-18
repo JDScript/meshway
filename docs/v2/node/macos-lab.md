@@ -26,6 +26,7 @@ nohup sh -c 'sleep 180; scutil --nc stop 8FFD2452-D3B2-48F2-A81D-9CD4900DCAB5' \
 kill -0 "$!"
 # 仅需改已有 manager 参数时使用；lab 保存 excludeLocalNetworks=true。
 /Applications/Meshway.app/Contents/MacOS/Meshway --lab start-private
+/Applications/Meshway.app/Contents/MacOS/Meshway --lab inspect-preferences
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe up
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe exit b1-exit
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe status
@@ -42,6 +43,8 @@ dscacheutil -q host -a name sample.b1.test
 私有编排入口（从对应工作树用 `mise exec`）：`accept.py` 验出口、DNS／名称关联、清除与 E 撤回；`more.py` 验 E pcap、en0 中断及 36 次真实流式 IPC 取消；`lease.py` 停止核对过 PID 的隔离 Server、跨实际签名到期取证并恢复；`final-vm.py` 验 0.1/8、40 次独立 SSH、双承载与 IPv6 不可用；`ipv6-packet.py` 取本机合成 ICMPv6 的 utun pcap。这些是有副作用的本 lab 场景，不属于常规 `mise run check`。
 
 漫游最小场景仅在来宾独立脚本中 `/sbin/ifconfig en0 down`，3 秒后 up；同时维持 20 秒 TCP／UDP 回显。恢复脚本不依赖 SSH，Tart 进程不动。真实换接口／NAT 与 sleep／wake 尚未测试，不能将这行替代 Linux 漫游矩阵。流式取消用 `--probe ping a3-linux`（5 秒正常关闭）或在 sample 出现后 SIGTERM **对应 App 客户端 PID**；核对相同 PID 的 `session cancelled`／`Rust IPC transport joined` 和持续接纳，不能终止 provider 代替取消。
+
+`--lab inspect-preferences` 只加载既有 manager，输出 provider identifier、`includeAllNetworks` 与 `excludeLocalNetworks`，不保存或创建配置。`start-private` 与正式 App 共用 `TunnelController.start` 的默认本地网络排除参数；固定 UUID 另用 `scutil --nc list` 核对。
 
 结束时清除源方案、Node Down、停止固定 tunnel；Linux 节点 Down 后停止具名容器，保留独立身份／卷与证据。固定 VPN 与已激活 extension 始终保留。一次 lease 观测中的 SSH timeout 与接续原到期窗口的成功结果分别保存，精确结论见验收行。
 

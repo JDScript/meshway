@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import NetworkExtension
 
 // Headless VM acceptance uses the same controller as the debug window.
 // Exit 77 means GUI approval, 78 a reboot, 124 an unanswered system request.
@@ -25,8 +26,22 @@ enum LabCommand {
             case "start-private", "start-system", "start-default", "start-all", "start-default-local", "start-all-local":
                 let success = await controller.start(
                     defaultRoute: !["start-private", "start-system"].contains(action), includeAllNetworks: action.hasPrefix("start-all"),
-                    excludeLocalNetworks: true, systemAuthorization: action == "start-system")
+                    systemAuthorization: action == "start-system")
                 exit(success ? 0 : 1)
+            case "inspect-preferences":
+                do {
+                    let identifier = try ShellConfiguration.value("MeshwayExtensionID")
+                    let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+                    guard let manager = managers.first(where: {
+                        ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == identifier
+                    }), let configuration = manager.protocolConfiguration as? NETunnelProviderProtocol else {
+                        print("No saved Meshway VPN configuration"); exit(1)
+                    }
+                    print("providerBundleIdentifier=\(identifier)")
+                    print("includeAllNetworks=\(configuration.includeAllNetworks)")
+                    print("excludeLocalNetworks=\(configuration.excludeLocalNetworks)")
+                    exit(0)
+                } catch { print("Preferences read failed: \(error)"); exit(1) }
             case "app-frame":
                 controller.send("meshway-app-frame")
                 try? await Task.sleep(for: .seconds(4))
@@ -38,7 +53,7 @@ enum LabCommand {
             case "remove":
                 exit(await controller.removeConfiguration() ? 0 : 1)
             default:
-                print("Actions: activate, start-private, start-system (root), start-default, start-all, start-default-local, start-all-local, app-frame, remove")
+                print("Actions: activate, start-private, start-system (root), inspect-preferences, start-default, start-all, start-default-local, start-all-local, app-frame, remove")
                 exit(64)
             }
         }
