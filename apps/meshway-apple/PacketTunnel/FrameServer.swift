@@ -63,7 +63,7 @@ final class FrameServer: NSObject, NSXPCListenerDelegate, @unchecked Sendable {
 final class FrameSession: NSObject, FrameService, FrameSink, @unchecked Sendable {
     private struct State {
         var cancelled = false
-        var inFlight = false
+        var pending: (@Sendable (Bool) -> Void)?
         var deadline: ContinuousClock.Instant?
         var rust: Session?
     }
@@ -87,20 +87,22 @@ final class FrameSession: NSObject, FrameService, FrameSink, @unchecked Sendable
     }
 
     func cancel() {
-        let first = state.withLock { state in
-            guard !state.cancelled else { return false }
+        let cancelled = state.withLock { state -> (Session?, (@Sendable (Bool) -> Void)?)? in
+            guard !state.cancelled else { return nil }
             state.cancelled = true
-            return true
+            let cancelled = (state.rust, state.pending)
+            state.rust = nil
+            state.pending = nil
+            state.deadline = nil
+            return cancelled
         }
-        if first {
+        if let (session, pending) = cancelled {
+            // A disconnected client cannot ACK. Wake the blocking Rust callback
+            // before joining it, rather than retaining its permit until timeout.
+            pending?(false)
             timer.cancel()
             connection.invalidate()
             logger.notice("session cancelled peer-pid=\(self.connection.processIdentifier)")
-            let session = state.withLock { state in
-                let session = state.rust
-                state.rust = nil
-                return session
-            }
             let pid = connection.processIdentifier
             Task { [logger] in
                 await session?.close()
@@ -143,23 +145,24 @@ final class FrameSession: NSObject, FrameService, FrameSink, @unchecked Sendable
 
     private func push(_ frame: Data, completion: @escaping @Sendable (Bool) -> Void) {
         let accepted = state.withLock { state in
-            guard !state.cancelled, !state.inFlight else { return false }
-            state.inFlight = true
+            guard !state.cancelled, state.pending == nil else { return false }
+            state.pending = completion
             state.deadline = .now + .seconds(5)
             return true
         }
         guard accepted else { completion(false); return }
         guard let remote = connection.remoteObjectProxyWithErrorHandler({ [weak self] _ in
             self?.cancel()
-        }) as? FrameReceiver else { cancel(); completion(false); return }
+        }) as? FrameReceiver else { cancel(); return }
         remote.receive(frame) { [weak self] in
             guard let self else { return }
-            let active = state.withLock { state in
-                state.inFlight = false
+            let completed = state.withLock { state in
+                let completed = (state.pending, !state.cancelled)
+                state.pending = nil
                 state.deadline = nil
-                return !state.cancelled
+                return completed
             }
-            completion(active)
+            completed.0?(completed.1)
         }
     }
 }

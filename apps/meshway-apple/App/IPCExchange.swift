@@ -32,19 +32,19 @@ final class IPCExchange {
                         Task { @MainActor in
                             guard let self, self.continuation != nil else { acknowledge(); return }
                             self.consume = Task { @MainActor in
-                                defer { acknowledge() }
                                 do {
                                     let result = try await request.decode(frame: frame)
-                                    guard self.continuation != nil else { return }
+                                    guard self.continuation != nil else { acknowledge(); return }
                                     if text { self.responseText = try await clientResponseText(frame: frame) }
                                     if case .ping(_, let event) = result {
                                         self.event?(event)
+                                        acknowledge()
                                         switch event {
                                         case .completed, .failed: self.finish(.success(result))
                                         default: self.armTimeout(seconds)
                                         }
-                                    } else { self.finish(.success(result)) }
-                                } catch { self.finish(.failure(error)) }
+                                    } else { acknowledge(); self.finish(.success(result)) }
+                                } catch { acknowledge(); self.finish(.failure(error)) }
                             }
                         }
                     }, disconnected: { [weak self] in
