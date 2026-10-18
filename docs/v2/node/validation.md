@@ -15,9 +15,9 @@
 
 ## macOS 实验验收 {#macos}
 
-以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。用户已批准固定 VPN 配置，0.1/5 provider（`e5dc03a7`）实际运行；配置更新保存已验证不再次请求确认，UUID 保持不变。VM 为 macOS 26.6.2 arm64，Linux peer 为 `9e4c040b`；外层 IPv4、Mesh-only capture。不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替 Node 包流行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
+以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。用户已批准固定 VPN 配置，0.1/5 provider（`e5dc03a7`）实际运行；配置更新保存已验证不再次请求确认，UUID 保持不变。VM 为 macOS 26.6.2 arm64，Linux peer 为 `9e4c040b`；外层 IPv4、Mesh-only capture。不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替 Node 包流行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于仓库公共根 `.meshway/macos-lab/a3/`。
 
-A3 共享边界的 Linux 回归（协调者执行，`9e4c040b`）：Planck 24 行矩阵 `20261018T021749Z-d3409553` 中其余 23 行通过，`roam/exit` 单行复跑 `20261018T024724Z-d36cf1ef` 通过；证据 `.meshway/validation/remote/`。此结果不替代 macOS 行。
+A3 共享边界的 Linux 回归（协调者执行）：`9e4c040b` 的 Planck 24 行矩阵 `20261018T021749Z-d3409553` 中其余 23 行通过，`roam/exit` 单行复跑 `20261018T024724Z-d36cf1ef` 通过；含 Control 短租约续租落盘修复的 `71a4944d` 矩阵 `20261018T050731Z-00914754` 中 22 行通过，`exit/off` 第 14 阶段一次 US 连接未经 E（单行复跑 `20261018T052916Z-26203ee1` 通过），`roam/direct` 因 fixture 以字符串比较 Docker 规范化后的 IPv6 网段而在环境准备阶段失败（`54622be9` 改为按网段比较后单行 `20261018T054418Z-7fc25ba0` 通过）；证据 `.meshway/validation/a3/`。此结果不替代 macOS 行。
 
 | 行 | 必需场景 | 状态 |
 | --- | --- | --- |

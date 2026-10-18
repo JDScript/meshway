@@ -4,7 +4,7 @@
 
 ## A3 Node 接线与当前部署
 
-当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 已通过 scp 部署 **0.1/5**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4→0.1/5 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在工作树 `.meshway/macos-lab/a3/`。
+当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 已通过 scp 部署 **0.1/5**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4→0.1/5 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在仓库公共根 `.meshway/macos-lab/a3/`。
 
 VPN 配置已由用户批准，固定 UUID 为 **8FFD2452-D3B2-48F2-A81D-9CD4900DCAB5**，名称 `Meshway Shell Lab`。此后不得移除或重建；启停用该 UUID 的 `scutil --nc start/stop`，修改参数时 load 现有 manager 后 save。实测把 Server origin 改为隔离 Server 时保存无再次确认、UUID 不变。provider 已在 root 下接入并 running，双栈包流与系统 DNS 的精确结果见[验收范围](/v2/node/validation#macos)。此前新建配置的确认与 root AuthorizationRef 失败记录保留在私有证据中。
 
