@@ -122,15 +122,25 @@ impl View {
     /// read or not: Control's report, the network owner's report, the DNS
     /// owner's fault behind it and the intent. Ends at `stop` or once an
     /// input's owner is gone.
+    ///
+    /// Each turn waits for a change it has not seen. The DNS guard in a
+    /// network report is a live view its holders only borrow, so its own
+    /// seen version lags behind every send since the DNS owner started; the
+    /// tracker's clone is marked seen before the inputs are read, else
+    /// `changed` stays ready and the turn never yields.
     pub(super) async fn track(mut self, mut stop: watch::Receiver<bool>) {
         loop {
-            let derived = self.derive();
-            self.observe(derived.plane);
-            let guard = derived
+            let mut guard = self
                 .network
+                .borrow()
                 .dns_guard
                 .clone()
                 .filter(|guard| guard.has_changed().is_ok());
+            if let Some(guard) = &mut guard {
+                guard.mark_unchanged();
+            }
+            let derived = self.derive();
+            self.observe(derived.plane);
             tokio::select! {
                 _ = stop.wait_for(|stopped| *stopped) => return,
                 changed = self.desired.changed() => if changed.is_err() { return },
@@ -673,6 +683,52 @@ mod tests {
         network.send_modify(|report| report.plane = DataPlane::Preparing);
         tokio::task::yield_now().await;
         assert!(view.status().observed_at > changed.observed_at);
+        stop.send_replace(true);
+        clock.await.unwrap();
+    }
+
+    /// X18: the tracker sleeps while no input changes. The DNS owner's
+    /// guard receiver is only borrowed, so a report carries it with every
+    /// send since the owner started unseen (each hold sends `None`); the
+    /// tracker still must not wake for those, only for a later send.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_tracker_is_not_woken_by_a_dns_guard_send_it_has_seen() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Ready;
+        network.completion = Some(Ok(()));
+        network.content = Some(std::sync::Arc::new(meshway_test_server::single_node(
+            "a", None,
+        )));
+        let (fault, guard) = watch::channel(None);
+        // A hold before the report was published: the receiver every
+        // report clones from has not seen it.
+        fault.send_replace(None);
+        assert!(guard.has_changed().unwrap());
+        network.dns_guard = Some(guard);
+        let (view, _reported, _network, _desired) = view(network);
+        let (stop, stopped) = watch::channel(false);
+        let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = polls.clone();
+        let mut track = Box::pin(view.clone().track(stopped));
+        let clock = tokio::spawn(std::future::poll_fn(move |cx| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            track.as_mut().poll(cx)
+        }));
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        let idle = polls.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            idle <= 2,
+            "an unchanged input woke the tracker {idle} times"
+        );
+        // A later fault is a change: one turn reads it, then it sleeps again.
+        fault.send_replace(Some(meshway_dns::SystemDnsError::Backend));
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        let woken = polls.load(std::sync::atomic::Ordering::Relaxed) - idle;
+        assert!((1..=2).contains(&woken), "one change, {woken} turns");
         stop.send_replace(true);
         clock.await.unwrap();
     }
