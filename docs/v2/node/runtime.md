@@ -216,7 +216,7 @@ IPC 13 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |
 | --- | --- |
-| `observedAt` | 本节点包平面所显示状态（`phase`、`applied`、`dataPlane` 三者）最后一次变化的时间：daemon 在每个输入（Control 报告、网络 worker 报告、DNS owner 故障、意图）变化时重新求这三者，变了才记时；读取 Status 与 Control 重复发布同一阶段（暂态 sync 失败重试）都不改变它。`meshway status` 在 Data plane 行显示 `changed … ago` |
+| `observedAt` | 本节点包平面所显示状态（`phase`、`applied`、`dataPlane` 三者）最后一次变化的时间：daemon 在每个输入（Control 报告、网络 worker 报告、DNS owner 故障、意图）变化时重新求这三者，变了才记时；读取 Status 与 Control 重复发布同一阶段（暂态 sync 失败重试）都不改变它。该跟踪任务只被它尚未看到的输入变化唤醒，输入不变时不运行。`meshway status` 在 Data plane 行显示 `changed … ago` |
 | `controlObservedAt` | 可省略：Control 最后一次发布其阶段与问题的时间（暂态失败的每次重试都会重新发布）；本版本 daemon 总是给出 |
 | `networkMode` | `tun`／`controlOnly`，本机选择 |
 | `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed`；来自组件实际安装状态，netmap 刷新不自行投影为 suspended。ready 不代替当前执行许可。与 `phase`／`applied` 一致：`applied` 非空且为 `ready` 时，除 `blocked` 外 `phase` 为 `running`（Server 不可达的 `retrying` 也一样，数据面只依赖租约）；安装不再是当前的（内容已撤回、DNS owner 有未清的故障或安装的不是 Control 当前授权的 netmap）时为 `suspended`、`applied` 为 null，此时包平面同时被撤回或正在撤回——不存在持续的“显示 suspended 而 Mesh 包仍通”。Control 的暂态失败（502、503、网络错误）只改 `phase`／`lastError`／`retryAt`，不调用 Engine，不改变 `dataPlane` |

@@ -504,6 +504,22 @@ H4 十轮全量的偶发失败逐一归因如下（证据 `.meshway/validation/h
 | 4 | `20261018T041809Z-20a90cbd` | 24／24 | — |
 | 5 | `20261018T044655Z-89ef1b80` | 23／24 | `exit/off` 第 16 阶段压力步 iperf3 50 秒超时：E 角色未停止、无内核失败日志，未定位（见[剩余边界](#remaining-boundaries)） |
 
+### X18 Status 跟踪任务忙循环证据 {#x18-tracker-spin}
+
+规则见 Status 表的 [`observedAt`](/v2/node/runtime)。
+
+**现场签名（alpha.19 `a41791bf`，2026-10-19）**。lab lax／sha／nyc、it7、VM、planck 容器的 meshwayd 各有一个 `tokio-rt-worker` 约 100 % CPU，自部署起持续（VM 进程 110 %，load 6）；`/proc/<tid>/syscall` 连续为 `running`、自愿上下文切换不增、几乎全是 utime——纯用户态紧循环，与 Control 状态（`connected` 或 `Retrying (network)`）无关，节点功能照常。热点随任务在线程间迁移（lab lax 两个线程各约 1.2 M ticks）。
+
+**热点栈**。release 产物去掉了符号表，于是以同一提交、`strip=none`＋`line-tables-only` 的 `aarch64-unknown-linux-musl` 构建替换 VM 的 meshwayd，60 秒内即复现（59.9 s CPU）；`gdb -p` 10 次采样中，忙线程每次都在 `meshway_node::runtime::status::View::track`：`status.rs` 的 `derive()`（`self.report.borrow().clone()`、`StatusSnapshot::status` → `meshway_control::clock::now` → `Instant::now`）或其后的 `tokio::select!`（`watch::Receiver::changed` → `Notify::poll_notified`），其余为空闲线程的 park／epoll。
+
+**根因**。网络报告的 `dns_guard` 是 DNS actor 原始 `fault` receiver 的克隆；所有持有者只 `borrow`，它的“已看到”版本停在 actor 启动时。每次 `Hold` 都 `faults.send_replace(None)`，此后每个克隆的 `has_changed()` 都为真。跟踪任务（H4 引入）每轮克隆它并 `changed().await`，于是该分支立即就绪，任务不让出地重算 Status。N6 时钟与 Control 续租落盘只是被循环调用，本身没有自旋。
+
+**修复与测试**。跟踪任务先把克隆 `mark_unchanged()` 再读输入，之后的发送仍唤醒它。单测 `status::tests::the_tracker_is_not_woken_by_a_dns_guard_send_it_has_seen`（current-thread runtime，用计数包装统计跟踪任务被 poll 的次数）：DNS guard 带一次已发生的 hold 时，200 次让出后至多 poll 2 次，之后一次故障发送恰好唤醒 1–2 轮；去掉修复时为 200 次（每次让出都被 poll）。
+
+**VM 空闲 CPU**（`meshway-vm`，进程 utime＋stime）：修复前（符号构建，120 秒）103.8 % 单核；修复后（release `0c2ec44c…`，10 分钟，`running`／`ready`）0.56 %。
+
+**Planck 24 行矩阵**：`20261019T081744Z-73fe0943`（`d0d921c0`，并行 8，同机无其他矩阵）23／24 通过；`roam/exit` 的 soft 格 `exitReadyAgain` 不达标：A 的 State 候选在路由切换 6.77 秒后才被确认（hard 格 0.45 秒），出口能力 6.1 秒才报 `probing`、7.2 秒 `ready`（门槛 5 秒），数据面各项达标；单行复跑 `20261019T084906Z-579d1350` 通过。证据 `.meshway/validation/x18/`。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。

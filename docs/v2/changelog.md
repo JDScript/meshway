@@ -4,6 +4,13 @@
 
 ## 未发布
 
+Status 跟踪任务忙循环（X18，`x18/worker-spin`）：wire、IPC、Server schema 与 HTTP 契约均不变。
+
+- 修复（不变量：事件循环每轮至少推进一个状态，没有电平分支；owner：`meshway-node` `runtime::status::View::track`，它是唯一把 DNS owner 故障 watch 当作边沿等待的读者）：alpha.19 起每台 TUN 节点从第一次 DNS hold 开始有一个 tokio worker 线程 100 % 用户态 CPU。网络报告里的 DNS 故障 receiver 是只被 `borrow` 的现值视图，其“已看到”的版本停在 DNS owner 启动时；每次 hold 的 `send_replace(None)` 之后，跟踪任务每轮克隆它再 `changed()` 都立即返回，持续重算 Status（含 Control 时钟读取）。现在先把克隆标记为已看到再读输入，之后的发送仍会唤醒它。
+- 修复（同一不变量；owner：`meshway-daemon` 进程宿主）：lifecycle watch 关闭后 `biased` select 不再反复轮询它（只在 `run` 返回时关闭，原由 tokio 协作预算限住）。
+
+验证：VM 空闲 CPU 103.8 % → 0.56 %（10 分钟）；Planck 24 行矩阵，见 [X18](/v2/node/validation#x18-tracker-spin)。
+
 ## v0.1.0-alpha.19
 
 范围：⚠ 断网窗口——`compilerVersion` `meshway-netmap-3` → `meshway-netmap-4`（[升级方式](/v2/install#compiler-version-upgrade)：同一窗口内先全部 Node 后 Server，节点从升级到 Server 升级完成之间没有 Mesh），IPC 12 → 13（`exit.capability` 按族；另含下列 H4 的可省略 Status 字段；CLI 与 daemon 一起升级）；wire 6 与 Server schema 8 不变；HTTP 契约变化见下（OpenAPI／SDK 已重生成）。I6-1：IPv6 出口第一切片（NAT66、`nodes.<id>.exitFamilies`、出口能力按族）；H4：Status 撤回原因、`observedAt`／`controlObservedAt`、`controlRelay` 与 phase 映射；N6：Control 时钟先读墙钟，协调穿透 prepare 期限以 Server 时间表达；Control 短租约续租落盘；A1：Node 运行时抽取为 `meshway-node` 库（Linux 行为不变）；A2–C1：实验 macOS App 与 Packet Tunnel（不在本 Release 的产物中）；以及下列 N6、I6-1、H4、Node 运行时与 macOS 工作包。
