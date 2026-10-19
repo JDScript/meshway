@@ -1,8 +1,275 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-18T22:32:43.727182+00:00",
+  "updatedAt": "2026-10-19T09:11:07.213490+00:00",
   "runs": [
+    {
+      "id": 39227751740,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "2855b5bb216cb6925939f0186635a4adedd0e189",
+      "message": "release: workspace version 0.1.0-alpha.20",
+      "createdAt": "2026-10-19T09:07:59Z",
+      "updatedAt": "2026-10-19T09:08:25Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39227751740",
+      "jobs": [
+        {
+          "id": 117978226658,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-19T09:08:21Z",
+          "completedAt": "2026-10-19T09:08:25Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751740/job/117978226658"
+        },
+        {
+          "id": 117978265456,
+          "name": "cargo",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-19T09:08:25Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751740/job/117978265456"
+        },
+        {
+          "id": 117978265470,
+          "name": "web",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-19T09:08:25Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751740/job/117978265470"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39227751617,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "v0.1.0-alpha.20",
+      "commit": "2855b5bb216cb6925939f0186635a4adedd0e189",
+      "message": "release: workspace version 0.1.0-alpha.20",
+      "createdAt": "2026-10-19T09:07:59Z",
+      "updatedAt": "2026-10-19T09:08:19Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39227751617",
+      "jobs": [
+        {
+          "id": 117978097794,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-19T09:08:14Z",
+          "completedAt": "2026-10-19T09:08:18Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751617/job/117978097794"
+        },
+        {
+          "id": 117978222717,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-19T09:08:18Z",
+          "completedAt": "2026-10-19T09:08:18Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751617/job/117978222717"
+        },
+        {
+          "id": 117978223756,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-19T09:08:18Z",
+          "completedAt": "2026-10-19T09:08:18Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751617/job/117978223756"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39227751400,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "2855b5bb216cb6925939f0186635a4adedd0e189",
+      "message": "release: workspace version 0.1.0-alpha.20",
+      "createdAt": "2026-10-19T09:07:58Z",
+      "updatedAt": "2026-10-19T09:08:26Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39227751400",
+      "jobs": [
+        {
+          "id": 117978097721,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-19T09:08:25Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751400/job/117978097721"
+        },
+        {
+          "id": 117978098098,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-19T09:08:02Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751400/job/117978098098"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39227751347,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "2855b5bb216cb6925939f0186635a4adedd0e189",
+      "message": "release: workspace version 0.1.0-alpha.20",
+      "createdAt": "2026-10-19T09:07:58Z",
+      "updatedAt": "2026-10-19T09:08:14Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39227751347",
+      "jobs": [
+        {
+          "id": 117978192798,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-19T09:08:14Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751347/job/117978192798"
+        },
+        {
+          "id": 117978193197,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-19T09:08:14Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227751347/job/117978193197"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39227376508,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "774823677325b5e898c336e43954686b0cd5d10b",
+      "message": "docs: X18 Status tracker spin evidence and changelog",
+      "createdAt": "2026-10-19T09:04:52Z",
+      "updatedAt": "2026-10-19T09:08:19Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39227376508",
+      "jobs": [
+        {
+          "id": 117976849429,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-19T09:04:55Z",
+          "completedAt": "2026-10-19T09:05:07Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227376508/job/117976849429"
+        },
+        {
+          "id": 117976946304,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-19T09:05:10Z",
+          "completedAt": "2026-10-19T09:08:18Z",
+          "seconds": 188.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227376508/job/117976946304"
+        },
+        {
+          "id": 117976946596,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-19T09:05:07Z",
+          "completedAt": "2026-10-19T09:07:59Z",
+          "seconds": 172.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227376508/job/117976946596"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39227376469,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "774823677325b5e898c336e43954686b0cd5d10b",
+      "message": "docs: X18 Status tracker spin evidence and changelog",
+      "createdAt": "2026-10-19T09:04:52Z",
+      "updatedAt": "2026-10-19T09:08:14Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39227376469",
+      "jobs": [
+        {
+          "id": 117976849255,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-19T09:04:53Z",
+          "completedAt": "2026-10-19T09:08:13Z",
+          "seconds": 200.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227376469/job/117976849255"
+        },
+        {
+          "id": 117976849545,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-19T09:04:53Z",
+          "completedAt": "2026-10-19T09:07:59Z",
+          "seconds": 186.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39227376469/job/117976849545"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 39171157073,
       "attempt": 1,
