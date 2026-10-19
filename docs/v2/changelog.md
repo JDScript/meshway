@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.20
+
+范围：X18 Status 跟踪任务 DNS guard 电平分支修复，以及 daemon lifecycle watch 关闭后分支禁用；契约不变——`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 8 与 HTTP 契约均不变，Node 与 Server 可按任意顺序普通升级（无断网窗口）。
 
 Status 跟踪任务忙循环（X18，`x18/worker-spin`）：wire、IPC、Server schema 与 HTTP 契约均不变。
 
