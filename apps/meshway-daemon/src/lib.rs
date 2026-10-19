@@ -28,10 +28,12 @@ pub async fn run(
     tokio::pin!(run);
     let mut finished = false;
     let mut stopping = false;
+    // Closed only as `run` returns; then `run` is the next ready branch.
+    let mut watching = true;
     let result = loop {
         tokio::select! { biased;
-            changed = lifecycle.changed() => {
-                if changed.is_err() { continue; }
+            changed = lifecycle.changed(), if watching => {
+                if changed.is_err() { watching = false; continue; }
                 match *lifecycle.borrow_and_update() {
                     meshway_node::Lifecycle::Ready => {
                         tracing::info!(socket = %path.display(), "Local IPC ready");
