@@ -1,8 +1,227 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-19T16:33:17.091079+00:00",
+  "updatedAt": "2026-10-20T14:05:31.805715+00:00",
   "runs": [
+    {
+      "id": 39431559233,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "2855b5bb216cb6925939f0186635a4adedd0e189",
+      "message": "release: workspace version 0.1.0-alpha.20",
+      "createdAt": "2026-10-20T13:34:22Z",
+      "updatedAt": "2026-10-20T14:03:41Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39431559233",
+      "jobs": [
+        {
+          "id": 118657615040,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-20T13:34:24Z",
+          "completedAt": "2026-10-20T14:03:40Z",
+          "seconds": 1756.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39431559233/job/118657615040"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12269828040,
+          "name": "validate-matrix-39431559233",
+          "bytes": 3133686,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39431559233/artifacts/12269828040",
+          "jobId": 118657615040,
+          "runner": "planck",
+          "seconds": 1756.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261020T133436Z-350d3e4b",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261020T133746Z-911c738b",
+                  "seconds": 0.829,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261020T133746Z-eb8f5700",
+                  "seconds": 277.267,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261020T133746Z-89f1b789",
+                  "seconds": 283.495,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261020T133746Z-d451c16d",
+                  "seconds": 272.033,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": false,
+                  "reportId": "20261020T133746Z-1e81b1f6",
+                  "seconds": 261.211,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261020T133746Z-69688bc7",
+                  "seconds": 275.104,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261020T133746Z-f4eadcd1",
+                  "seconds": 276.789,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261020T133746Z-a8cee398",
+                  "seconds": 288.856,
+                  "load": "19.66/16.31/11.14"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261020T133747Z-d52f007c",
+                  "seconds": 286.536,
+                  "load": "19.20/16.27/11.16"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": true,
+                  "reportId": "20261020T134207Z-27e64b35",
+                  "seconds": 277.405,
+                  "load": "12.87/15.83/12.45"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": false,
+                  "reportId": "20261020T134218Z-2c8b46d6",
+                  "seconds": 281.44,
+                  "load": "13.34/15.83/12.48"
+                },
+                {
+                  "row": "nat/relay",
+                  "passed": true,
+                  "reportId": "20261020T134221Z-b17e4698",
+                  "seconds": 153.668,
+                  "load": "13.34/15.83/12.48"
+                },
+                {
+                  "row": "nat/reconnect",
+                  "passed": true,
+                  "reportId": "20261020T134223Z-563c0749",
+                  "seconds": 186.679,
+                  "load": "13.63/15.85/12.51"
+                },
+                {
+                  "row": "exit/off",
+                  "passed": true,
+                  "reportId": "20261020T134953Z-f372e4d7",
+                  "seconds": 817.549,
+                  "load": "14.02/14.77/13.22"
+                },
+                {
+                  "row": "exit6/off",
+                  "passed": true,
+                  "reportId": "20261020T134738Z-05a1e4c9",
+                  "seconds": 262.525,
+                  "load": "14.24/14.38/12.83"
+                },
+                {
+                  "row": "roam/direct",
+                  "passed": true,
+                  "reportId": "20261020T134233Z-86893396",
+                  "seconds": 138.291,
+                  "load": "14.93/16.05/12.61"
+                },
+                {
+                  "row": "roam/nat",
+                  "passed": true,
+                  "reportId": "20261020T134616Z-83c8e73c",
+                  "seconds": 82.517,
+                  "load": "12.98/14.47/12.71"
+                },
+                {
+                  "row": "roam/relay",
+                  "passed": true,
+                  "reportId": "20261020T134451Z-de6f80da",
+                  "seconds": 84.207,
+                  "load": "13.22/15.01/12.72"
+                },
+                {
+                  "row": "roam/flap",
+                  "passed": true,
+                  "reportId": "20261020T134738Z-2c40e5e5",
+                  "seconds": 67.052,
+                  "load": "14.24/14.38/12.83"
+                },
+                {
+                  "row": "roam/exit",
+                  "passed": true,
+                  "reportId": "20261020T134845Z-19bd75d6",
+                  "seconds": 67.621,
+                  "load": "18.62/15.61/13.36"
+                },
+                {
+                  "row": "netmap/offline",
+                  "passed": true,
+                  "reportId": "20261020T134616Z-d0cacffe",
+                  "seconds": 343.567,
+                  "load": "12.98/14.47/12.71"
+                },
+                {
+                  "row": "netmap/revoke",
+                  "passed": true,
+                  "reportId": "20261020T134644Z-5c8ad9c9",
+                  "seconds": 143.879,
+                  "load": "12.86/14.29/12.71"
+                },
+                {
+                  "row": "netmap/expiry",
+                  "passed": true,
+                  "reportId": "20261020T134659Z-1ab727ae",
+                  "seconds": 211.819,
+                  "load": "12.38/14.11/12.68"
+                },
+                {
+                  "row": "netmap/restart",
+                  "passed": true,
+                  "reportId": "20261020T134738Z-e1b5c6e0",
+                  "seconds": 287.395,
+                  "load": "14.24/14.38/12.83"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
+    },
     {
       "id": 39279573056,
       "attempt": 1,
