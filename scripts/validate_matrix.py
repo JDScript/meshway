@@ -264,12 +264,14 @@ def bridges(name):
     return 0 if name in ("tun", "packet") else 1
 
 
-# The longest row (about 12 minutes; the others at most about 10, exit/off
-# about 13 from its usual start) starts first, so the matrix's wall clock is
-# not its start time plus its length. Only it: the exit rows keep their
-# usual start, after the first batch's kernel checks. Results keep the
-# selected order.
-FIRST = ("fault/throttle",)
+# The two longest rows start first, so the matrix's wall clock is not their
+# start time plus their length: exit/off (about 13 minutes) and
+# fault/throttle (about 12; the others at most about 6, the roam rows one at
+# a time). With fault/throttle holding a slot, exit/off in its listed place
+# started after 15 minutes and the matrix took 1,541 s (20261022T072926Z-2cbf580a)
+# against 1,036 s with both first (20261022T065619Z-34e5d00e). Results keep
+# the selected order.
+FIRST = ("exit/off", "fault/throttle")
 
 
 def schedule(rows):
