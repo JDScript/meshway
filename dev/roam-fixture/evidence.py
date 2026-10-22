@@ -33,7 +33,7 @@ def write(path, value):
 
 def parse_client(path):
     events = {"usend": {}, "uecho": [], "techo": [], "pecho": [], "terror": [], "tclosed": [], "tconnect": [],
-              "fsend": {}, "fecho": {}}
+              "fsend": {}, "fecho": {}, "ferror": {}, "fport": {}}
     if not path.exists():
         return events
     for line in path.read_text().splitlines():
@@ -45,8 +45,10 @@ def parse_client(path):
             events["usend"][int(fields[2])] = at
         elif kind == "uecho":
             events["uecho"].append((at, int(fields[2])))
-        elif kind in ("fsend", "fecho") and fields[2].isdigit():
+        elif kind in ("fsend", "fecho", "ferror") and len(fields) > 2 and fields[2].isdigit():
             events[kind].setdefault(int(fields[2]), at)
+            if kind == "fsend" and len(fields) > 3 and fields[3].isdigit():
+                events["fport"].setdefault(int(fields[2]), int(fields[3]))
         elif kind in events and isinstance(events[kind], list):
             events[kind].append((at, *fields[2:]))
     return events
@@ -368,6 +370,21 @@ def through_relay(in_gap, answered, relay_rate):
     return set(answered) == set(in_gap) and relay_rate is not None and relay_rate > 0
 
 
+# A's flow idle timeout (`meshway_dataplane::Limits::idle_timeout`).
+FLOW_IDLE_S = 60.0
+
+
+def reused_tuples(in_gap, flows):
+    """Gap flows whose source port an earlier flow used within A's flow idle
+    timeout: the same 5-tuple, so A's flow table holds them as that earlier
+    flow on its original path (they are not new flows). Recorded only; the
+    fixture gives every flow its own port, so this is 0."""
+    sent, ports = flows["fsend"], flows["fport"]
+    return sum(1 for identifier in in_gap if identifier in ports and any(
+        ports.get(earlier) == ports[identifier] and 0 < sent[identifier] - at <= FLOW_IDLE_S
+        for earlier, at in sent.items() if earlier != identifier))
+
+
 def relay_checks(report, cell, measured, phase):
     """The relay cell's own evidence: the old direct flow waits exactly for the
     re-traversal, new flows in that gap go through R, a flow started on R stays
@@ -382,7 +399,9 @@ def relay_checks(report, cell, measured, phase):
         if len(fields) == 2 and fields[1].isdigit():
             samples.append((int(fields[0]) / 1e9, int(fields[1])))
     reacquired = measured["reacquiredS"]
-    in_gap = {identifier: at for identifier, at in flows["fsend"].items()
+    # A flow that could not be sent is a flow of its time without a reply.
+    attempted = {**flows["ferror"], **flows["fsend"]}
+    in_gap = {identifier: at for identifier, at in attempted.items()
               if left is not None and recovered is not None and left + 0.25 <= at <= recovered - 0.25}
     answered_in_gap = {identifier for identifier, at in in_gap.items()
                        if flows["fecho"].get(identifier) is not None and flows["fecho"][identifier] < recovered
@@ -396,6 +415,7 @@ def relay_checks(report, cell, measured, phase):
         "recoveredS": round(recovered - routed, 3) if recovered else None,
         "gapWindowS": round(recovered - left - 0.5, 3) if left is not None and recovered is not None else None,
         "newFlowsInGap": len(in_gap), "newFlowsAnsweredThroughR": len(answered_in_gap),
+        "newFlowsReusingTuple": reused_tuples(in_gap, flows),
         "relayStreamLongestGapS": round(longest_gap(relay_started + 1, cell["relayStreamStoppedAt"],
                                                     [at for at, _ in relay_stream["uecho"]]), 3)
         if relay_started else None,

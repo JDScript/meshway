@@ -6,8 +6,9 @@ serve ADDRESS DIRECTORY STOP   UDP echo on 42424 and TCP echo on 42425 (B, C)
 client PEER DIRECTORY STOP     100 pps UDP sequence, 10/s ping and one TCP
                                stream writing a line every 50 ms (A)
 stream PEER DIRECTORY STOP     100 pps UDP sequence only, one new 5-tuple (A)
-flows PEER DIRECTORY STOP      a new UDP 5-tuple every 250 ms, one datagram
-                               each, its echo awaited for 20 s (A)
+flows PEER DIRECTORY STOP      a new UDP 5-tuple every 250 ms (its own source
+                               port, see flow_port), one datagram each, its
+                               echo awaited for 20 s (A)
 probe PEER DIRECTORY STOP      one new TCP connection with one echoed line and
                                one new UDP flow with one echo, then exits (B)
 Every mode but probe runs until the file STOP exists. serve also records
@@ -25,6 +26,7 @@ import time
 
 STOP = None
 UDP_PORT, TCP_PORT = 42424, 42425
+FLOW_PORT_BASE, FLOW_PORTS = 20000, 4000
 
 
 def now():
@@ -140,6 +142,15 @@ def stream(peer, directory):
     events.close()
 
 
+def flow_port(identifier):
+    """The source port of per-datagram flow `identifier`. A kernel-chosen
+    ephemeral port is reused at random once its socket closes, and a reused
+    5-tuple within A's flow idle timeout (60 s) is that earlier flow, kept on
+    its original path: not a new flow. These ports are outside the ephemeral
+    range and none repeats within FLOW_PORTS × 250 ms (1,000 s)."""
+    return FLOW_PORT_BASE + identifier % FLOW_PORTS
+
+
 def flows(peer, directory):
     """Each datagram is a new flow: the source picks its path at that packet."""
     events = Log(os.path.join(directory, "client.log"))
@@ -151,12 +162,15 @@ def flows(peer, directory):
         if current >= due:
             flow = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             flow.setblocking(False)
+            port = flow_port(identifier)
             try:
+                flow.bind(("0.0.0.0", port))
                 flow.connect((peer, UDP_PORT))
                 flow.send(f"f{identifier} {now()}".encode())
-                events.write("fsend", now(), identifier)
+                events.write("fsend", now(), identifier, port)
                 open_flows[flow] = (identifier, current + 20)
             except OSError as error:
+                # Counted as a flow of its time that got no reply.
                 events.write("ferror", now(), identifier, error.errno)
                 flow.close()
             identifier += 1
