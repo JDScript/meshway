@@ -380,3 +380,46 @@ async fn a_start_by_another_build_restores_the_cleared_version_in_the_netmap() {
     );
     app.shutdown().await.unwrap();
 }
+
+/// S5: the start after a `compilerVersion` upgrade compares an applied
+/// `auto` resolution with the head another compiler wrote, which this build
+/// cannot read: it is compared as no previous netmap, so the network is
+/// compiled again rather than left on the unreadable head.
+#[tokio::test]
+async fn a_start_after_a_compiler_upgrade_compiles_auto_again() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = selection().await;
+    lab.node_select(None, "auto").await.unwrap();
+    let current = lab.netmap(lab.a).await;
+    let mut earlier = (*current.netmap).clone();
+    earlier.serial = earlier.serial.checked_next().unwrap();
+    let (sealer, network, a) = (lab.app.sealer(), lab.network, lab.a);
+    let held = lab
+        .app
+        .executor
+        .handle()
+        .write(move |tx| {
+            let now = crate::store::execution::now()?;
+            crate::store::netmap::store_as_another_compiler(tx, &sealer, network, a, &earlier, now)
+        })
+        .await
+        .unwrap();
+    let Selection { _dir: dir, app, .. } = lab;
+    app.shutdown().await.unwrap();
+    let app = App::open(crate::settings::Settings::new(
+        dir.path().canonicalize().unwrap().join("data"),
+    ))
+    .await
+    .unwrap();
+    let netmaps = app.netmaps.clone();
+    let refreshed = app
+        .executor
+        .handle()
+        .read(move |tx| netmaps.current(tx, network, a))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.netmap.serial.get(), held.serial.get() + 1);
+    assert_eq!(refreshed.digest, current.digest);
+    app.shutdown().await.unwrap();
+}

@@ -229,7 +229,7 @@ pub(crate) fn recompile_with_rule_sets(
 
 /// A `routing.autoResolve` activity (Server actor) when the new netmap
 /// applies `auto` and resolves it differently from the Node's previous
-/// netmap: another profile, basis or region. Both sides are read from the
+/// netmap (or this build cannot read it): another profile, basis or region. Both sides are read from the
 /// netmaps with the same `routing_selection` the Node shows.
 fn record_auto_resolution(
     tx: &Transaction<'_>,
@@ -247,8 +247,11 @@ fn record_auto_resolution(
     let Some(current) = resolution(netmap)? else {
         return Ok(());
     };
+    // A previous netmap another compiler version wrote is compared as none:
+    // the resolution this build applies is recorded.
     if let Some(previous) = previous
-        && resolution(&load(tx, sealer, network, node, previous)?)?.as_ref() == Some(&current)
+        && let Some(previous) = load_earlier(tx, sealer, network, node, previous)?
+        && resolution(&previous)?.as_ref() == Some(&current)
     {
         return Ok(());
     }
@@ -347,10 +350,23 @@ fn insert(
     netmap: &CompiledNetmap,
     now: i64,
 ) -> Result<(), Error> {
-    let serial = netmap.netmap.serial;
     let payload =
         zeroize::Zeroizing::new(serde_json::to_vec(netmap).map_err(|_| Error::encode("netmap"))?);
-    let sealed = sealer.seal_netmap(network, node, serial, &payload)?;
+    insert_payload(tx, sealer, network, node, netmap, &payload, now)
+}
+
+/// [`insert`] with `netmap` already serialized as `payload`.
+fn insert_payload(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    netmap: &CompiledNetmap,
+    payload: &[u8],
+    now: i64,
+) -> Result<(), Error> {
+    let serial = netmap.netmap.serial;
+    let sealed = sealer.seal_netmap(network, node, serial, payload)?;
     tx.execute(
         "INSERT INTO node_netmap_history(network_id,node_id,serial,revision,digest) VALUES(?1,?2,?3,?4,?5)",
         params![bytes(network.as_uuid()), bytes(node.as_uuid()), serial.get() as i64,
@@ -577,6 +593,62 @@ pub(crate) fn load(
     node: NodeId,
     expected: NetmapRef,
 ) -> Result<CompiledNetmap, Error> {
+    let plaintext = open(tx, sealer, network, node, expected)?;
+    decode(plaintext.as_bytes(), network, node, expected)
+}
+
+/// A netmap this Server compiled before the current one (the kept delta
+/// base, or the head a recompilation replaces), read as [`load`] does. None
+/// when another compiler version wrote it: that output is history this build
+/// cannot read, never the Node's fault, so its readers continue without it
+/// (`sync` answers in full, State admits only the current netmap). Content
+/// that does not open, or that claims this compiler version and does not
+/// decode, stays an error.
+pub(crate) fn load_earlier(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    expected: NetmapRef,
+) -> Result<Option<CompiledNetmap>, Error> {
+    #[derive(serde::Deserialize)]
+    struct Written {
+        netmap: WrittenNetmap,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WrittenNetmap {
+        compiler_version: String,
+    }
+    let plaintext = open(tx, sealer, network, node, expected)?;
+    match decode(plaintext.as_bytes(), network, node, expected) {
+        Ok(netmap) => Ok(Some(netmap)),
+        Err(error) => match serde_json::from_slice::<Written>(plaintext.as_bytes()) {
+            Ok(written)
+                if written.netmap.compiler_version
+                    != meshway_configuration::netmap::NETMAP_COMPILER_VERSION =>
+            {
+                tracing::debug!(
+                    network_id = %network,
+                    node_id = %node,
+                    serial = expected.serial.get(),
+                    compiler_version = %written.netmap.compiler_version,
+                    "Stored netmap written by another compiler version is not used"
+                );
+                Ok(None)
+            }
+            _ => Err(error),
+        },
+    }
+}
+
+fn open(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    expected: NetmapRef,
+) -> Result<crate::secrets::Plaintext, Error> {
     let payload: Vec<u8> = tx
         .query_row(
             "SELECT payload FROM node_netmaps WHERE network_id=?1 AND node_id=?2 AND serial=?3",
@@ -589,9 +661,17 @@ pub(crate) fn load(
         )
         .optional()?
         .ok_or(Error::decode("node_netmaps.payload"))?;
-    let plaintext = sealer.open_netmap(network, node, expected.serial, &payload)?;
-    let netmap: CompiledNetmap = serde_json::from_slice(plaintext.as_bytes())
-        .map_err(|_| Error::decode("node_netmaps.payload"))?;
+    Ok(sealer.open_netmap(network, node, expected.serial, &payload)?)
+}
+
+fn decode(
+    plaintext: &[u8],
+    network: NetworkId,
+    node: NodeId,
+    expected: NetmapRef,
+) -> Result<CompiledNetmap, Error> {
+    let netmap: CompiledNetmap =
+        serde_json::from_slice(plaintext).map_err(|_| Error::decode("node_netmaps.payload"))?;
     if netmap.verify().is_err()
         || netmap.reference() != expected
         || netmap.netmap.network_id != network
@@ -620,6 +700,44 @@ pub(crate) fn store_as_another_build(
         params![bytes(network.as_uuid()), [0xa5_u8; 32].as_slice()],
     )?;
     Ok(())
+}
+
+/// What an earlier compiler version left: `node`'s head replaced by
+/// `netmap` as that version compiled and wrote it (another
+/// `compilerVersion`, so another digest, and without `exitRole`, a shape
+/// this build does not decode), and every fingerprint replaced as
+/// [`store_as_another_build`] does. Returns the stored reference.
+#[cfg(test)]
+pub(crate) fn store_as_another_compiler(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    netmap: &meshway_configuration::netmap::NodeNetmap,
+    now: i64,
+) -> Result<NetmapRef, Error> {
+    let mut earlier = netmap.clone();
+    earlier.compiler_version = "meshway-netmap-3".into();
+    let earlier = CompiledNetmap {
+        digest: earlier
+            .content_digest()
+            .map_err(|_| Error::encode("netmap"))?,
+        netmap: std::sync::Arc::new(earlier),
+    };
+    let mut written = serde_json::to_value(&earlier).map_err(|_| Error::encode("netmap"))?;
+    written
+        .get_mut("netmap")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or(Error::encode("netmap"))?
+        .remove("exitRole");
+    let payload =
+        zeroize::Zeroizing::new(serde_json::to_vec(&written).map_err(|_| Error::encode("netmap"))?);
+    insert_payload(tx, sealer, network, node, &earlier, &payload, now)?;
+    tx.execute(
+        "UPDATE node_netmap_inputs SET digest=?2 WHERE network_id=?1",
+        params![bytes(network.as_uuid()), [0xa5_u8; 32].as_slice()],
+    )?;
+    Ok(earlier.reference())
 }
 
 fn bytes(id: &uuid::Uuid) -> &[u8] {
