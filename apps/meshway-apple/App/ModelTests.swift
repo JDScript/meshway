@@ -10,7 +10,7 @@ enum ModelTests {
             do {
                 let model = try await PreviewMode.model(.running)
                 precondition(model.status?.phase == .running)
-                precondition(model.peers.count == 3)
+                precondition(model.peers.count == 6)
                 model.search = "100.64.0.4"
                 precondition(model.peers.count == 1)
                 precondition(model.peers.first?.rtt == nil, "Unmeasured RTT must remain nil")
@@ -57,12 +57,54 @@ enum ModelTests {
                 precondition(IslandState.resolve(phase: .blocked, vpn: .connected, hasError: false, approvalRequired: true) == .error)
                 precondition(IslandState.resolve(phase: .stopping, vpn: .connected, hasError: false, approvalRequired: false) == .stopping)
                 precondition(IslandState.resolve(phase: .leaving, vpn: .connected, hasError: false, approvalRequired: false) == .leaving)
+                try await sampleStateTests()
                 presentationTests()
                 print("PASS Swift model: codec fixtures, search, idle/relay paths, missing RTT, selection, approval, independent errors")
                 exit(0)
             } catch { print("FAIL Swift model: \(error)"); exit(1) }
         }
         dispatchMain()
+    }
+    @MainActor private static func sampleStateTests() async throws {
+        let steps: [(ClientSample, ConnectionStep)] = [(.connectingAuthentication, .authenticate), (.connectingSync, .synchronize),
+                                                      (.connectingApply, .apply), (.connectingPlane, .apply)]
+        for (sample, step) in steps {
+            let model = try await PreviewMode.model(sample)
+            precondition(ConnectionPresentation(model: model).state == .connecting)
+            precondition(ConnectionPresentation(model: model).step == step)
+        }
+        let empty = try await PreviewMode.model(.noPeers)
+        precondition(ConnectionPresentation(model: empty).state == .connected)
+        precondition(EmptyStateKind.devices(query: "", count: empty.peers.count, server: serverEmptyState(empty)) == .devices)
+        let mesh = try await PreviewMode.model(.meshOnly)
+        precondition(mesh.selection?.profiles.count == 1 && mesh.selection?.profiles.first?.kind == .mesh)
+        let cached = try await PreviewMode.model(.serverUnavailable)
+        precondition(ConnectionPresentation(model: cached).state == .connected, "A failed sync inside the lease is not an error")
+        guard case .serverCached = serverEmptyState(cached) else { preconditionFailure("Lease-backed netmap remains usable") }
+        precondition(EmptyStateKind.devices(query: "", count: cached.peers.count, server: serverEmptyState(cached)) == nil)
+        let expired = try await PreviewMode.model(.leaseUnavailable)
+        precondition(serverEmptyState(expired) == .serverUnavailable)
+        precondition(ConnectionPresentation(model: expired).state == .error)
+        let running = try await PreviewMode.model(.running)
+        try await PreviewMode.load("ping", into: running)
+        let ping = PingPresentation(events: running.pingEvents)
+        precondition(ping.decision?.action == .mesh && ping.decision?.path.count == 3)
+        precondition(ping.readings.count == 4 && ping.readings[2].duration == nil && ping.readings[2].timedOut)
+        precondition(ping.counts?.sent == 4 && ping.counts?.success == 3 && ping.counts?.timeout == 1)
+        precondition(ping.failure == nil)
+        let exit = try await PreviewMode.model(.running)
+        try await PreviewMode.load("ping-exit", into: exit)
+        let echoes = PingPresentation(events: exit.pingEvents)
+        precondition(echoes.readings.first?.setup == true && echoes.durations.count == 2, "Setup sample stays out of RTT summary")
+        let denied = try await PreviewMode.model(.running)
+        try await PreviewMode.load("ping-denied", into: denied)
+        precondition(PingPresentation(events: denied.pingEvents).failure == "策略拒绝：未获业务授权")
+        try await PreviewMode.load("netcheck", into: running)
+        guard let report = running.netcheck else { preconditionFailure("Netcheck sample decodes") }
+        let facts = NetcheckPresentation(report: report).facts
+        precondition(facts.first(where: { $0.id == "IPv6" })?.value == "未检测到")
+        precondition(facts.first(where: { $0.id == "nat:0" })?.value == "随目的地变化 · 难以直连")
+        print("PASS codec samples: connecting steps, empty/cached/expired states, ping decision/loss/setup and netcheck")
     }
     private static func presentationTests() {
         precondition(ConnectionStep.resolve(phase: .starting, plane: .stopped) == .authenticate)

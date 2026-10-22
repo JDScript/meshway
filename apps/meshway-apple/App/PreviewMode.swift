@@ -16,6 +16,30 @@ enum PreviewMode {
         return model
     }
 
+    /// Feed real codec frames through the request's stream checks, in order.
+    @MainActor static func load(_ name: String, into model: AppModel) async throws {
+        let id = UUID().uuidString.lowercased()
+        let sample: ClientDiagnosticSample
+        let command: ClientCommand
+        switch name {
+        case "ping": sample = .ping; command = .ping(target: "studio-nas", count: 4)
+        case "ping-exit": sample = .pingExit; command = .ping(target: "intranet.example", count: 4)
+        case "ping-denied": sample = .pingDenied; command = .ping(target: "office-mac", count: 4)
+        case "ping-unsupported": sample = .pingUnsupported; command = .ping(target: "203.0.113.9", count: 4)
+        case "netcheck": sample = .netcheck; command = .netcheck
+        default: throw IPCFailure.result
+        }
+        let request = try ClientRequest(requestId: id, command: command)
+        for frame in try await clientSampleDiagnosticFrames(sample: sample, requestId: id) {
+            switch try await request.decode(frame: frame) {
+            case .ping(_, let event): model.pingEvents.append(event)
+            case .netcheck(let report): model.netcheck = report
+            default: throw IPCFailure.result
+            }
+        }
+        if case .ping(let target, _) = command { model.pingTarget = target }
+    }
+
     @MainActor static func run() {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.regular)
@@ -30,9 +54,22 @@ enum PreviewMode {
                 case "approval": sample = .awaitingApproval
                 case "running": sample = .running
                 case "error": sample = .error
+                case "connecting-auth": sample = .connectingAuthentication
+                case "connecting-sync": sample = .connectingSync
+                case "connecting-apply": sample = .connectingApply
+                case "connecting-plane": sample = .connectingPlane
+                case "no-peers": sample = .noPeers
+                case "mesh-only": sample = .meshOnly
+                case "server-cached": sample = .serverUnavailable
+                case "lease-expired": sample = .leaseUnavailable
                 default: throw IPCFailure.result
                 }
                 let model = try await model(sample)
+                var diagnostics: [String] = []
+                if let index = args.firstIndex(of: "--preview-diagnostics"), args.count > index + 1 {
+                    diagnostics = args[index + 1].split(separator: ",").map(String.init)
+                    for name in diagnostics { try await load(name, into: model) }
+                }
                 if let index = args.firstIndex(of: "--preview-search"), args.count > index + 1 { model.search = args[index + 1] }
                 let dark = args.contains("--dark")
                 NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -50,7 +87,7 @@ enum PreviewMode {
                     try await Task.sleep(for: .seconds(2))
                     let directory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (args.contains("--preview-search") ? "-search" : "") + (dark ? "-dark" : "-light")
+                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (args.contains("--preview-search") ? "-search" : "") + (diagnostics.isEmpty ? "" : "-" + diagnostics.joined(separator: "+")) + (dark ? "-dark" : "-light")
                     try await snapshot(main, to: directory.appendingPathComponent("\(stem)-main.png"))
                     try await snapshot(panel, to: directory.appendingPathComponent("\(stem)-panel.png"))
                     let settingsPage: String
