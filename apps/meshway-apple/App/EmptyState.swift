@@ -53,6 +53,7 @@ struct QuietEmptyState: View {
     let title: String
     let explanation: String
     var compact = false
+    var height: CGFloat?
     var actionTitle: String?
     var action: (() -> Void)?
     var actionDisabled = false
@@ -69,16 +70,17 @@ struct QuietEmptyState: View {
                     .disabled(actionDisabled).help(actionHelp)
             }
         }.multilineTextAlignment(.center).frame(maxWidth: compact ? 270 : 320)
-            .frame(maxWidth: .infinity).frame(height: compact ? 132 : 196)
+            .frame(maxWidth: .infinity).frame(height: height ?? (compact ? 132 : 196))
     }
 }
 
 struct EmptyStateView: View {
     let kind: EmptyStateKind
     var compact = false
+    var height: CGFloat?
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            QuietEmptyState(symbol: kind.symbol, title: kind.title, explanation: explanation(now: context.date), compact: compact)
+            QuietEmptyState(symbol: kind.symbol, title: kind.title, explanation: explanation(now: context.date), compact: compact, height: height)
         }
     }
     private func explanation(now: Date) -> String {

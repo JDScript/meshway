@@ -14,9 +14,9 @@ struct MenuPanel: View {
             StatusIsland(model: model).padding(.bottom, 6)
             sectionLabel("出口")
             ScrollView {
-            if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(2, model.selection?.profiles.count ?? 2)) }
+            if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: min(3, max(2, model.selection?.profiles.count ?? 2))) }
             else if let selection = model.selection { ProfileRows(model: model, selection: selection, compact: true) }
-            else { Text("安装配置后显示出口方案").font(.system(size: 12)).foregroundStyle(.secondary).padding(10) }
+            else { EmptyStateView(kind: .profiles, compact: true, height: 96) }
             }.scrollIndicators(.hidden).frame(height: 96, alignment: .top)
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
             sectionLabel("设备")

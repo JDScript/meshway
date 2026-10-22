@@ -127,9 +127,10 @@ SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swif
 | 菜单面板 | Liquid Glass 外壳内使用系统式紧凑行，悬停高亮；出口勾选列表、设备列表、打开 Meshway／设置／退出。设备超过五台折叠，展开后最多十行高并滚动；点设备复制 IPv4，缺失时复制 IPv6。没有地址时禁用并说明原因 |
 | 主窗口 | 无侧栏，工具栏左侧状态岛、右侧胶囊分段「设备／出口／诊断」。设备表搜索名称／地址／Node ID，行内为状态点、名称、等宽地址与路径／RTT。选中时详情从右侧进入；固定 210 pt 详情列保持表列位置稳定，未选中时该列为空 |
 | Peers | 直连为绿点、中继为靛蓝点、空闲为灰点、离线为淡灰点、不可达为琥珀点；右侧显示 RTT、经哪个节点或空闲。详情为地址、路径与承载、延迟、Ping。没有测量的 RTT 不填零，idle 不显示为已建立直连；完整 endpoint／via 可在行的 help 中读取 |
-| 出口方案 | 面板与主窗口共用勾选列表；仅本机 netmap 与 applied 一致时显示勾选。右侧出口名称来自方案规则／fallback 引用的出口列表，不代表当前某条流的实测出口。`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示；请求／默认／锁定／auto 详情移到设置 |
+| 出口方案 | 面板与主窗口共用勾选列表；仅本机 netmap 与 applied 一致时显示勾选。当前方案非默认时，在其下显示「恢复默认（方案名）」小链接；清除仍要求存在持久请求。右侧出口名称来自方案规则／fallback 引用的出口列表，不代表当前某条流的实测出口。`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示；请求／默认／锁定／auto 详情移到设置 |
 | 设置 | 标准 SwiftUI `Settings` scene，⌘, 打开。通用放图标；账户与本机放名称、IPv4／IPv6、Server、换钥与注销确认；详细信息放租约、sync、上次同步、dataPlane、网络变化、key generation、NE／VPN、netmap 与完整错误；诊断放 Netcheck。相对时间每秒更新，悬停给出绝对时间 |
-| 诊断与身份 | 主窗口诊断页有 Netcheck 与四次 ping 的流式本地判定／测量及取消；结果区固定高度并滚动。设置复用 Netcheck。RotateKey、带永久注销说明的 Logout 确认移至设置；身份操作先读 revision，不绕过 CAS |
+| 诊断与身份 | Ping 卡包含目标输入／建议设备、decision 的路径胶囊与方案／规则／动作、最近 24 个样本的 RTT 柱图与中位／最低最高／收到／丢包。规则缺失时省略；失败槽不填 RTT，含建连 echo 以浅色柱区分且不进入 RTT 汇总。收到／丢包优先用 completed 计数，否则显示已观测终态样本；丢包为超时比例，执行失败不算超时。unsupported、策略拒绝等原因在固定单行区显示。网络检查卡从 Netcheck 报告生成 Server／RTT、UDP、IPv4／IPv6、每 socket 的 NAT 映射、公网映射小片；只用 fresh 映射，缺测显示未测。运行中与结果区尺寸不变。设置复用 Netcheck；换钥／注销先读 revision，不绕过 CAS |
+| 空状态 | 共用玻璃小图标、标题、说明与可选动作，固定尺寸。无设备、搜索无结果、只有 Mesh 方案、Server 暂不可达分别解释。只有 sync 非 connected、错误为网络／繁忙或未报告、租约未到期、netmap 已 applied 且 Node running／数据面 ready 时，才说明正在使用缓存网络；到期时间来自租约并每秒更新。不能证明缓存可用时不声称离线运行 |
 | 系统引导 | 读取 extension 属性与 VPN preferences，显示未安装／待批准／未启用／缺少配置；沿用 TunnelController 显式激活与创建 VPN。lab 命令与 Debug 菜单独立于正式主路径 |
 | 应用图标 | 设置 → 通用 → 应用图标提供 Ink／Frost／Indigo／Graphite 四种缩略图，未接入时也可使用；默认 Frost（方案 2，浅色磨砂＋青绿）。选择提示占用固定空间，动画尊重减少动态效果 |
 
@@ -139,7 +140,10 @@ SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swif
 | --- | --- |
 | 已报告错误，或 Node `blocked`／`retrying` | 出错；popover 保留原始阶段、原因与独立错误 |
 | Node `awaitingApproval`，或 extension 明确要求批准 | 需要批准 |
-| Node `running` | 已连接 |
+| Node `running` 且 dataPlane `ready` | 已连接 |
+| Node `running` 且 dataPlane `preparing` | 连接中，正在应用 |
+| Node `running` 且 dataPlane `failed`／`suspended` | 出错，说明数据面失败／暂停 |
+| Node `running` 但数据面为其他或未知状态 | 状态未知 |
 | Node `starting`／`synchronizing`／`controlReady` | 连接中 |
 | Node `down`／`stopping`／`leaving` | 已断开／正在断开／正在注销 |
 | 无 Node 快照，NE `connecting`／`reasserting`／`connected` | 连接中；不声称 Node 已运行 |
@@ -147,11 +151,13 @@ SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swif
 | 无 Node 快照，NE `disconnected`／`invalid` | 已断开 |
 | Node 与 NE 均未检查或未知 | 状态未知 |
 
-开关状态文字使用 `numericText` 过渡，状态点颜色渐变；分段内容滑移、设备详情右侧进入、列表增删淡入，复制反馈短暂变色／勾号后复原。自定义动效均遵从 `accessibilityReduceMotion`；没有持续装饰性动画。连接开关、方案选择与身份操作沿用 Status 就绪条件及在途禁用，禁用原因放在 help。
+开关状态文字使用 `numericText` 过渡，状态点颜色渐变；分段内容滑移、设备详情右侧进入、列表增删淡入，复制反馈短暂变色／勾号后复原。连接中状态点脉动、出口与设备位置显示 shimmer 骨架，固定面板区域避免就绪后推动底部操作。四段点分别按 starting（正在认证）、synchronizing（正在同步网络）、controlReady／running+preparing（正在应用）、running+ready（完成）投影；现有字段不能可靠区分「正在建立通道」，不从空闲 peer 推断进度。`accessibilityReduceMotion` 下脉动／shimmer 静止，其余自定义过渡取消。连接开关、方案选择与身份操作沿用 Status 就绪条件及在途禁用，禁用原因放在 help；预览禁用时开关仍保留真实 desiredUp 的青绿背景。
 
 App target 的 `Assets.xcassets/AppIcon.appiconset` 提供完整 macOS 16／32／128／256／512 pt 的 1×／2×默认图标；四份处理后母版作为 `AppIconChoice-*` 普通图片资源打包。`IconPreferences` 以 `UserDefaults` 保存本机偏好，启动及选择时通过 `NSApplication.shared.applicationIconImage` 更新运行中的 Dock 图标。Finder／Launchpad 保持默认 Frost，选择器明确说明这一限制；不调用 `NSWorkspace.setIcon`，不修改已签名 App bundle。源图处理与全套资源由 `apps/meshway-apple/scripts/generate-icons.py` 生成：清除圆角外残留、保留比例，图块最大 824×824 居中于 1024×1024 透明画布，不增加外阴影。
 
 `--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；主窗口、面板和设置窗口都有小型 SAMPLE 角标，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section peers|exit|diagnostics` 选择主窗口页面，`--preview-selected` 展开第一台设备详情，`--preview-settings general|account|details|diagnostics` 选择设置页面；预览中的图标选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览。`--model-tests` 检查同一组桥接样例、Node／NE 状态岛映射、缺测与就绪条件。现有 running 样例含三台设备，没有 Netcheck／Ping 测量结果；截图不伪造更多设备或测量。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
+
+`--preview-search QUERY` 对既有样例执行真实搜索过滤。现有 core 未提供 connecting、离线 peer、仅 Mesh 分配、有效离线缓存或诊断结果样例；补齐这些画面需要扩展 Rust 样例生成器并重建 core。Swift 模型测试以独立类型化单元输入验证连接阶段、缓存租约边界、空状态选择、含建连 RTT／丢包与 Netcheck 缺测；这些单元输入不作为预览协议数据。
 
 ## 复用白名单 {#reuse}
 

@@ -45,7 +45,7 @@ struct DevicesView: View {
                 }.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 30)
                 ScrollView {
                     LazyVStack(spacing: 1) {
-                        if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(3, model.peers.count), addresses: true) }
+                        if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: min(10, max(3, model.peers.count)), addresses: true) }
                         else {
                         ForEach(model.peers, id: \.nodeId) { peer in
                             Button { selected = peer.nodeId } label: {
