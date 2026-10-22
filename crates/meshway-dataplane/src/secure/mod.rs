@@ -1778,6 +1778,27 @@ impl SecureNode {
         let local = reading.node();
         let mut closes = Vec::new();
         for (id, peer) in restarted {
+            // A relay circuit still awaiting its answer has no hop keys: no
+            // Close can be authenticated toward the origin. It is forgotten
+            // without a dead-CID record, so the origin's paced retry of the
+            // same INIT is admitted afresh toward the restarted peer at once
+            // (as when no carrier to the next hop existed yet).
+            if self
+                .circuits
+                .get(&id)
+                .is_some_and(|circuit| matches!(circuit.state, State::RelayAwaiting))
+            {
+                if let Some(mut circuit) = self.circuits.remove(&id) {
+                    if diagnostics::event() {
+                        tracing::debug!(operation = "set_peer_boots", cause = "peer_restarted",
+                            cid = ?id, %peer, grant = ?circuit.context.grant,
+                            "Dataplane handshaking circuit forgotten; the origin's INIT retry is admitted afresh");
+                    }
+                    self.engine.flows.retire_exit_circuit(id);
+                    circuit.retire();
+                }
+                continue;
+            }
             if let Some(circuit) = self.circuits.get(&id) {
                 if matches!(circuit.state, State::RelayEstablished) {
                     for reply in [true, false] {

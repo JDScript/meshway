@@ -65,6 +65,73 @@ async fn restarted_terminal_ends_the_relay_circuit_and_its_close_reaches_the_ori
     f.close().await;
 }
 
+/// RC-1 G14 (F7 `fault/throttle`, `cpu-short`): the terminal restarts
+/// (withdrawn and reinstalled: a new boot) while the origin's circuit
+/// through the relay is still handshaking. Nothing can authenticate a Close
+/// of a circuit without hop keys yet, so the relay forgets the circuit it
+/// awaited an answer for without keeping its CID dead: the origin's next
+/// paced retry of the same INIT (250 ms) is admitted afresh and reaches the
+/// new terminal, which completes it. Before, the CID stayed dead at the
+/// relay and the origin waited out its own handshake limit (5–9.5 s of
+/// lost packets).
+#[tokio::test]
+async fn a_restarted_terminal_lets_a_handshaking_origin_retry_through_the_relay_at_once() {
+    let mut f = NetmapMesh::start().await;
+    let [a, r, b] = f.ids();
+    assert!(
+        f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [1; 16])]))
+            .is_empty()
+    );
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("a new flow starts its circuit")
+    };
+    let id = init.circuit();
+    let Received::Forward(_lost) = f.r.receive(&f.ar.carrier, wire(init)).unwrap() else {
+        panic!("the relay forwards the INIT toward B")
+    };
+    assert_eq!(
+        f.r.circuit_info(id).unwrap().map(|info| info.state),
+        Some(CircuitState::Handshaking)
+    );
+    // B restarted before it answered: its channel to R carries a new boot.
+    let started = std::time::Instant::now();
+    assert!(
+        f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [2; 16])]))
+            .is_empty(),
+        "no hop keys yet: nothing authenticates a Close"
+    );
+    assert!(
+        f.r.circuit_info(id).unwrap().is_none(),
+        "the relay forgot it"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(260)).await;
+    let retry =
+        f.a.retry_handshake(id)
+            .unwrap()
+            .expect("the origin's paced INIT retry");
+    let Received::Forward(next) = f.r.receive(&f.ar.carrier, wire(retry)).unwrap() else {
+        panic!("the retried INIT is admitted afresh and forwarded")
+    };
+    let Received::Established {
+        circuit,
+        response: Some(response),
+    } = f.b.receive(&f.rb.carrier, wire(next)).unwrap()
+    else {
+        panic!("the new terminal answers")
+    };
+    assert_eq!(circuit, id);
+    let Received::Forward(response) = f.r.receive(&f.rb.carrier, wire(response)).unwrap() else {
+        panic!("the relay passes the answer on")
+    };
+    assert!(matches!(
+        f.a.receive(&f.ar.carrier, wire(response)).unwrap(),
+        Received::Established { circuit, response: None } if circuit == id
+    ));
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    f.close().await;
+}
+
 #[tokio::test]
 async fn restarted_origin_ends_the_terminal_circuit_without_any_frame() {
     let mut f = NetmapMesh::start().await;
