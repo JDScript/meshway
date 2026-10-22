@@ -250,7 +250,7 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | 漫游（lab） | lax 换 bridge（soft）ping 无中断；断开再接回（hard）sha／nyc 0.11 秒内经挑战跟随新来源，最长中断 ≤ 0.62 秒，channel ID 不变 | R1 `.meshway/validation/r1/lab/`；OPS13 |
 | 漫游（VM） | 加第二地址／改 `src`／恢复三次都分类为 path、每次重新发布 STUN 观测；sha→VM 最长中断 0.31 秒，it7 跟随 NAT 映射往返 | R3 `.meshway/validation/r3/vm/`；OPS14 `.meshway/node-lab/ops14/r3-vm/` |
 | 出口 DNS 与域名出口（lab） | lax 经 Exit nyc via sha 时名称只经 nyc 的 resolved 发往上游，阻断上游时查询失败；`geosite:openai` 只经 nyc 出口；nyc resolved 把 Mesh 地址作 DNS 服务器后 0.5 秒内报 `exitDns: unavailable`、源 SERVFAIL、恢复后再解析 | X5／X5b／X6，`.meshway/node-lab/x5/`、`x6/` |
-| 空闲 CPU | alpha.21 六台 meshwayd 空闲最忙线程：lab 1.0–2.0 %、VM 0.4–0.6 %、Planck 0.4 %、it7 3.8–7.6 %（进程 10.6–11.4 %，见剩余边界 P2）；X18 修复后 VM release 空闲 0.56 % | OPS20 `.meshway/node-lab/ops20/cpu-idle*/`；X18 |
+| 空闲 CPU | alpha.21 六台 meshwayd 空闲最忙线程（`top -H` 快照）：lab 1.0–2.0 %、VM 0.4–0.6 %、Planck 0.4 %、it7 3.8–7.6 %；X18 修复后 VM release 空闲 0.56 %。it7 按 60 秒口径：两个 worker 各 3.1–3.2 %、进程 7.0–7.3 %、`nft` 子进程另约 4.2 %，逐项归因见[空闲 CPU 口径](/v2/node/performance#idle-cpu)（剩余边界 P2） | OPS20 `.meshway/node-lab/ops20/cpu-idle*/`；X18；P2 `.meshway/validation/p2/` |
 | 吞吐 | 常驻 lab 与 Planck 的分层吞吐、出口正向写路径与 WARP 路径限制见[分层性能测量](/v2/node/performance)与 [OrbStack 与 WARP](/v2/install#orbstack-warp) | performance.md |
 | 系统服务 | 整机重启（含 Server 不可达）无需 `up` 恢复 running；resolved 重启 5 秒内、停止再启动 10 秒内恢复 Mesh 解析；Server 安装、升级、回退与备份 | [Linux 安装 · 验收记录](/v2/install#验收记录) |
 
@@ -301,7 +301,7 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | RC-1 G14 | `fault/throttle`：B 限额解除后 0.3–0.6 秒 running，A→B 回显却 5.3–9.5 秒后才恢复（门槛 10 秒）：R 因 B 换 boot 退役 circuit，A 在 B 重装前新发起的 circuit 仍在握手，直到 A 约 10 秒的 `maintain` 才重建 | 每段 | `.meshway/validation/f7/`（行 `20261022T080248Z-8f1ca896` `cpu-short`）；修复在 `rc1/recovery`，未合入 main |
 | RC-1 G15 | `fault/throttle`：限额解除瞬间 worker 先以 offer 重装，随后处理已自行重证的故障边沿，再撤回约 150 ms 并重装（成对、有界，不影响门槛） | 每段 1 次 | 同上；修复在 `rc1/recovery`，未合入 main |
 | OPS14 | 真机漫游 it7→VM 中断 0.61–0.83 秒（5/s ping 丢 2–3 个），高于 0.5 秒预期；sha→VM 与 VM→it7 达标 | 每次地址变化 | `.meshway/node-lab/ops14/r3-vm/` |
-| P2 | it7 空闲时 meshwayd 最忙线程 3.8–7.6 %、进程 10.6–11.4 %，高于 lab（1.0–2.0 %）、VM（0.4–0.6 %）与 Planck（0.4 %）及里程碑 C 的 5 % 门槛。it7 为 2 vCPU，承担四条中继边与出口角色；待查是真实的中继／keepalive 工作还是浪费 | 每次空闲采样 | `.meshway/node-lab/ops20/cpu-idle/`、`cpu-idle-2/` |
+| P2 | it7 空闲 CPU 高于其他五台。已定性（[归因](/v2/node/performance#idle-cpu)）：真实转发 ≤ 0.02 %、中继边空闲无开销；主要是固定周期工作——DNS owner 每 250 ms 的 observe 4.7 %（两轮锚点证明＋约 23 次 D-Bus）、出口／egress 每秒审计 1.9 %（另 `nft` 子进程约 4.2 %），唤醒频率与 Planck 相同，没有忙轮询。其中一项是浪费：锚点证明（`kernel::anchor::inspect` → `rtnl::links`，Underlay）解码宿主每个 link 的完整 IFLA_LINKINFO／AF_SPEC，`netlink-packet-route` 对 bridge／TUN 逐属性预先格式化整段 payload，it7（Docker 网桥）上占 1.4 %，违反“周期证明的成本只取决于它比较的字段”；修复点（anchor／rtnl 读取与 DNS observe）在 RC-1 正在改的恢复路径上，交 RC-1：只完整解码 index／名称／别名命中的 link，其余只读这三项，证明语义不变。是否降低 observe 每轮两次证明、250 ms 节拍或 1 秒审计频率待用户决定 | 每次空闲采样 | `.meshway/node-lab/ops20/cpu-idle/`、`cpu-idle-2/`、`.meshway/validation/p2/` |
 | R1 | 一次 path 变化约 2 秒后 Manager apply 返回 `transport operation cancelled or timed out`（某 owner 未经请求结束），具体 owner 未定位；现由 WARN 的 `owner` 字段给出 | 两次（矩阵、lab），此后未见 | `.meshway/validation/r1/`（`20261015T172722Z-c3cc3381`） |
 | 历史 | 未定位且此后未复现：`nat/resolved` 撤权阶段 DNS `Backend` 后 45 秒无首个回显（U1，`20261013T205702Z-9626e731`）；`exit/off` 第 10 阶段首个名称连接未经 E（H2，`20261014T202904Z-1f0503dc`）；高负载下的第 10 阶段同名第二次连接多一次往返与 LAN UDP 单包超时（F4a） | — | 对应工作包目录 |
 

@@ -412,6 +412,30 @@ fixture 前后对照：`exit/off` 行第 16 阶段（A→R→E，每容器 2 CPU
 
 报告：`.meshway/validation/m4/`（`rows/` 每次运行的第 16 阶段 JSON，`extract.py`／`summary.txt` 汇总，`field/` 真机观察脚本与原始输出，`prof/` 采样归因）。下一项按样本排序：出口 driver 的逐包串行写入，以及每包的时钟读取。
 
+### 空闲 CPU 口径与真机归因 {#idle-cpu}
+
+P2，alpha.21。**口径**：空闲 CPU 取 ≥ 60 秒窗口内每线程 `/proc/<pid>/task/<tid>/schedstat` 运行时间之差（与 `stat` 的 utime+stime 一致），给出每线程与进程合计；出口节点另计已回收子进程（`nft`／`sh`）。`top -H` 的 3 秒快照不作门槛：两个 Tokio worker 之间的工作窃取使同一负载在 3 秒窗口里集中到一个线程，it7 最忙线程 3 秒值中位 4.7 %、p90 6.5 %、最大 12.5 %，而 60 秒均值 3.1–3.2 %；出口能力每约 20 秒刷新一次（`STATE_REPORT_TTL_SECONDS / 3`，建删一个探测 TUN 并执行 `nft`），该秒进程合计再高约 5 个百分点。
+
+**真机归因**：发布产物无符号表。以同一 tag、`CARGO_PROFILE_RELEASE_STRIP=none` 重建一份（`.text` 与发布件不逐字节相同），对齐两者 `.eh_frame` 的 FDE 序列（函数顺序与长度）把发布件地址映射到重建件符号（17,062 个函数中 16,593 个可映射），再读真机 `perf record --call-graph dwarf` 的栈。真机只读：`perf`、`bpftrace`、`/proc`，不换二进制、不重启。
+
+**it7 结果**（2 vCPU EPYC VM，承担出口角色，四条中继边按需建立、空闲时为 `relayIdle`；alpha.21 release；单位为一个核的百分比）：进程 7.0–7.3 %；两个 Tokio worker 合计 6.3 %，各约 142 次唤醒／秒；其余 8 个线程合计 1.0 %；进程之外的 `nft`／`sh` 子进程另约 4.2 %。
+
+| 来源 | 线程 | CPU |
+| --- | --- | ---: |
+| (a) 真实转发：`activeFlows` 0，没有中继 circuit；经 meshwayd socket 的 UDP 2–3 包／秒 × 每包约 29 µs（[M4](#出口流维护与真机-cpu)） | worker | ≤ 0.02 |
+| (b) 通道维护：6 个 peer 中 5 个 `direct` VLESS，健康 Ping／keepalive、穿透与拨号任务（TCP 2–4 段／秒） | worker | 0.5 |
+| (c1) DNS owner 每 250 ms 一次 observe（[数据面](/v2/node/dataplane)）：每次两轮锚点证明（links、addresses、routes 共 10 次 netlink dump）、约 23 次 resolve1 D-Bus 调用、namespace 校验 | worker | 4.7 |
+| 其中：锚点证明解析全部 link 时 `netlink-packet-route` 0.33 对 bridge／TUN 的每个 IFLA_INFO_DATA 属性预先格式化整段 payload（`format!("{payload:?}")`，属性数 × payload 长度） | worker | 1.4 |
+| (c2) 出口与 egress capture 每秒审计（`nft -j list table` 三张表的 JSON 解码与比对） | worker | 0.9 |
+| (c2) 同上的子进程管理：`sh` 闸门＋`nft` 每秒 3 次、每次写一次 `exit-child.json` 栅栏；出口能力 20 秒探测 | blocking 线程 | 1.0 |
+| (c3) netlink 监视、Status 与其余 | worker | 0.2 |
+| (d) 未解释 | — | ≤ 0.3 |
+| 进程外：`nft` 每次约 12 ms CPU（读入宿主全部规则集缓存，含 Docker 的 iptables-nft 表），每秒 3 次 | 子进程 | 4.2 |
+
+对照（同一时刻、同一可执行文件）：Planck 容器（出口角色，无中继，容器 netns 无 bridge，32 核 x86）两个 worker 0.39／0.40 %，唤醒次数与 it7 相同（各约 135 次／秒），每次唤醒约 29 µs，it7 约 225 µs。lab lax（Apple Silicon 上的 OrbStack，宿主负载噪声大）1.2–2.5 %／worker。唤醒频率处处相同，没有忙轮询或电平分支；it7 的差额来自每次唤醒更贵：上表 1.4 个百分点的预先格式化（只在宿主 netns 有 bridge／TUN 时出现；planck 容器内一次 link dump 解码 26 µs，构造 it7 的接口组合后 528 µs，只读 index／名称／别名 0.6 µs）、宿主 netns 更多路由与地址的 dump、2 vCPU 虚拟机的系统调用与 epoll 锁竞争（`queued_write_lock_slowpath` 占全部样本 5 %）。中继边空闲时不产生开销。
+
+报告：`.meshway/validation/p2/`（窗口与 3 秒峰值脚本、`perf`／`bpftrace` 原始输出、符号化栈、FDE 对齐脚本、link dump 基准）。
+
 ### 出口正向写路径 {#exit-write-path}
 
 X11：已安装流的包不再经出口 driver。driver 写出某流的一个包后，该流此后的包（投影已 ACK、FIFO 中无同流包）由包处理 owner 每轮至多 32 个交给出口 I/O owner 的有界队列，I/O owner 每次至多 64 个、逐包检查投影／guard／权限后以 offload 合并写入出口 TUN（与回程的批量读对称）；准入仍逐包。行为定义见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)。
