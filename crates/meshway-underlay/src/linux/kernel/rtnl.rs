@@ -110,30 +110,56 @@ where
     F: FnMut() -> A,
     A: Future<Output = Attempt<T>>,
 {
+    unfinished(
+        "dump",
+        || {
+            let attempt = attempt();
+            async move {
+                match attempt.await {
+                    Attempt::Complete(objects) => Some(Ok(objects)),
+                    Attempt::Failed(error) => Some(Err(error)),
+                    Attempt::Interrupted => None,
+                }
+            }
+        },
+        Error::Netlink,
+    )
+    .await
+}
+
+/// The one rule for a kernel read that did not finish (any netlink family):
+/// `attempt` answers `None` when it was interrupted, which proves nothing,
+/// and it runs again, at most [`DUMP_ATTEMPTS`] times in all; then the read
+/// fails with `exhausted`, unavailable like any other failed read.
+pub(in crate::linux::kernel) async fn unfinished<T, E, F, A>(
+    operation: &'static str,
+    mut attempt: F,
+    exhausted: E,
+) -> std::result::Result<T, E>
+where
+    F: FnMut() -> A,
+    A: Future<Output = Option<std::result::Result<T, E>>>,
+{
     for attempts in 1..=DUMP_ATTEMPTS {
         match attempt().await {
-            Attempt::Complete(objects) => {
+            Some(Ok(read)) => {
                 if attempts > 1 {
-                    tracing::debug!(operation = "dump", attempts, "Kernel dump read again");
+                    tracing::debug!(operation, attempts, "Kernel dump read again");
                 }
-                return Ok(objects);
+                return Ok(read);
             }
-            Attempt::Failed(error) => return Err(error),
-            Attempt::Interrupted => {
-                tracing::debug!(
-                    operation = "dump",
-                    attempts,
-                    "Kernel dump interrupted; nothing read"
-                );
+            Some(Err(error)) => return Err(error),
+            None => {
+                tracing::debug!(operation, attempts, "Kernel dump interrupted; nothing read");
             }
         }
     }
     tracing::debug!(
-        operation = "dump",
+        operation,
         attempts = DUMP_ATTEMPTS,
         "Kernel dump interrupted at every attempt"
     );
-    Err(Error::Netlink)
+    Err(exhausted)
 }
 
 /// Read one attempt's answers to their end. An answer after the limit, an

@@ -94,13 +94,16 @@ pub(super) enum Failure {
     /// The reply names an entry this owner cannot prove it exclusively owns
     /// (offload, helper, a non-default zone).
     Ownership,
+    /// A dump the kernel marked interrupted (the table changed while it was
+    /// dumped): a read that did not finish, read again (see [`any_marked`]).
+    Interrupted,
 }
 
 impl From<Failure> for Reason {
     fn from(failure: Failure) -> Self {
         match failure {
             Failure::Permission => Self::NetAdminMissing,
-            Failure::Unavailable => Self::ConntrackUnavailable,
+            Failure::Unavailable | Failure::Interrupted => Self::ConntrackUnavailable,
             Failure::Ownership => Self::OwnershipConflict,
         }
     }
@@ -176,6 +179,23 @@ fn family(tuple: &Tuple) -> u8 {
 /// `value`. The kernel filters the dump; each entry is checked again
 /// regardless.
 pub(super) async fn any_marked(value: u32, mask: u32) -> Result<bool, Failure> {
+    // An interrupted dump proves no absence and no presence beyond what it
+    // found: it is read again like an interrupted rtnetlink dump.
+    super::super::super::rtnl::unfinished(
+        "conntrack_dump",
+        || async move {
+            match marked_once(value, mask).await {
+                Err(Failure::Interrupted) => None,
+                result => Some(result),
+            }
+        },
+        Failure::Unavailable,
+    )
+    .await
+}
+
+/// One dump of [`any_marked`].
+async fn marked_once(value: u32, mask: u32) -> Result<bool, Failure> {
     let request = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST | NLM_F_DUMP, AF_UNSPEC)
         .u32(CTA_MARK, value)
         .u32(CTA_MARK_MASK, mask);
@@ -301,8 +321,8 @@ enum Step {
 
 /// Decode one datagram of answers to `sequence`. No input panics.
 /// `interrupted` carries across the datagrams of one dump: an end of dump
-/// after any interrupted message is unavailable, never an empty answer. An
-/// entry found before it still exists.
+/// after any interrupted message is [`Failure::Interrupted`], never an empty
+/// answer. An entry found before it still exists.
 fn decode(
     mut datagram: &[u8],
     sequence: u32,
@@ -324,7 +344,7 @@ fn decode(
         let payload = &datagram[NLMSG_HEADER..length];
         match kind {
             NLMSG_NOOP => {}
-            NLMSG_DONE if *interrupted => return Err(Failure::Unavailable),
+            NLMSG_DONE if *interrupted => return Err(Failure::Interrupted),
             NLMSG_ERROR | NLMSG_DONE => {
                 let code = match payload.get(..4) {
                     Some(code) => i32::from_ne_bytes(word(code, 0)?),
@@ -927,10 +947,10 @@ mod tests {
     }
 
     /// A dump the kernel marks interrupted (the table changed meanwhile)
-    /// proves no absence: its end is unavailable, in the same datagram or a
-    /// later one, while an entry it found still counts.
+    /// proves no absence: its end is an unfinished read, in the same
+    /// datagram or a later one, while an entry it found still counts.
     #[test]
-    fn an_interrupted_dump_is_unavailable_not_empty() {
+    fn an_interrupted_dump_is_unfinished_not_empty() {
         let message = |flags: u16| {
             let mut message = Request::new(IPCTNL_MSG_CT_NEW, 0, AF_INET)
                 .tuple(CTA_TUPLE_ORIG, &udp(1))
@@ -958,11 +978,11 @@ mod tests {
         let interrupted = [message(NLM_F_DUMP_INTR), done(0)].concat();
         assert_eq!(
             decode(&interrupted, 5, &mut false, &mut skip.clone()).err(),
-            Some(Failure::Unavailable)
+            Some(Failure::Interrupted)
         );
         assert_eq!(
             decode(&done(NLM_F_DUMP_INTR), 5, &mut false, &mut skip.clone()).err(),
-            Some(Failure::Unavailable)
+            Some(Failure::Interrupted)
         );
         // Across datagrams of one dump.
         let mut state = false;
@@ -972,13 +992,72 @@ mod tests {
         ));
         assert_eq!(
             decode(&done(0), 5, &mut state, &mut skip.clone()).err(),
-            Some(Failure::Unavailable)
+            Some(Failure::Interrupted)
         );
         // A match found in an interrupted dump is still a match.
         assert!(matches!(
             decode(&interrupted, 5, &mut false, &mut |_: &[u8]| Ok(false)),
             Ok(Step::Stop)
         ));
+    }
+
+    /// RC-1 (X16 invariant): an interrupted dump is a read that did not
+    /// finish, not an unavailable ctnetlink: it is read again (bounded), as
+    /// rtnetlink dumps are, instead of reporting `conntrackUnavailable`.
+    #[test]
+    fn an_interrupted_dump_end_is_an_unfinished_read_not_unavailable() {
+        let mut done = Vec::new();
+        done.extend(16u32.to_ne_bytes());
+        done.extend(NLMSG_DONE.to_ne_bytes());
+        done.extend(NLM_F_DUMP_INTR.to_ne_bytes());
+        done.extend(5u32.to_ne_bytes());
+        done.extend(0u32.to_ne_bytes());
+        let ended = decode(&done, 5, &mut false, &mut |_: &[u8]| Ok(true)).err();
+        assert!(ended.is_some(), "no absence proof");
+        assert_ne!(
+            ended,
+            Some(Failure::Unavailable),
+            "an interrupted dump is read again, not reported unavailable"
+        );
+    }
+
+    /// The reread `any_marked` uses: interrupted dumps run again, at most
+    /// the rtnetlink layer's attempts; then the read is unavailable.
+    #[tokio::test]
+    async fn interrupted_mark_dumps_are_read_again_and_bounded() {
+        use super::super::super::super::rtnl::{DUMP_ATTEMPTS, unfinished};
+        let mut answers = vec![
+            Err(Failure::Interrupted),
+            Err(Failure::Interrupted),
+            Ok(true),
+        ]
+        .into_iter();
+        let read = unfinished(
+            "conntrack_dump",
+            || {
+                let answer = answers.next().unwrap();
+                async move {
+                    match answer {
+                        Err(Failure::Interrupted) => None,
+                        answer => Some(answer),
+                    }
+                }
+            },
+            Failure::Unavailable,
+        )
+        .await;
+        assert_eq!(read, Ok(true));
+        let mut runs = 0;
+        let read = unfinished(
+            "conntrack_dump",
+            || {
+                runs += 1;
+                async { None::<Result<bool, Failure>> }
+            },
+            Failure::Unavailable,
+        )
+        .await;
+        assert_eq!((read, runs), (Err(Failure::Unavailable), DUMP_ATTEMPTS));
     }
 
     #[test]
