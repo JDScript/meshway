@@ -43,6 +43,7 @@ enum PreviewMode {
     @MainActor static func run() {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.regular)
+        if CommandLine.arguments.contains("--preview-motion") { motion(); NSApp.run(); return }
         Task { @MainActor in
             do {
                 let args = CommandLine.arguments
@@ -107,6 +108,24 @@ enum PreviewMode {
         }
         NSApp.run()
     }
+    /// `--preview-motion [--dark]`: the real loading components and switch for screen recording.
+    @MainActor private static func motion() {
+        let args = CommandLine.arguments
+        NSApp.appearance = NSAppearance(named: args.contains("--dark") ? .darkAqua : .aqua)
+        let size = NSSize(width: 520, height: 300)
+        let motion = window(MotionPreview().padding(20).frame(width: size.width, height: size.height).background(.regularMaterial), size: size, title: "Meshway motion")
+        windows = [motion]
+        motion.setFrameOrigin(NSPoint(x: 200, y: 300)); motion.makeKeyAndOrderFront(nil); NSApp.activate()
+        // The caller records this rectangle (screen points, top-left origin), then terminates the preview.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            let frame = motion.frame
+            let top = (NSScreen.screens.first?.frame.height ?? 0) - frame.maxY
+            print("RECT \(Int(frame.minX)),\(Int(top)),\(Int(frame.width)),\(Int(frame.height))")
+            fflush(stdout)
+        }
+    }
+
     @MainActor private static func window<V: View>(_ view: V, size: NSSize, title: String, panel: Bool = false) -> NSWindow {
         let window = PreviewWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: panel ? [.borderless] : [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -135,6 +154,33 @@ enum PreviewMode {
 }
 
 private enum PreviewFailure: Error { case capture }
+
+private struct MotionPreview: View {
+    @State private var on = false
+    var body: some View {
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(verbatim: "SkeletonRows").font(.caption).foregroundStyle(.secondary)
+                SkeletonRows(count: 5, addresses: true).frame(width: 300)
+            }
+            VStack(alignment: .leading, spacing: 18) {
+                Text(verbatim: "MeshLoader").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 16) { MeshLoader(size: 14); MeshLoader(size: 22); MeshLoader(size: 40) }
+                MeshLoader(label: String(localized: "Checking…"), labelVisible: true)
+                Text(verbatim: "Switch").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    ConnectionDot(color: on ? .green : .accentColor, connecting: !on)
+                    Toggle(isOn: $on) { Text("Connect Meshway") }.labelsHidden().toggleStyle(ConnectionSwitchStyle())
+                }
+            }
+        }.task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1.4))
+                on.toggle()
+            }
+        }
+    }
+}
 
 private final class PreviewWindow: NSWindow {
     override var canBecomeKey: Bool { true }

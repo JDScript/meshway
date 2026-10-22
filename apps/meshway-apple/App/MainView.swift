@@ -46,7 +46,7 @@ struct MainView: View {
                 if model.sampleMode { SampleBanner().padding(7).allowsHitTesting(false) }
             }
             .toolbar {
-                ToolbarItem(placement: .navigation) { StatusIsland(model: model, toolbar: true).frame(maxWidth: 280) }.sharedBackgroundVisibility(.hidden)
+                ToolbarItem(placement: .navigation) { StatusIsland(model: model, toolbar: true).frame(maxWidth: 360) }.sharedBackgroundVisibility(.hidden)
                 ToolbarSpacer(.flexible, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) {
                     PagePicker(selection: Binding(get: { page }, set: { navigation.page = $0 }))
@@ -69,7 +69,7 @@ struct PagePicker: View {
         HStack(spacing: 2) {
             ForEach(AppPage.allCases) { page in
                 Button { selection = page } label: {
-                    Text(page.title).font(.system(size: 12, weight: .medium)).frame(width: 62, height: 28)
+                    Text(page.title).font(.system(size: 12, weight: .medium)).lineLimit(1).fixedSize().padding(.horizontal, 14).frame(minWidth: 62).frame(height: 28)
                         .foregroundStyle(selection == page ? Color.primary : Color.secondary)
                         .background(selection == page ? Color.primary.opacity(0.08) : .clear, in: Capsule())
                 }.buttonStyle(.plain).accessibilityAddTraits(selection == page ? .isSelected : [])

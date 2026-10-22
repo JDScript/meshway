@@ -8,7 +8,7 @@ struct MeshwayEntry {
         if let index = CommandLine.arguments.firstIndex(of: "--preview-locale"), CommandLine.arguments.count > index + 1 {
             UserDefaults.standard.set([CommandLine.arguments[index + 1]], forKey: "AppleLanguages")
         }
-        if CommandLine.arguments.contains("--preview") { PreviewMode.run(); return }
+        if CommandLine.arguments.contains("--preview") || CommandLine.arguments.contains("--preview-motion") { PreviewMode.run(); return }
         if CommandLine.arguments.contains("--model-tests") { ModelTests.run(); return }
         if CommandLine.arguments.contains("--issue-codes") { ModelTests.exportCodes() }
         #endif

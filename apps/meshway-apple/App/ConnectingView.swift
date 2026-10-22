@@ -82,7 +82,7 @@ struct MeshLoader: View {
             edges.move(to: points[0]); edges.addLine(to: points[1]); edges.addLine(to: points[2]); edges.closeSubpath()
             context.stroke(edges, with: .color(.secondary.opacity(0.45)), style: StrokeStyle(lineWidth: max(1, 1.5 * s), lineJoin: .round))
             for (index, point) in points.enumerated() {
-                let radius = 2.4 * s
+                let radius = max(2.4 * s, 1.8)
                 let dot = Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
                 context.fill(dot, with: .color((index == 1 ? Color.teal : Color.primary).opacity(Self.level(node: index, time: time))))
             }
