@@ -80,6 +80,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | `test:runtime:linux --traversal roam --netmap-scenario roam-relay` | roam/relay | ~1.5 分钟 | roam/nat 加公网中继 R：空窗内每 250 ms 一个新流经 R、空窗内启动的流恢复后仍经 R、恢复后的新流直连（R 的收包计数），旧流空窗等于重新穿透，见 [roam/relay 行](/v2/node/validation#roam-relay-row) |
 | `test:runtime:linux --traversal roam --netmap-scenario roam-flap` | roam/flap | ~1 分钟 | A 2 次、合并窗内 3 次与 5 次（链路 down／up）快速切换上联：每次 path 变化一次反应、报告有界、无 circuit 退役、B 跟随最终来源，见 [roam/flap 行](/v2/node/validation#roam-flap-row) |
 | `test:runtime:linux --traversal roam --netmap-scenario roam-exit` | roam/exit | ~1 分钟 | A 是 B 到 WAN 服务 T 的出口并换上联（soft／hard）：能力 `probing`→`ready`、旧出口 TCP 连接结束、新 TCP／UDP 流经新上联、出口角色保持且 `down` 完成、B→A Mesh 流不受影响，见 [roam/exit 行](/v2/node/validation#roam-exit-row) |
+| `test:runtime:linux --traversal fault` | fault/throttle | ~11.5 分钟 | A→R→B 与 B 的出口 E、四端 resolved：B 限额 90／30 秒、B 的 resolved 重启两次、Controller 侧丢弃 B 的 Server 连接 100 秒、E 限额 12 秒；不 `blocked`、撤回期间 `retrying`＋原因、≤ 10 秒以同一 netmap 与包流恢复、Control 中断时数据面照常；基线与每段恢复后 60 秒及非限额故障期间各 meshwayd 每线程 CPU 上限，见 [fault/throttle 行](/v2/node/validation#fault-row) |
 | `test:runtime:linux --traversal exit6` | exit6/off | 全长验收 | 同一拓扑双栈（external／far 为 `3ffe::/16` 内随机 /64、LAN 为 ULA）：两族能力与 IPv6 前置条件、IPv6 TCP／UDP／ICMPv6 经 NAT66、PMTU 与 MSS、AAAA 关联、方案切换、运行时只有 IPv4 的出口快速拒绝与静态 sink、撤回与 quarantine；不跑 `exit/off` 的组件阶段 |
 | `test:runtime:linux --traversal exit` | exit/off | 短模式诊断／全长验收 | 真实 Controller／A／R／E、隔离公网分类目标与私有 LAN；能力／安装、NAT tuple、完整路径、长流／仅接收、撤回／到期／journal／精确清理；内部 ACK／截止边界单独调用正式组件测试 |
 | `test:runtime:linux` | vless/off、trojan/off | 各 ~8 分钟 | 同一 daemon 共同场景；A/B 只经所选 TCP/TLS 承载拨入 R，SecureNode 包流与原路径回复；独立 TLS 材料与精确叶证书验证 |
@@ -98,6 +99,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | `dev/dns-fixture` | resolved／resolv-conf 场景的 OS 支持与 namespace 脚本 | runtime DNS 行 |
 | `dev/traversal-fixture` | NAT 路由器、pcap、穿透证据分类器 | runtime NAT 行 |
 | `dev/roam-fixture` | 漫游行的拓扑与扰动编排、SNAT 路由器、带时间戳的 UDP／TCP／ping 流量与测量 | runtime roam 行 |
+| `dev/fault-fixture` | 故障注入行的拓扑、容器外注入（CPU 限额、resolved 重启、Controller 侧丢包）、每线程 CPU 采样与门槛 | runtime `fault/throttle` 行 |
 
 每个 fixture 只提供 OS、namespace、编排与证据读取；业务行为全部走正式 Rust 实现，不复制实现。
 
