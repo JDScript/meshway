@@ -1,47 +1,109 @@
 import SwiftUI
 
-struct PeerRow: View {
-    let model: AppModel
-    let peer: ClientPeer
-    @State private var hovered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "desktopcomputer").font(.title3).foregroundStyle(.secondary).frame(width: 32)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(peer.node.hostname).font(.body.weight(.medium)).lineLimit(1)
-                Text(peer.node.ipv4 ?? peer.node.ipv6 ?? "No address").font(peer.node.ipv4 == nil && peer.node.ipv6 == nil ? .caption : .caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                Text(model.peerPathDetail(peer) ?? "No active channel").font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 7) {
-                PathBadge(peer: peer)
-                Text(peer.rtt.map { milliseconds($0.durationUs) } ?? "Not measured").font(.caption).foregroundStyle(.secondary).contentTransition(.numericText())
-                    .help(peer.rtt.map { "Measured " + $0.observedAt.formatted() } ?? "No successful RTT measurement")
-            }.frame(width: 100, alignment: .trailing)
-            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-        }.padding(.horizontal, 10).frame(height: 78).contentShape(Rectangle())
-            .background(hovered ? Color.primary.opacity(0.045) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-            .onHover { hovered = $0 }.animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: peer.rtt?.durationUs)
+@MainActor
+func peerSummary(_ peer: ClientPeer, model: AppModel) -> String {
+    switch peer.state {
+    case .direct: return peer.rtt.map { milliseconds($0.durationUs) } ?? peerStateName(.direct)
+    case .relay: return peer.via.isEmpty ? peerStateName(.relay) : model.via(peer.via)
+    case .idle, .relayIdle: return peerStateName(.idle)
+    case .offline: return peerStateName(.offline)
+    case .unreachable: return peerStateName(.unreachable)
     }
 }
 
-struct PathBadge: View {
+struct PeerDot: View {
     let peer: ClientPeer
-    private var title: String { peer.state == .idle || peer.state == .relayIdle ? "Idle" : human(peer.state) }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var color: Color {
+        switch peer.state {
+        case .direct: .green
+        case .relay: .indigo
+        case .idle, .relayIdle: .gray
+        case .offline: .gray.opacity(0.35)
+        case .unreachable: .orange
+        }
+    }
     var body: some View {
-        Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1).padding(.horizontal, 7).padding(.vertical, 3)
-            .foregroundStyle(peer.state == .direct ? Color.green : Color.secondary)
-            .background((peer.state == .direct ? Color.green : Color.secondary).opacity(0.09), in: Capsule())
-            .help(peer.state == .idle || peer.state == .relayIdle ? "Idle path; no established channel" : title)
+        Circle().fill(color).frame(width: 7, height: 7).accessibilityLabel(peerStateName(peer.state))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: peer.state)
+    }
+}
+
+struct DevicesView: View {
+    @Bindable var model: AppModel
+    @State private var selected: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var peer: ClientPeer? { model.peers.first { $0.nodeId == selected } }
+
+    private var connecting: Bool { ConnectionPresentation(model: model).state == .connecting }
+    var body: some View {
+        // With no device at all the empty state owns the whole content area.
+        if !connecting && (model.status?.peers.isEmpty ?? true) {
+            EmptyStateView(kind: serverEmptyState(model) ?? .devices).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background.opacity(0.45), in: .rect(cornerRadius: 16))
+        } else { list }
+    }
+    private var list: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
+                    TextField("Search devices", text: $model.search).textFieldStyle(.plain)
+                    Text(verbatim: "\(model.peers.count)").foregroundStyle(.tertiary)
+                }.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 30)
+                ScrollView {
+                    LazyVStack(spacing: 1) {
+                        if connecting { SkeletonRows(count: min(10, max(3, model.peers.count)), addresses: true) }
+                        else {
+                        ForEach(model.peers, id: \.nodeId) { peer in
+                            Button { selected = peer.nodeId } label: {
+                                HStack(spacing: 10) {
+                                    PeerDot(peer: peer)
+                                    Text(peer.node.hostname).fontWeight(.medium).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1)
+                                    Text(peer.node.ipv4 ?? peer.node.ipv6 ?? String(localized: "No address"))
+                                        .font(.system(size: 11, design: .monospaced)).opacity(0.55).frame(width: 110, alignment: .leading).lineLimit(1)
+                                    Text(peerSummary(peer, model: model)).font(.system(size: 11)).opacity(0.55)
+                                        .frame(width: 125, alignment: .trailing).lineLimit(1)
+                                        .help(model.path(peer))
+                                }
+                            }.buttonStyle(MenuRowStyle())
+                                .background(selected == peer.nodeId ? Color.accentColor.opacity(0.12) : .clear, in: .rect(cornerRadius: 6))
+                                .accessibilityAddTraits(selected == peer.nodeId ? .isSelected : [])
+                                .contextMenu { PeerCopyActions(peer: peer) }.transition(.opacity)
+                        }
+                        }
+                    }.padding(4)
+                }.scrollIndicators(.hidden)
+                    .overlay {
+                        if !connecting, let kind = EmptyStateKind.devices(query: model.search, count: model.peers.count, server: serverEmptyState(model)) {
+                            EmptyStateView(kind: kind)
+                        }
+                    }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background.opacity(0.45), in: .rect(cornerRadius: 16))
+            // A stable column keeps addresses and rows still as selection changes.
+            ZStack(alignment: .top) {
+                if let peer {
+                    PeerDetail(model: model, peer: peer) { selected = nil }
+                        .id(peer.nodeId).transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+                } else if let kind = serverEmptyState(model) {
+                    EmptyStateView(kind: kind, compact: true)
+                }
+            }.frame(width: 210).frame(maxHeight: .infinity)
+        }.font(.system(size: 12)).clipped()
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: selected)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.peers.map(\.nodeId))
+            .task {
+                #if DEBUG
+                if model.sampleMode && CommandLine.arguments.contains("--preview-selected") { selected = model.peers.first?.nodeId }
+                #endif
+            }
     }
 }
 
 struct CompactPeerRow: View {
     let model: AppModel
     let peer: ClientPeer
-    @State private var hovered = false
     @State private var copied = false
     @State private var copyID = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -51,131 +113,131 @@ struct CompactPeerRow: View {
             if let address { copy(address); copied = true; copyID += 1 }
         } label: {
             HStack(spacing: 9) {
-                Image(systemName: copied ? "checkmark.circle.fill" : "desktopcomputer")
-                    .font(.body).foregroundStyle(copied ? Color.green : Color.secondary).frame(width: 22)
-                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(peer.node.hostname).font(.callout.weight(.medium)).lineLimit(1)
-                    Text(address ?? "No address").font(address == nil ? .caption : .caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                VStack(alignment: .trailing, spacing: 4) {
-                    PathBadge(peer: peer)
-                    Text(peer.rtt.map { milliseconds($0.durationUs) } ?? "—").font(.system(size: 10)).foregroundStyle(.secondary)
-                        .contentTransition(.numericText()).frame(width: 63, alignment: .trailing)
-                }.frame(width: 63, alignment: .trailing)
-            }.padding(.horizontal, 7).frame(height: 54).contentShape(Rectangle())
-                .background(hovered ? Color.primary.opacity(0.06) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-        }.buttonStyle(.plain).disabled(address == nil)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: copied)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: peer.rtt?.durationUs)
-            .onHover { hovered = $0 }.animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-            .help(copied ? "Address copied" : "Click to copy address · \(model.path(peer)) · \(peer.rtt.map { "RTT measured " + $0.observedAt.formatted() } ?? "RTT not measured")")
+                PeerDot(peer: peer)
+                Text(peer.node.hostname).lineLimit(1)
+                Spacer(minLength: 3)
+                Text(copied ? String(localized: "Copied") : peerSummary(peer, model: model)).font(.system(size: 11)).opacity(0.55).lineLimit(1)
+            }
+        }.buttonStyle(MenuRowStyle()).disabled(address == nil)
+            .help(address.map { String(localized: "Click to copy") + " \($0) · " + model.path(peer) } ?? String(localized: "No address"))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: copied)
             .task(id: copyID) {
                 guard copied else { return }
-                do { try await Task.sleep(for: .seconds(1.6)) } catch { return }
+                do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
                 copied = false
             }
     }
 }
+
 struct PeerCopyActions: View {
     let peer: ClientPeer
     var body: some View {
         Button("Copy name") { copy(peer.node.hostname) }
         if let value = peer.node.ipv4 { Button("Copy IPv4") { copy(value) } }
         if let value = peer.node.ipv6 { Button("Copy IPv6") { copy(value) } }
-        Button("Copy Node ID") { copy(peer.nodeId) }
+        Button("Copy device ID") { copy(peer.nodeId) }
     }
 }
+
 struct PeerDetail: View {
     let model: AppModel
     let peer: ClientPeer
-    @Environment(\.dismiss) private var dismiss
+    var close: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack { Text(peer.node.hostname).font(.title2.weight(.semibold)); Spacer(); Button("Done") { dismiss() } }
-            AddressRow(title: "Mesh IPv4", value: peer.node.ipv4)
-            AddressRow(title: "Mesh IPv6", value: peer.node.ipv6)
-            LabeledContent("Node ID") { Text(peer.nodeId); CopyButton(value: peer.nodeId, title: "Copy Node ID") }
-            Divider()
-            LabeledContent("State", value: human(peer.state))
-            LabeledContent("Path", value: model.path(peer))
-            LabeledContent("Transport", value: peer.transport ?? "Not reported")
-            if let mtu = peer.mtu { LabeledContent("MTU", value: "\(mtu.path) outer / \(mtu.inner) inner") }
-            else { LabeledContent("MTU", value: missingMtu) }
-            if let rtt = peer.rtt {
-                HStack { Text("Last successful RTT"); Spacer(); Text(milliseconds(rtt.durationUs)); RelativeTime(date: rtt.observedAt) }
-            } else { LabeledContent("RTT", value: "No successful measurement") }
-            Button("Ping this peer", systemImage: "waveform.path") { model.pingTarget = peer.node.hostname; model.ping(); AppNavigation.shared.page = .diagnostics; dismiss() }.disabled(model.sampleMode || model.pingRunning)
-                .help(unavailableHelp(model, fallback: model.pingRunning ? "Wait for the current ping to finish" : "Measure this peer"))
-        }.padding(28).frame(width: 560).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text(peer.node.hostname).font(.system(size: 15, weight: .semibold)).lineLimit(2)
+                Spacer(minLength: 0)
+                Button(action: close) { Image(systemName: "xmark").font(.system(size: 10)).foregroundStyle(.tertiary) }.buttonStyle(.plain).help("Close")
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Address").foregroundStyle(.secondary)
+                if let value = peer.node.ipv4 { CopyText(value: value) }
+                if let value = peer.node.ipv6 { CopyText(value: value) }
+                if peer.node.ipv4 == nil && peer.node.ipv6 == nil { Text("None") }
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Route").foregroundStyle(.secondary)
+                Text(path).fixedSize(horizontal: false, vertical: true)
+                if let transport = peer.transport { Text(verbatim: transport).foregroundStyle(.secondary) }
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Latency").foregroundStyle(.secondary)
+                Text(peer.rtt.map { milliseconds($0.durationUs) } ?? String(localized: "Not measured"))
+                    .help(peer.rtt.map { String(localized: "Measured \($0.observedAt.formatted(.relative(presentation: .named)))") } ?? String(localized: "Not measured"))
+            }
+            Spacer()
+            Button(action: {
+                model.pingTarget = peer.node.hostname; model.ping(); AppNavigation.shared.page = .diagnostics
+            }) { Label { Text(verbatim: "Ping") } icon: { Image(systemName: "waveform.path") } }.buttonStyle(.glass).frame(maxWidth: .infinity)
+                .disabled(model.sampleMode || model.pingRunning)
+                .help(unavailableHelp(model, fallback: model.pingRunning ? String(localized: "A ping is already running") : String(localized: "Measure latency to this device")))
+        }.font(.system(size: 12)).padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(.background.opacity(0.55), in: .rect(cornerRadius: 16))
     }
-    private var missingMtu: String {
-        guard peer.state == .direct else { return "Not applicable to this path" }
-        guard let transport = peer.transport else { return "Not reported" }
-        return transport == "native_udp" ? "Not measured" : "Not applicable to this transport"
+    private var path: String {
+        if peer.state == .direct { return peerStateName(.direct) }
+        if peer.state == .relay { return peerSummary(peer, model: model) }
+        return model.path(peer)
     }
 }
+
 struct ProfilesView: View {
     let model: AppModel
     let selection: ClientSelection
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        Form {
-            Section("Current selection") {
-                LabeledContent("Netmap profile", value: selection.appliedProfile)
-                LabeledContent("Installation", value: model.netmapApplied ? "Applied" : "Waiting to apply")
-                LabeledContent("Requested", value: selection.requestedProfile ?? "Following default")
-                LabeledContent("Default", value: selection.defaultProfile)
-                LabeledContent("Selection", value: selection.locked ? "Locked by administrator" : "Available")
-            }
-            Section("Available profiles") {
-                ForEach(selection.profiles, id: \.name) { profile in
-                    HStack(spacing: 12) {
-                        Image(systemName: profile.name == selection.appliedProfile ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(profile.name == selection.appliedProfile ? Color.accentColor : Color.secondary)
-                            .font(.title3).contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(profile.name).fontWeight(.medium)
-                            Text(summary(profile)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                        Spacer()
-                        Button("Select") { Task { await model.perform(.selectProfile(profile: profile.name)) } }
-                            .disabled(!model.canRequestSelection || selection.locked || model.busy || model.sampleMode)
-                            .help(unavailableHelp(model, fallback: selection.locked ? "Locked by administrator" : (!model.canRequestSelection ? "Requires an active identity, netmap and instance" : "Request this profile from the Server")))
-                    }.frame(height: 58)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Exit profiles").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary).padding(.horizontal, 10)
+            ProfileRows(model: model, selection: selection)
+            if selection.profiles.count == 1 && selection.profiles.first?.kind == .mesh { EmptyStateView(kind: .mesh) }
+            Spacer()
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct ProfileRows: View {
+    let model: AppModel
+    let selection: ClientSelection
+    var compact = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var selectHelp: String {
+        selection.locked ? String(localized: "Locked by your admin") : (!model.canRequestSelection ? String(localized: "Available when connected") : String(localized: "Switch to this profile"))
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(selection.profiles, id: \.name) { profile in
+                Button { Task { await model.perform(.selectProfile(profile: profile.name)) } } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).frame(width: 12)
+                            .opacity(profile.name == selection.appliedProfile && model.netmapApplied ? 1 : 0)
+                        Text(verbatim: profile.name).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(exitNames(profile))
+                            .font(.system(size: 11)).opacity(0.55).lineLimit(1)
+                    }
+                }.buttonStyle(MenuRowStyle())
+                    .disabled(!model.canRequestSelection || selection.locked || model.busy || model.sampleMode)
+                    .help(unavailableHelp(model, fallback: selectHelp))
+                if profile.name == selection.appliedProfile && selection.appliedProfile != selection.defaultProfile {
+                    Button(String(localized: "Use default (\(selection.defaultProfile))")) { Task { await model.perform(.clearProfile) } }
+                        .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 30).frame(height: 20)
+                        .disabled(!model.canRequestSelection || model.busy || model.sampleMode || selection.requestedProfile == nil)
+                        .help(unavailableHelp(model, fallback: !model.canRequestSelection ? String(localized: "Available when connected") : (selection.requestedProfile == nil ? String(localized: "Already using the default") : String(localized: "Go back to the default profile"))))
                 }
-                Button("Use default profile") { Task { await model.perform(.clearProfile) } }
-                    .disabled(!model.canRequestSelection || model.busy || model.sampleMode || selection.requestedProfile == nil)
-                    .help(unavailableHelp(model, fallback: !model.canRequestSelection ? "Requires an active identity, netmap and instance" : (selection.requestedProfile == nil ? "Already following the default profile" : "Clear the persistent profile request")))
             }
-            Section("Selection details") {
-                LabeledContent("Requested availability", value: selection.requestedUnavailable.map(human) ?? "No issue reported")
-                LabeledContent("Automatic profile", value: selection.auto?.profile ?? "Not applicable")
-                LabeledContent("Automatic basis", value: selection.auto.map { human($0.basis) } ?? "Not applicable")
-                LabeledContent("Declared region", value: selection.auto?.region ?? (selection.auto == nil ? "Not applicable" : "Not declared"))
+            if let unavailable = selection.requestedUnavailable {
+                IssueRow(issue: AppIssue(.selection(unavailable)), compact: true).padding(.horizontal, 10)
+            } else if !model.netmapApplied || model.notice != nil {
+                Text(model.notice ?? String(localized: "Applying…"))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).padding(.horizontal, 10)
             }
-        }.formStyle(.grouped)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: selection.appliedProfile)
+        }.font(.system(size: 13))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: selection.appliedProfile)
     }
-    private func summary(_ p: ClientProfile) -> String {
-        switch p.kind {
-        case .mesh: return "Mesh only; other external traffic unmanaged"
-        case .auto: return "Selects an allowed profile using the declared region"
-        case .global: return "All external traffic · " + action(p.fallback)
-        case .custom:
-            var parts = ["\(p.rules) rules"]
-            if !p.exits.isEmpty { parts.append("exits " + p.exits.map(model.name).joined(separator: ", ")) }
-            if p.fallback != nil { parts.append("otherwise " + action(p.fallback)) }
-            return parts.joined(separator: " · ")
-        }
+    private func exitNames(_ profile: ClientProfile) -> String {
+        guard !profile.exits.isEmpty else { return "" }
+        let names = profile.exits.compactMap { id in model.status?.peers.first { $0.nodeId == id }?.node.hostname }
+        guard names.count == profile.exits.count else { return String(localized: "Exit name unknown") }
+        return String(localized: "Via \(names.formatted(.list(type: .and)))")
     }
-    private func action(_ value: ClientRouteAction?) -> String {
-        guard let value else { return "not specified" }
-        switch value {
-        case .direct: return "direct"
-        case .unmanaged: return "unmanaged"
-        case .exit(let nodes, let via): return "exit " + nodes.map(selector).joined(separator: ", ") + (via.isEmpty ? "" : " via " + via.map(selector).joined(separator: " → "))
-        }
-    }
-    private func selector(_ value: String) -> String { value.hasPrefix("node:") ? model.name(String(value.dropFirst(5))) : value }
 }

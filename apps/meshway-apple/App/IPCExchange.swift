@@ -80,14 +80,14 @@ final class IPCExchange {
 }
 
 enum IPCFailure: LocalizedError {
-    case disconnected, rejected, timeout, result, remote(String)
+    case disconnected, rejected, timeout, result, remote(ClientErrorCode, String)
     var errorDescription: String? {
         switch self {
         case .disconnected: "Cannot reach the Node extension. Check the VPN and extension status."
         case .rejected: "The Node could not accept this request."
         case .timeout: "No response before the deadline. A submitted operation may still complete; refresh status before retrying."
         case .result: "The Node returned an unexpected result."
-        case .remote(let message): message
+        case .remote(_, let message): message
         }
     }
 }

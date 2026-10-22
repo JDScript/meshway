@@ -9,12 +9,23 @@ use meshway_model::{NetmapRef, NodeId, Sequence, Version};
 #[cfg(any(debug_assertions, test))]
 use meshway_protocol::ipc;
 
+#[cfg(any(debug_assertions, test))]
+mod diagnostics;
+
 #[derive(Clone, Copy, uniffi::Enum)]
 pub enum ClientSample {
     Unenrolled,
     AwaitingApproval,
     Running,
     Error,
+    ConnectingAuthentication,
+    ConnectingSync,
+    ConnectingApply,
+    ConnectingPlane,
+    NoPeers,
+    MeshOnly,
+    ServerUnavailable,
+    LeaseUnavailable,
 }
 
 #[cfg(any(debug_assertions, test))]
@@ -65,7 +76,7 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
             );
             status.enrollment_url = Some("https://console.example/approve/sample".into());
         }
-        ClientSample::Running | ClientSample::Error => {
+        _ => {
             status.desired_up = true;
             status.phase = ipc::Phase::Running;
             status.data_plane = ipc::DataPlane::Ready;
@@ -116,9 +127,7 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
                 hostname: "MacBook Pro".into(),
                 addresses: addresses("100.64.0.2", "fd89:98a2:2060::2"),
             });
-            let relay: NodeId = "00000000-0000-4000-8000-000000000003"
-                .parse()
-                .expect("sample id");
+            let relay = node(3);
             status.peers = vec![
                 ipc::PeerStatus {
                     node_id: relay,
@@ -170,11 +179,38 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
                     }),
                 },
             ];
-            let reference = NetmapRef {
-                revision: meshway_model::Revision::MIN,
-                serial: Version::MIN,
-                digest: meshway_model::Digest::from_bytes([0xaa; 32]),
-            };
+            for (number, hostname, state, source) in [
+                (6, "office-mac", ipc::PeerState::Offline, 2),
+                (7, "meshway-london", ipc::PeerState::Direct, 0),
+                (8, "lab-server", ipc::PeerState::RelayIdle, 2),
+            ] {
+                let mut peer = status.peers[source].clone();
+                peer.node_id = node(number);
+                peer.hostname = hostname.into();
+                peer.addresses = addresses(
+                    &format!("100.64.0.{number}"),
+                    &format!("fd89:98a2:2060::{number}"),
+                );
+                peer.state = state;
+                if state == ipc::PeerState::Offline {
+                    peer.idle_path = None;
+                }
+                if state == ipc::PeerState::Direct {
+                    peer.endpoint = Some("192.0.2.7:41641".parse().expect("sample endpoint"));
+                    peer.rtt = Some(ipc::PeerRtt {
+                        duration_us: Sequence::new(62300).expect("sample RTT"),
+                        observed_at: now - Duration::seconds(12),
+                    });
+                }
+                if state == ipc::PeerState::RelayIdle {
+                    peer.idle_path = Some(ipc::IdlePath {
+                        route: ipc::IdleRoute::Relay,
+                        via: vec![relay],
+                    });
+                }
+                status.peers.push(peer);
+            }
+            let reference = netmap();
             status.saved = Some(reference);
             status.applied = Some(reference);
             status.netmap = Some(ipc::NetmapStatus {
@@ -231,10 +267,137 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
                 status.sync = ipc::SyncState::Reconnecting;
                 status.sync_error = Some(ipc::SyncError::Credentials);
             }
+            match sample {
+                ClientSample::ConnectingAuthentication | ClientSample::ConnectingSync => {
+                    status.phase = if matches!(sample, ClientSample::ConnectingAuthentication) {
+                        ipc::Phase::Starting
+                    } else {
+                        ipc::Phase::Synchronizing
+                    };
+                    status.data_plane = ipc::DataPlane::Preparing;
+                    status.authenticated = matches!(sample, ClientSample::ConnectingSync);
+                    // Before a first sync the Node reports Disconnected (not
+                    // running) or Reconnecting (running, no recent sync).
+                    status.last_sync_at = None;
+                    status.saved = None;
+                    if status.authenticated {
+                        status.sync = ipc::SyncState::Reconnecting;
+                    } else {
+                        status.instance = None;
+                        status.sync = ipc::SyncState::Disconnected;
+                    }
+                    status.node = None;
+                    status.peers.clear();
+                    status.netmap = None;
+                    status.applied = None;
+                }
+                ClientSample::ConnectingApply | ClientSample::ConnectingPlane => {
+                    status.phase = if matches!(sample, ClientSample::ConnectingApply) {
+                        ipc::Phase::ControlReady
+                    } else {
+                        ipc::Phase::Running
+                    };
+                    status.data_plane = ipc::DataPlane::Preparing;
+                    status.applied = None;
+                }
+                // Without peers no exit exists, so only the Mesh profile remains.
+                ClientSample::NoPeers | ClientSample::MeshOnly => {
+                    if matches!(sample, ClientSample::NoPeers) {
+                        status.peers.clear();
+                    }
+                    let routing = status
+                        .netmap
+                        .as_mut()
+                        .expect("sample netmap")
+                        .routing
+                        .as_mut()
+                        .expect("sample routing");
+                    routing
+                        .profiles
+                        .retain(|profile| profile.kind == ProfileKind::Mesh);
+                    routing.applied_profile = "mesh".into();
+                    routing.requested_profile = None;
+                }
+                ClientSample::ServerUnavailable | ClientSample::LeaseUnavailable => {
+                    // A failed sync alone stays in sync state: the installed
+                    // netmap keeps running inside its lease with no lastError.
+                    status.sync = ipc::SyncState::Reconnecting;
+                    status.sync_error = Some(ipc::SyncError::Network);
+                    status.last_sync_at = Some(now - Duration::minutes(5));
+                    if matches!(sample, ClientSample::LeaseUnavailable) {
+                        status.netmap = None;
+                        status.applied = None;
+                        status.data_plane = ipc::DataPlane::Suspended;
+                        status.phase = ipc::Phase::Retrying;
+                        status.node = None;
+                        status.peers.clear();
+                        status.last_error = Some(ipc::Problem::Network);
+                        status.retry_at = Some(now + Duration::seconds(5));
+                    }
+                }
+                _ => {}
+            }
         }
     }
     status
 }
+
+#[derive(Clone, Copy, uniffi::Enum)]
+pub enum ClientDiagnosticSample {
+    Ping,
+    PingExit,
+    PingDenied,
+    PingUnsupported,
+    Netcheck,
+}
+
+/// Return production-codec frames; one client request must consume the stream in order.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn client_sample_diagnostic_frames(
+    sample: ClientDiagnosticSample,
+    request_id: String,
+) -> Result<Vec<Vec<u8>>, ClientError> {
+    #[cfg(not(any(debug_assertions, test)))]
+    {
+        let _ = (sample, request_id);
+        Err(ClientError::Input)
+    }
+    #[cfg(any(debug_assertions, test))]
+    {
+        let request_id = request_id.parse().map_err(|_| ClientError::Input)?;
+        let mut frames = Vec::new();
+        for result in diagnostics::results(sample) {
+            let response = ipc::Response {
+                version: ipc::VERSION,
+                request_id,
+                result,
+            };
+            let mut frame = Vec::new();
+            ipc::write(&mut frame, &response)
+                .await
+                .map_err(|_| ClientError::Frame)?;
+            frames.push(frame);
+        }
+        Ok(frames)
+    }
+}
+#[cfg(any(debug_assertions, test))]
+fn node(number: u8) -> NodeId {
+    format!("00000000-0000-4000-8000-{number:012}")
+        .parse()
+        .expect("sample node")
+}
+
+/// The one netmap every sample Status and measurement refers to.
+#[cfg(any(debug_assertions, test))]
+fn netmap() -> NetmapRef {
+    NetmapRef {
+        revision: meshway_model::Revision::MIN,
+        serial: Version::MIN,
+        digest: meshway_model::Digest::from_bytes([0xaa; 32]),
+    }
+}
+
 #[cfg(any(debug_assertions, test))]
 fn addresses(ipv4: &str, ipv6: &str) -> NodeAddresses {
     NodeAddresses {

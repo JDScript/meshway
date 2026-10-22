@@ -3,119 +3,43 @@ import SwiftUI
 @MainActor @Observable
 final class AppNavigation {
     static let shared = AppNavigation()
-    var page: AppPage? = .overview
-}
-
-// Motion and feedback live in the presentation layer; no optimistic Node state.
-struct PhaseLabel: View {
-    let model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var color: Color {
-        switch model.status?.phase {
-        case .running: .green
-        case .blocked, .retrying: .orange
-        case .starting, .synchronizing, .awaitingApproval, .stopping, .leaving: .accentColor
-        default: .secondary
-        }
-    }
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(model.phase).lineLimit(1).contentTransition(.numericText())
-        }.font(.callout).animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.phase)
-    }
-}
-
-struct ConnectionHeader: View {
-    let model: AppModel
-    var compact: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: model.status?.phase == .running ? "network" : "power")
-                .font(compact ? .title3 : .title).foregroundStyle(.tint)
-                .frame(width: compact ? 36 : 48, height: compact ? 36 : 48)
-                .glassEffect(.regular, in: .circle)
-                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                .symbolEffect(.pulse, isActive: model.busy && !reduceMotion)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.status?.node?.hostname ?? "This Mac").font(compact ? .headline : .title2.weight(.semibold)).lineLimit(1)
-                PhaseLabel(model: model)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            Toggle("Connect", isOn: Binding(get: { model.status?.desiredUp ?? false }, set: { enabled in Task { await model.connect(enabled) } }))
-                .labelsHidden().toggleStyle(.switch).controlSize(.large)
-                .disabled(model.busy || model.sampleMode || (model.status == nil && model.server.isEmpty))
-                .help(unavailableHelp(model, fallback: model.status == nil && model.server.isEmpty ? "Open Meshway to enter a Server URL" : "Change the Node's desired connection state"))
-        }.frame(height: compact ? 56 : 66)
-    }
+    var page: AppPage? = .peers
 }
 
 struct SampleBanner: View {
     var body: some View {
-        Label("SAMPLE", systemImage: "testtube.2").font(.system(size: 9, weight: .semibold)).tracking(0.6)
-            .foregroundStyle(.secondary).padding(.horizontal, 7).padding(.vertical, 4)
-            .background(.quaternary, in: Capsule())
-            .help("SAMPLE DATA · Debug preview. System-changing actions are disabled.")
-    }
-}
-
-// Fixed-size feedback: incoming errors never move rows. The popover preserves
-// complete, independent Control and network errors without clipping details.
-struct FeedbackShelf: View {
-    let model: AppModel
-    var compact = false
-    @State private var expanded = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var messages: [String] {
-        var result = [model.issue, model.ipcIssue, model.notice].compactMap { $0 }
-        if let error = model.status?.lastError { result.append("Node · \(human(error)): \(model.status?.lastErrorDetail ?? "No detail reported")") }
-        if let error = model.status?.networkError { result.append("Network · \(human(error.problem)): \(error.detail ?? "No detail reported")") }
-        return result
-    }
-    var body: some View {
-        Button { expanded = true } label: {
-            HStack(spacing: 8) {
-                Image(systemName: messages.isEmpty ? "info.circle" : "exclamationmark.circle")
-                Text(messages.first ?? (model.busy ? "Working…" : (model.sampleMode ? "Preview · actions disabled" : "macOS VPN · \(model.vpnLabel)")))
-                    .lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
-                Text(messages.count > 1 ? "+\(messages.count - 1)" : "").font(.caption2).frame(width: 16)
-                Image(systemName: "chevron.up").font(.caption2).opacity(messages.isEmpty ? 0 : 1)
-            }.font(.caption).foregroundStyle(messages.isEmpty ? Color.secondary : Color.orange)
-                .contentTransition(.opacity).padding(.horizontal, compact ? 4 : 20)
-                .frame(height: compact ? 28 : 38).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(messages.isEmpty)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: messages)
-            .popover(isPresented: $expanded) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Connection details").font(.headline)
-                        ForEach(Array(messages.enumerated()), id: \.offset) { _, message in Text(message).textSelection(.enabled) }
-                    }.padding(20)
-                }.frame(width: 370, height: 240)
-            }.help(messages.joined(separator: "\n"))
+        #if DEBUG
+        Text(verbatim: "SAMPLE").font(.system(size: 8, weight: .medium)).tracking(0.5)
+            .foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.vertical, 2)
+            .background(.quaternary.opacity(0.5), in: Capsule())
+            .help("Preview data. Actions are disabled.")
+        #else
+        EmptyView()
+        #endif
     }
 }
 
 struct RelativeTime: View {
     let date: Date
+    @Environment(\.locale) private var locale
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            Text(date, format: .relative(presentation: .named)).foregroundStyle(.secondary)
+            Text(date, format: .relative(presentation: .named).locale(locale)).foregroundStyle(.secondary)
                 .contentTransition(.numericText()).lineLimit(1)
-                .help(date.formatted(date: .complete, time: .complete))
+                .help(date.formatted(.dateTime.locale(locale)))
         }
     }
 }
 struct OptionalTime: View {
     let date: Date?
     var body: some View {
-        if let date { RelativeTime(date: date) } else { Text("Not reported").foregroundStyle(.secondary) }
+        if let date { RelativeTime(date: date) } else { Text("—").foregroundStyle(.secondary) }
     }
 }
 
 struct CopyButton: View {
     let value: String
-    var title = "Copy address"
+    var title: String = String(localized: "Copy")
     @State private var copied = false
     @State private var resetID = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -123,8 +47,8 @@ struct CopyButton: View {
         Button { copy(value); copied = true; resetID += 1 } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                .foregroundStyle(copied ? Color.green : Color.secondary).frame(width: 18, height: 18)
-        }.buttonStyle(.borderless).help(copied ? "Copied" : title).accessibilityLabel(copied ? "Copied" : title)
+                .foregroundStyle(copied ? Color.teal : Color.secondary).frame(width: 18, height: 18)
+        }.buttonStyle(.borderless).help(copied ? String(localized: "Copied") : title).accessibilityLabel(copied ? String(localized: "Copied") : title)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: copied)
             .task(id: resetID) {
                 guard copied else { return }
@@ -136,24 +60,91 @@ struct CopyButton: View {
 struct AddressRow: View {
     let title: String
     let value: String?
-    var missing = "Not assigned"
+    var missing: String = String(localized: "None")
     var body: some View {
-        LabeledContent(title) {
+        LabeledContent {
             HStack(spacing: 8) {
                 Text(value ?? missing).font(value == nil ? .callout : .callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                if let value { CopyButton(value: value, title: "Copy \(title)") }
+                if let value { CopyButton(value: value) }
                 else { Color.clear.frame(width: 18, height: 18) }
             }
+        } label: { Text(verbatim: title) }
+    }
+}
+
+/// The message, its code and any untranslated detail; the code is copyable.
+struct IssueRow: View {
+    let issue: AppIssue
+    var compact = false
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: issue.code.isWarning ? "exclamationmark.triangle.fill" : "xmark.octagon.fill")
+                .foregroundStyle(issue.code.isWarning ? Color.issueAmber : Color.orange).font(.system(size: compact ? 10 : 12))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(issue.message).font(.system(size: compact ? 11 : 12)).fixedSize(horizontal: false, vertical: true)
+                IssueCodeLabel(code: issue.code)
+                if let detail = issue.detail, !compact {
+                    Text(verbatim: detail).font(.system(size: 10)).foregroundStyle(.tertiary).textSelection(.enabled)
+                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).help(issue.detail ?? issue.code.rawValue)
+    }
+}
+struct IssueCodeLabel: View {
+    let code: IssueCode
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(verbatim: code.rawValue).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
+            CopyButton(value: code.rawValue, title: String(localized: "Copy code")).controlSize(.mini).scaleEffect(0.8)
         }
     }
 }
+
+extension Color {
+    static let issueAmber = Color(red: 0.96, green: 0.65, blue: 0.14)
+}
+
 @MainActor func unavailableHelp(_ model: AppModel, fallback: String) -> String {
-    if model.sampleMode { return "Sample preview — system-changing actions are disabled" }
-    if model.busy { return "Waiting for the current operation to finish" }
+    if model.sampleMode { return String(localized: "Preview data. Actions are disabled.") }
+    if model.busy { return String(localized: "Please wait…") }
     return fallback
 }
 func copy(_ value: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value, forType: .string) }
-func human<T>(_ value: T) -> String {
-    String(describing: value).replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression).capitalized
+func milliseconds(_ value: UInt64) -> String {
+    (Double(value) / 1000).formatted(.number.precision(.fractionLength(2))) + " ms"
 }
-func milliseconds(_ value: UInt64) -> String { String(format: "%.2f ms", Double(value) / 1000) }
+func peerStateName(_ state: ClientPeerState) -> String {
+    switch state {
+    case .direct: String(localized: "Direct")
+    case .relay: String(localized: "Relay")
+    case .relayIdle: String(localized: "Relay · idle")
+    case .idle: String(localized: "Idle")
+    case .unreachable: String(localized: "Unreachable")
+    case .offline: String(localized: "Offline")
+    }
+}
+func planeName(_ plane: ClientPlane) -> String {
+    switch plane {
+    case .controlOnly: String(localized: "Control only")
+    case .stopped: String(localized: "Off")
+    case .preparing: String(localized: "Starting")
+    case .ready: String(localized: "Ready")
+    case .suspended: String(localized: "Paused")
+    case .failed: String(localized: "Failed")
+    }
+}
+func syncName(_ sync: ClientSync) -> String {
+    switch sync {
+    case .connected: String(localized: "Connected")
+    case .reconnecting: String(localized: "Reconnecting")
+    case .disconnected: String(localized: "Disconnected")
+    }
+}
+func basisName(_ basis: ClientAutoBasis) -> String {
+    switch basis {
+    case .label: String(localized: "Region")
+    case .noRuleMatched: String(localized: "No matching rule")
+    case .noTrustedRegion: String(localized: "Region not set")
+    }
+}

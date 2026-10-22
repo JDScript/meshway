@@ -3,86 +3,57 @@ import SwiftUI
 struct MenuPanel: View {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        GlassEffectContainer(spacing: 12) {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(URL(string: model.status?.server ?? model.server)?.host ?? "Meshway").font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-                if model.sampleMode { SampleBanner() }
-            }.frame(height: 24)
-            ConnectionHeader(model: model, compact: true).padding(.vertical, 8)
-            HStack {
-                Text(model.status?.node?.ipv4 ?? model.status?.node?.ipv6 ?? "No installed address")
-                    .font(model.status?.node == nil ? .caption : .caption.monospaced()).foregroundStyle(.secondary)
-                Spacer()
-                if let address = model.status?.node?.ipv4 ?? model.status?.node?.ipv6 { CopyButton(value: address) }
-                else { Color.clear.frame(width: 18, height: 18) }
-            }.frame(height: 24)
-            Divider().padding(.vertical, 10)
-            HStack {
-                Label("Exit profile", systemImage: "arrow.up.forward.circle").foregroundStyle(.secondary)
-                Spacer()
-                if let selection = model.selection { ProfileMenu(model: model, selection: selection) }
-                else { Text("Unavailable").foregroundStyle(.tertiary) }
-            }.font(.callout).frame(height: 28)
-            HStack {
-                Text("PEERS").font(.system(size: 10, weight: .semibold)).tracking(0.8)
-                Spacer()
-                Text(model.status.map { String($0.peers.count) } ?? "—").font(.caption).contentTransition(.numericText())
-            }.foregroundStyle(.secondary).padding(.top, 18).padding(.bottom, 6)
-            ZStack {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(model.status?.peers ?? [], id: \.nodeId) { peer in
-                            CompactPeerRow(model: model, peer: peer).contextMenu { PeerCopyActions(peer: peer) }
-                        }
-                    }.padding(.horizontal, 1)
-                }.scrollIndicators(.hidden)
-                    .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: model.status?.peers.map(\.nodeId))
-                if model.status?.peers.isEmpty != false {
-                    VStack(spacing: 8) {
-                        Image(systemName: model.status?.phase == .awaitingApproval ? "person.badge.key" : "desktopcomputer").font(.title2).foregroundStyle(.tertiary)
-                            .symbolEffect(.pulse, isActive: model.status?.phase == .awaitingApproval && !reduceMotion)
-                        Text(model.status?.phase == .awaitingApproval ? "Waiting for browser approval" : "Your peers will appear here").font(.callout).foregroundStyle(.secondary)
-                        Text("Open Meshway for connection details.").font(.caption).foregroundStyle(.tertiary)
-                    }
-                }
-            }.frame(height: 172)
-            FeedbackShelf(model: model, compact: true)
-            Divider().padding(.bottom, 10)
-            HStack {
-                Button("Open Meshway", systemImage: "arrow.up.forward.app") { openWindow(id: "main"); NSApp.activate() }.buttonStyle(.glass)
-                Spacer()
-                Menu {
-                    Button("Settings…") { AppNavigation.shared.page = .device; openWindow(id: "main"); NSApp.activate() }
-                    Divider()
-                    Button("Quit Meshway") { NSApp.terminate(nil) }
-                } label: { Image(systemName: "gearshape") }.menuStyle(.borderlessButton).fixedSize().help("Meshway settings")
-            }.frame(height: 30)
-        }.padding(16).frame(width: 344).background(.regularMaterial)
-        }
-    }
-}
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var expandedPeers = false
+    private var peers: [ClientPeer] { model.status?.peers ?? [] }
 
-struct ProfileMenu: View {
-    let model: AppModel
-    let selection: ClientSelection
     var body: some View {
-        Menu {
-            ForEach(selection.profiles, id: \.name) { profile in
-                Button { Task { await model.perform(.selectProfile(profile: profile.name)) } } label: {
-                    if profile.name == selection.appliedProfile { Label(profile.name, systemImage: "checkmark") }
-                    else { Text(profile.name) }
-                }.disabled(!model.canRequestSelection || selection.locked || model.busy || model.sampleMode)
+        VStack(alignment: .leading, spacing: 0) {
+            StatusIsland(model: model).padding(.bottom, 6)
+            sectionLabel(String(localized: "Exit"))
+            ScrollView {
+            if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: min(3, max(2, model.selection?.profiles.count ?? 2))) }
+            else if let selection = model.selection { ProfileRows(model: model, selection: selection, compact: true) }
+            else { EmptyStateView(kind: .profiles, compact: true, height: 96) }
+            }.scrollIndicators(.hidden).frame(height: 96, alignment: .top)
+            Divider().padding(.horizontal, 10).padding(.vertical, 5)
+            sectionLabel(String(localized: "Devices"))
+            VStack(alignment: .leading, spacing: 0) {
+            if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(3, min(peers.count, 5))) }
+            else if peers.isEmpty {
+                EmptyStateView(kind: serverEmptyState(model) ?? .devices, compact: true)
+            } else {
+                ScrollView {
+                    VStack(spacing: 1) {
+                        ForEach(expandedPeers ? peers : Array(peers.prefix(5)), id: \.nodeId) { peer in
+                            CompactPeerRow(model: model, peer: peer).contextMenu { PeerCopyActions(peer: peer) }.transition(.opacity)
+                        }
+                    }
+                }.scrollIndicators(.hidden)
+                if peers.count > 5 {
+                    Button(expandedPeers ? String(localized: "Show less") : String(localized: "\(peers.count - 5) more…")) { expandedPeers.toggle() }
+                        .buttonStyle(MenuRowStyle()).font(.system(size: 12))
+                }
             }
-            Divider()
-            Button("Use default · \(selection.defaultProfile)") { Task { await model.perform(.clearProfile) } }
-                .disabled(!model.canRequestSelection || model.busy || model.sampleMode || selection.requestedProfile == nil)
-        } label: {
-            Text(selection.appliedProfile + (model.netmapApplied ? "" : " · pending")).lineLimit(1)
-        }.menuStyle(.borderlessButton).frame(maxWidth: 130, alignment: .trailing)
-            .help(unavailableHelp(model, fallback: selection.locked ? "Profile selection is locked by your administrator" : "Select an exit profile"))
+            }.frame(height: expandedPeers ? 330 : 180, alignment: .top)
+            Divider().padding(.horizontal, 10).padding(.vertical, 5)
+            Button("Open Meshway") { openWindow(id: "main"); NSApp.activate() }.buttonStyle(MenuRowStyle())
+            Button { openSettings(); NSApp.activate() } label: {
+                HStack { Text("Settings…"); Spacer(); Text(verbatim: "⌘,").opacity(0.5) }
+            }.buttonStyle(MenuRowStyle())
+            Button("Quit") { NSApp.terminate(nil) }.buttonStyle(MenuRowStyle())
+        }.font(.system(size: 13)).padding(10).frame(width: 316)
+            .background(colorScheme == .light ? Color.white.opacity(0.94) : Color(nsColor: .windowBackgroundColor).opacity(0.9), in: .rect(cornerRadius: 26))
+            .glassEffect(.regular, in: .rect(cornerRadius: 26))
+            .overlay(alignment: .bottomTrailing) {
+                if model.sampleMode { SampleBanner().padding(5).allowsHitTesting(false) }
+            }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: peers.map(\.nodeId))
+    }
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+            .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 3)
     }
 }

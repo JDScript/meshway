@@ -121,18 +121,135 @@ SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swif
 
 | 界面 | 行为 |
 | --- | --- |
-| 连接 | 开关读 `desiredUp`，阶段读 `phase`；macOS VPN 状态独立显示。Connect 先启动既有 VPN manager，读取 revision 后提交 `Up`。Disconnect 提交 `Down`，等 Status 为 down 后停止 tunnel |
-| 接入 | 首次输入 Server URL（extension 启动参数），支持高级 enrollment key；不保存该密钥。`awaitingApproval` 的 `enrollmentUrl` 用浏览器打开一次，并提供重新打开按钮；没有 URL 时显示联系 Server 运维的提示。既有 VPN 的 Server 不提供切网入口 |
-| 本节点 | 已安装节点名称、Mesh IPv4／IPv6、netmap 租约、sync、dataPlane、`lastError` 与独立的 `networkError`；时间相对显示，悬停给出绝对时间 |
-| Peers | 搜索名称／地址／Node ID，显示实际 state／transport／endpoint／via、idlePath、已测 RTT；详情与复制。没有测量的 RTT 不填零，idle 不显示为已建立直连 |
-| 出口方案 | netmap 中的生效／请求／默认方案、锁定、auto 与允许方案摘要；`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示，生效仍等本机 netmap 与 applied |
-| 诊断与身份 | Netcheck、四次 ping 的流式本地判定／测量、取消 ping、RotateKey、带永久注销说明的 Logout 确认；身份操作先读 revision，不绕过 CAS |
+| 状态岛 | 316 pt 菜单面板顶部与主窗口工具栏共用 `StatusIsland`：状态点、单行状态、可复制 Mesh IPv4 与连接开关。错误为琥珀色单行用户文案；点按打开 popover，逐条显示文案、可复制的等宽错误码与未翻译的原始细节，不撑开布局。不改变状态的警告（如 Server 暂不可达但离线可用）保持「已连接」与绿点，只在状态文字旁加琥珀色 `exclamationmark.triangle.fill` 徽标，popover 给出警告码与「离线可用至」时间。Meshway／macOS VPN 阶段在 popover 与设置中显示 |
+| 连接 | 开关读 `desiredUp`，不以操作提交成功推断已连接。Connect 先启动既有 VPN manager，读取 revision 后提交 `Up`。Disconnect 提交 `Down`，等 Status 为 down 后停止 tunnel |
+| 接入 | 首次输入 Server URL（extension 启动参数），支持高级 enrollment key；不保存该密钥。`awaitingApproval` 的 `enrollmentUrl` 用浏览器打开一次，并提供重新打开按钮；没有 URL 时显示 `WARN_APPROVAL_LINK_MISSING`。既有 VPN 的 Server 不提供切网入口 |
+| 菜单面板 | Liquid Glass 外壳内使用系统式紧凑行，悬停高亮；出口勾选列表、设备列表、打开 Meshway／设置／退出。设备超过五台折叠，展开后最多十行高并滚动；点设备复制 IPv4，缺失时复制 IPv6。没有地址时禁用并说明原因 |
+| 主窗口 | 无侧栏，工具栏左侧状态岛、右侧胶囊分段「设备／出口／诊断」。设备表搜索名称／地址／Node ID，行内为状态点、名称、等宽地址与路径／RTT。选中时详情从右侧进入；固定 210 pt 详情列保持表列位置稳定，未选中时该列为空；一台其他设备都没有时不显示搜索与详情列，空状态在整个内容区居中且只出现一次 |
+| Peers | 直连为绿点、中继为靛蓝点、空闲为灰点、离线为淡灰点、不可达为琥珀点；右侧显示 RTT、经哪个节点或空闲。详情为地址、路径与承载、延迟、Ping。没有测量的 RTT 不填零，idle 不显示为已建立直连；完整 endpoint／via 可在行的 help 中读取 |
+| 出口方案 | 面板与主窗口共用勾选列表；仅本机 netmap 与 applied 一致时显示勾选。当前方案非默认时，在其下显示「恢复默认（方案名）」小链接；清除仍要求存在持久请求。右侧出口名称来自方案规则／fallback 引用的出口列表，不代表当前某条流的实测出口。`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示；请求／默认／锁定／auto 详情移到设置 |
+| 设置 | 标准 SwiftUI `Settings` scene，⌘, 打开。通用放图标；账户与本机放名称、IPv4／IPv6、Server、换钥与注销确认；详细信息用用户语言显示离线可用至、服务器连接、上次更新、网络状态、网络变化、下次重试、密钥版本、网络扩展／VPN、网络设置版本与全部带码问题；诊断放 Netcheck。相对时间每秒更新，悬停给出绝对时间 |
+| 诊断与身份 | Ping 卡包含目标输入／建议设备、decision 的路径胶囊与方案／规则／动作、最近 24 个样本的 RTT 柱图与中位／最低最高／收到／丢包。规则缺失时省略；失败槽不填 RTT，含建连 echo 以浅色柱区分且不进入 RTT 汇总。收到／丢包优先用 completed 计数，否则显示已观测终态样本；丢包为超时比例，执行失败不算超时。unsupported、策略拒绝等原因以带码问题行显示在固定区域。网络检查卡从 Netcheck 报告生成 Server／RTT、UDP、IPv4／IPv6、每 socket 的「NAT 映射」（本机 socket 地址只在 help 中）、公网地址小片；只用 fresh 映射，缺测显示未测。运行中与结果区尺寸不变。设置复用 Netcheck；换钥／注销先读 revision，不绕过 CAS |
+| 空状态 | 共用玻璃小图标、标题、说明与可选动作，固定尺寸。无设备、搜索无结果、只有 Mesh 方案、Server 暂不可达分别解释。只有 sync 非 connected、错误为网络／繁忙或未报告、租约未到期、netmap 已 applied 且 Node running／数据面 ready 时，才说明正在使用缓存网络；到期时间来自租约并每秒更新。不能证明缓存可用时不声称离线运行 |
 | 系统引导 | 读取 extension 属性与 VPN preferences，显示未安装／待批准／未启用／缺少配置；沿用 TunnelController 显式激活与创建 VPN。lab 命令与 Debug 菜单独立于正式主路径 |
-| 应用图标 | This Mac → Application icon 提供 Ink／Frost／Indigo／Graphite 四种缩略图，未接入时也可使用；默认 Frost（方案 2，浅色磨砂＋青绿）。选择提示占用固定空间，动画尊重减少动态效果 |
+| 应用图标 | 设置 → 通用 → 应用图标提供 Ink／Frost／Indigo／Graphite 四种缩略图，未接入时也可使用；默认 Frost（方案 2，浅色磨砂＋青绿）。选择提示占用固定空间，动画尊重减少动态效果 |
+
+状态岛只做呈现投影，优先显示已报告的操作／IPC／Node／网络／VPN preferences 错误；否则按以下顺序映射。NE 连接成功本身不等于 Node 已运行。
+
+| 来源 | 呈现 |
+| --- | --- |
+| 已报告错误，或 Node `blocked`／`retrying` | 出错；popover 保留原始阶段、原因与独立错误 |
+| Node `awaitingApproval`，或 extension 明确要求批准 | 需要批准 |
+| Node `running` 且 dataPlane `ready` | 已连接 |
+| Node `running` 且 dataPlane `preparing` | 连接中，正在应用 |
+| Node `running` 且 dataPlane `failed`／`suspended` | 出错，说明数据面失败／暂停 |
+| Node `running` 但数据面为其他或未知状态 | 状态未知 |
+| Node `starting`／`synchronizing`／`controlReady` | 连接中 |
+| Node `down`／`stopping`／`leaving` | 已断开／正在断开／正在注销 |
+| 无 Node 快照，NE `connecting`／`reasserting`／`connected` | 连接中；不声称 Node 已运行 |
+| 无 Node 快照，NE `disconnecting` | 正在断开 |
+| 无 Node 快照，NE `disconnected`／`invalid` | 已断开 |
+| Node 与 NE 均未检查或未知 | 状态未知 |
+
+开关状态文字使用 `numericText` 过渡，状态点颜色渐变；分段内容滑移、设备详情右侧进入、列表增删淡入，复制反馈短暂变色／勾号后复原。连接中状态点脉动、出口与设备位置显示骨架：每个骨架条各自呼吸（不透明度 0.45↔0.8、1.6 s、ease-in-out，行间相位差 0.08 周期），不再整块扫光；固定面板区域避免就绪后推动底部操作。所有等待指示使用 `MeshLoader`：与图标同构的三节点三角，节点按顺序柔和变亮（同一 1.6 s 呼吸曲线，相位差 1/3），强调节点为 teal；不使用系统 `ProgressView`。四段点分别按 starting（正在认证）、synchronizing（正在同步网络）、controlReady／running+preparing（正在应用）、running+ready（完成）投影；现有字段不能可靠区分「正在建立通道」，不从空闲 peer 推断进度。`accessibilityReduceMotion` 下脉动、骨架与三节点静止，`MeshLoader` 改以文字表达进行中，其余自定义过渡取消。连接开关、方案选择与身份操作沿用 Status 就绪条件及在途禁用，禁用原因放在 help；预览禁用时开关仍保留真实 desiredUp 的青绿背景。
 
 App target 的 `Assets.xcassets/AppIcon.appiconset` 提供完整 macOS 16／32／128／256／512 pt 的 1×／2×默认图标；四份处理后母版作为 `AppIconChoice-*` 普通图片资源打包。`IconPreferences` 以 `UserDefaults` 保存本机偏好，启动及选择时通过 `NSApplication.shared.applicationIconImage` 更新运行中的 Dock 图标。Finder／Launchpad 保持默认 Frost，选择器明确说明这一限制；不调用 `NSWorkspace.setIcon`，不修改已签名 App bundle。源图处理与全套资源由 `apps/meshway-apple/scripts/generate-icons.py` 生成：清除圆角外残留、保留比例，图块最大 824×824 居中于 1024×1024 透明画布，不增加外阴影。
 
-`--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；窗口与面板明确标注 SAMPLE DATA，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section device` 显示图标选择器，预览中的选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览。`--model-tests` 使用同一组桥接样例检查 Swift 呈现模型。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
+`--preview unenrolled|approval|running|error|connecting-auth|connecting-sync|connecting-apply|connecting-plane|no-peers|mesh-only|server-cached|lease-expired --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；主窗口、面板和设置窗口都有小型 SAMPLE 角标，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section peers|exit|diagnostics` 选择主窗口页面，`--preview-selected` 展开第一台设备详情，`--preview-settings general|account|details|diagnostics` 选择设置页面；预览中的图标选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览；`--preview-locale en|zh-Hans` 在任何查找前设置 App 语言；`--preview-popover` 另截状态岛 popover 内容。`--model-tests` 检查同一组桥接样例、Node／NE 状态岛映射、缺测与就绪条件。running 样例含六台设备（直连、中继、空闲直连、空闲中继、离线）；`--preview-diagnostics ping|ping-exit|ping-denied|ping-unsupported|netcheck`（逗号分隔可组合）把 Rust 按 Node 流序生成的 Ping 事件帧和 Netcheck 报告逐帧经同一请求解码后填入诊断页。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
+
+`--preview-search QUERY` 对样例执行真实搜索过滤。`server-cached` 只有 sync 失败（`reconnecting`＋`network`，无 `lastError`），已应用的 netmap 仍在租约内；`lease-expired` 无 netmap、phase `retrying`、数据面暂停。样例只填 IPC 已有字段，Release core 不含样例值。Swift 模型测试另以类型化单元输入验证连接阶段、缓存租约边界、空状态选择、含建连 RTT／丢包与 Netcheck 缺测；这些单元输入不作为预览协议数据。
+
+### 本地化 {#localization}
+
+App 文本来自 `App/Localizable.xcstrings`（String Catalog，源语言 `en`，另含 `zh-Hans`），默认跟随系统语言。源码只写英文文案：SwiftUI 字面量自动本地化，计算得到的文本用 `String(localized:)`；节点名、地址、方案名、协议名与错误码用 `verbatim` 不翻译。相对时间、日期、百分比与列表连接走系统格式化并随 App 语言变化。构建开启 `SWIFT_EMIT_LOC_STRINGS`，`scripts/check-strings.py`（`check.sh` 调用）要求每个提取出的键与每个错误码都有中英文本，未使用的非手工键也报错。界面面向终端用户：一句话，不使用 netmap、control、sync、data plane、instance、租约等内部术语。
+
+### App 错误与警告码 {#issue-codes}
+
+App 内用户可见的每个错误与警告都带一个码；本表是唯一定义，由 `App/Issues.swift` 的 `IssueCode` 注册表导出（Debug `Meshway --issue-codes`）。码在 App 内由现有 IPC／系统／传输事实映射得到，不改 Rust 协议或 CLI。命名为全大写下划线：`ERROR_…` 为错误（状态岛进入出错），`WARN_…` 为警告（不改变连接状态）；码一经发布不改名，同一码可由多个来源映射。文档页面使用小写 slug（`_`→`-`），本轮只定义 slug，不发布网页。界面显示用户文案、等宽可复制码，以及 Node／macOS 报告的未翻译细节（如有）。`--model-tests` 检查码与 slug 唯一、格式正确、每个码至少有一个来源、每个来源枚举值数量完整，且中英文案齐全。
+
+当前 79 个码（错误 46、警告 33）：
+
+| 码 | 级别 | 触发来源 | English | 中文 | slug |
+| --- | --- | --- | --- | --- | --- |
+| `ERROR_SERVER_UNREACHABLE` | 错误 | Status.lastError / networkError.problem = network<br>IPC Error.code = network | Can’t reach the server. | 无法连接服务器。 | `error-server-unreachable` |
+| `ERROR_SERVER_BUSY` | 错误 | Status.lastError / networkError.problem = serverBusy<br>IPC Error.code = serverBusy | The server is busy. Try again later. | 服务器繁忙，请稍后再试。 | `error-server-busy` |
+| `ERROR_CREDENTIAL_REJECTED` | 错误 | Status.lastError / networkError.problem = credentials<br>IPC Error.code = credentials | The server rejected this Mac’s credentials. | 服务器拒绝了这台 Mac 的凭据。 | `error-credential-rejected` |
+| `ERROR_ENROLLMENT_EXPIRED` | 错误 | Status.lastError / networkError.problem = enrollmentExpired | The join request expired. Connect again. | 加入请求已过期，请重新连接。 | `error-enrollment-expired` |
+| `ERROR_ENROLLMENT_WITHDRAWN` | 错误 | Status.lastError / networkError.problem = enrollmentWithdrawn | The join request was withdrawn. | 加入请求已被撤回。 | `error-enrollment-withdrawn` |
+| `ERROR_ENROLLMENT_CANCELLED` | 错误 | Status.lastError / networkError.problem = enrollmentCancelled | The join request was cancelled. | 加入请求已取消。 | `error-enrollment-cancelled` |
+| `ERROR_PROTOCOL_MISMATCH` | 错误 | Status.lastError / networkError.problem = contract<br>IPC Error.code = contract<br>Ping failed.code = protocol | Meshway doesn’t match the server version. Update Meshway. | Meshway 与服务器版本不匹配，请更新。 | `error-protocol-mismatch` |
+| `ERROR_CONFIGURATION_INVALID` | 错误 | Status.lastError / networkError.problem = configuration | The network settings can’t be used on this Mac. | 网络设置无法在这台 Mac 上使用。 | `error-configuration-invalid` |
+| `ERROR_CLOCK_SKEW` | 错误 | Status.lastError / networkError.problem = clock | This Mac’s clock is off. Check Date & Time. | 这台 Mac 的时间不准确，请检查日期与时间。 | `error-clock-skew` |
+| `ERROR_REQUEST_REJECTED` | 错误 | IPC Error.code = rejected | The request was rejected. | 请求被拒绝。 | `error-request-rejected` |
+| `ERROR_LOCAL_STORAGE` | 错误 | Status.lastError / networkError.problem = storage<br>IPC Error.code = storage | Meshway can’t save its data on this Mac. | Meshway 无法在这台 Mac 上保存数据。 | `error-local-storage` |
+| `ERROR_INTERNAL_TASK` | 错误 | Status.lastError / networkError.problem = worker | A Meshway task stopped unexpectedly. | Meshway 内部任务意外停止。 | `error-internal-task` |
+| `ERROR_MODE_UNSUPPORTED` | 错误 | Status.lastError / networkError.problem = unsupportedMode | This connection mode isn’t supported on macOS. | macOS 不支持这种连接模式。 | `error-mode-unsupported` |
+| `ERROR_LOCAL_NETWORK` | 错误 | Status.lastError / networkError.problem = underlay | Meshway can’t use this Mac’s network. | Meshway 无法使用这台 Mac 的网络。 | `error-local-network` |
+| `ERROR_TUNNEL_INTERFACE` | 错误 | Status.lastError / networkError.problem = tun | The VPN interface couldn’t be set up. | 无法设置 VPN 接口。 | `error-tunnel-interface` |
+| `ERROR_DNS_SETUP` | 错误 | Status.lastError / networkError.problem = dns | DNS settings couldn’t be applied. | 无法应用 DNS 设置。 | `error-dns-setup` |
+| `ERROR_TRANSPORT` | 错误 | Status.lastError / networkError.problem = transport | Connections to other devices failed. | 与其他设备的连接失败。 | `error-transport` |
+| `ERROR_SETTINGS_APPLY` | 错误 | Status.lastError / networkError.problem = apply | Network settings couldn’t be applied. | 无法应用网络设置。 | `error-settings-apply` |
+| `ERROR_DEVICE_BLOCKED` | 错误 | Status.phase = blocked without lastError | Meshway stopped because of an error. | Meshway 因错误已停止。 | `error-device-blocked` |
+| `ERROR_CONNECTION_RETRYING` | 错误 | Status.phase = retrying without lastError | Connection failed. Retrying… | 连接失败，正在重试… | `error-connection-retrying` |
+| `ERROR_NETWORK_SETUP_FAILED` | 错误 | Status.dataPlane = failed without lastError | Meshway couldn’t start the network. | Meshway 无法启动网络。 | `error-network-setup-failed` |
+| `ERROR_NETWORK_SUSPENDED` | 错误 | Status.dataPlane = suspended without lastError | Network access is paused. | 网络访问已暂停。 | `error-network-suspended` |
+| `WARN_SERVER_UNREACHABLE` | 警告 | Status.syncError = network | Lost connection to the server. Retrying. | 与服务器的连接中断，正在重试。 | `warn-server-unreachable` |
+| `WARN_SERVER_BUSY` | 警告 | Status.syncError = serverBusy | The server is busy. Retrying. | 服务器繁忙，正在重试。 | `warn-server-busy` |
+| `WARN_CREDENTIAL_REJECTED` | 警告 | Status.syncError = credentials | The server rejected this Mac’s credentials. | 服务器拒绝了这台 Mac 的凭据。 | `warn-credential-rejected` |
+| `WARN_CONFIG_SIGNATURE_INVALID` | 警告 | Status.syncError = signatureInvalid | New network settings failed verification and were ignored. | 新的网络设置未通过校验，已忽略。 | `warn-config-signature-invalid` |
+| `WARN_SERVER_KEY_MISMATCH` | 警告 | Status.syncError = serverKeyMismatch | The server’s identity changed. Contact your admin. | 服务器身份已变化，请联系管理员。 | `warn-server-key-mismatch` |
+| `WARN_ACCESS_WITHDRAWN` | 警告 | Status.syncError = withdrawn | Your access to this network was withdrawn. | 你对这个网络的访问已被撤销。 | `warn-access-withdrawn` |
+| `WARN_IDENTITY_REJECTED` | 警告 | Status.syncError = identityRejected | The server no longer recognizes this Mac. | 服务器不再识别这台 Mac。 | `warn-identity-rejected` |
+| `WARN_PROTOCOL_MISMATCH` | 警告 | Status.syncError = contract | Meshway doesn’t match the server version. Update Meshway. | Meshway 与服务器版本不匹配，请更新。 | `warn-protocol-mismatch` |
+| `WARN_LOCAL_STORAGE` | 警告 | Status.syncError = storage | Couldn’t save the latest network settings. | 无法保存最新的网络设置。 | `warn-local-storage` |
+| `WARN_RULE_SET_MISSING` | 警告 | Status.netmap.missingArtifacts, artifactProblem = null | Some routing rules aren’t available yet. | 部分路由规则暂不可用。 | `warn-rule-set-missing` |
+| `WARN_RULE_SET_DOWNLOAD` | 警告 | Status.netmap.missingArtifacts, artifactProblem = download | Some routing rules couldn’t be downloaded. | 部分路由规则下载失败。 | `warn-rule-set-download` |
+| `WARN_RULE_SET_INTEGRITY` | 警告 | Status.netmap.missingArtifacts, artifactProblem = integrity | Some routing rules failed verification. | 部分路由规则未通过校验。 | `warn-rule-set-integrity` |
+| `WARN_RULE_SET_STORAGE` | 警告 | Status.netmap.missingArtifacts, artifactProblem = storage | Some routing rules couldn’t be saved. | 部分路由规则无法保存。 | `warn-rule-set-storage` |
+| `WARN_RULE_SET_LIMIT` | 警告 | Status.netmap.missingArtifacts, artifactProblem = budget | Some routing rules are too large. | 部分路由规则超出大小限制。 | `warn-rule-set-limit` |
+| `WARN_PROFILE_NOT_ALLOWED` | 警告 | Status.netmap.routing.requestedUnavailable = notAllowed<br>IPC Error.code = profileNotAllowed | This profile isn’t available to you. | 你不能使用这个方案。 | `warn-profile-not-allowed` |
+| `WARN_PROFILE_LOCKED` | 警告 | Status.netmap.routing.requestedUnavailable = locked<br>IPC Error.code = profileLocked | Your admin locked the exit profile. | 管理员已锁定出口方案。 | `warn-profile-locked` |
+| `WARN_PROFILE_CONFLICT` | 警告 | IPC Error.code = selectionConflict | The profile changed elsewhere. Try again. | 方案已在别处更改，请重试。 | `warn-profile-conflict` |
+| `ERROR_IPC_VERSION_MISMATCH` | 错误 | IPC Error.code = version | Meshway’s components don’t match. Reinstall Meshway. | Meshway 组件版本不一致，请重新安装。 | `error-ipc-version-mismatch` |
+| `ERROR_IPC_DISCONNECTED` | 错误 | App XPC request: disconnected | Can’t reach Meshway’s network extension. | 无法连接 Meshway 网络扩展。 | `error-ipc-disconnected` |
+| `ERROR_IPC_REJECTED` | 错误 | App XPC request: rejected | The network extension refused the request. | 网络扩展拒绝了请求。 | `error-ipc-rejected` |
+| `ERROR_IPC_UNEXPECTED` | 错误 | App XPC request: result<br>Bridge ClientError (frame, contract, completed, input) | Meshway got an unexpected response. | Meshway 收到了意外的响应。 | `error-ipc-unexpected` |
+| `WARN_IPC_TIMEOUT` | 警告 | App XPC request: timeout | No response in time. It may still finish. | 未及时响应，操作可能仍会完成。 | `warn-ipc-timeout` |
+| `WARN_REQUEST_CONFLICT` | 警告 | IPC Error.code = conflict<br>IPC Error.code = requestConflict | Something changed meanwhile. Try again. | 状态已变化，请重试。 | `warn-request-conflict` |
+| `WARN_NODE_BUSY` | 警告 | IPC Error.code = busy | Meshway is busy. Try again shortly. | Meshway 正忙，请稍后再试。 | `warn-node-busy` |
+| `WARN_NODE_STOPPING` | 警告 | IPC Error.code = stopping | Meshway is stopping. | Meshway 正在停止。 | `warn-node-stopping` |
+| `WARN_DEVICE_NOT_READY` | 警告 | IPC Error.code = notReady | This Mac isn’t ready yet. | 这台 Mac 尚未就绪。 | `warn-device-not-ready` |
+| `WARN_OPERATION_PENDING` | 警告 | IPC Error.code = pending | An earlier action is still finishing. | 上一个操作仍在完成中。 | `warn-operation-pending` |
+| `WARN_DEVICE_LEAVING` | 警告 | IPC Error.code = leaving | This Mac is signing out. | 这台 Mac 正在退出网络。 | `warn-device-leaving` |
+| `ERROR_UNEXPECTED` | 错误 | Any other thrown error | Something went wrong. | 出现了问题。 | `error-unexpected` |
+| `ERROR_SERVER_URL_INVALID` | 错误 | clientServerOrigin rejected the Server URL | Enter an https:// server address without a path. | 请输入不含路径的 https:// 服务器地址。 | `error-server-url-invalid` |
+| `ERROR_VPN_PREFERENCES` | 错误 | NETunnelProviderManager.loadAllFromPreferences failed | Can’t read VPN settings. | 无法读取 VPN 设置。 | `error-vpn-preferences` |
+| `ERROR_VPN_START_FAILED` | 错误 | TunnelController.start returned false | The VPN couldn’t start. | VPN 无法启动。 | `error-vpn-start-failed` |
+| `ERROR_VPN_START_TIMEOUT` | 错误 | NEVPNStatus not connected 15 s after start | The VPN didn’t start. Check System Settings. | VPN 未能启动，请检查系统设置。 | `error-vpn-start-timeout` |
+| `ERROR_EXTENSION_ACTIVATION_FAILED` | 错误 | OSSystemExtensionRequest activation failed | The network extension couldn’t be enabled. | 无法启用网络扩展。 | `error-extension-activation-failed` |
+| `WARN_EXTENSION_APPROVAL_REQUIRED` | 警告 | OSSystemExtensionRequest needs user approval | Allow Meshway in System Settings › Network Extensions. | 请在“系统设置 › 网络扩展”中允许 Meshway。 | `warn-extension-approval-required` |
+| `WARN_EXTENSION_REBOOT_REQUIRED` | 警告 | OSSystemExtensionRequest result willCompleteAfterReboot | Restart your Mac to finish setup. | 重启 Mac 以完成设置。 | `warn-extension-reboot-required` |
+| `WARN_EXTENSION_STATUS_UNAVAILABLE` | 警告 | OSSystemExtensionRequest properties request failed | Can’t check the network extension. | 无法检查网络扩展状态。 | `warn-extension-status-unavailable` |
+| `WARN_APPROVAL_LINK_MISSING` | 警告 | Status.phase = awaitingApproval without enrollmentUrl | No approval link. Contact your admin. | 没有批准链接，请联系管理员。 | `warn-approval-link-missing` |
+| `ERROR_ROUTE_EXIT_UNAVAILABLE` | 错误 | Ping decision action denied.reason = exitUnavailable | The exit for this destination is unavailable. | 此目标的出口不可用。 | `error-route-exit-unavailable` |
+| `ERROR_ROUTE_FAMILY_UNSUPPORTED` | 错误 | Ping decision action denied.reason = unsupportedFamily | The exit doesn’t support this address type. | 出口不支持此类地址。 | `error-route-family-unsupported` |
+| `ERROR_ROUTE_EXIT_CONFLICT` | 错误 | Ping decision action denied.reason = egressConflict | Exit rules conflict for this destination. | 此目标的出口规则冲突。 | `error-route-exit-conflict` |
+| `ERROR_ROUTE_NOT_ALLOWED` | 错误 | Ping decision action denied.reason = unauthorized | You don’t have access to this destination. | 你无权访问此目标。 | `error-route-not-allowed` |
+| `ERROR_ROUTE_NO_PATH` | 错误 | Ping decision action denied.reason = noPath | No route to this destination. | 没有到达此目标的路径。 | `error-route-no-path` |
+| `ERROR_ROUTE_LOOP` | 错误 | Ping decision action denied.reason = routingCycle | The route to this destination loops. | 到此目标的路由形成环路。 | `error-route-loop` |
+| `ERROR_ROUTE_TOO_COMPLEX` | 错误 | Ping decision action denied.reason = routingLimit | The route is too complex to work out. | 路由过于复杂，无法计算。 | `error-route-too-complex` |
+| `ERROR_ROUTE_RULES_MISSING` | 错误 | Ping decision action denied.reason = missingDependency | Rules needed for this destination aren’t available. | 此目标所需的规则不可用。 | `error-route-rules-missing` |
+| `ERROR_ROUTE_DEVICE_INACTIVE` | 错误 | Ping decision action denied.reason = inactiveNode | This device isn’t active on the network. | 此设备未在网络中启用。 | `error-route-device-inactive` |
+| `ERROR_PING_NOT_CONNECTED` | 错误 | Ping failed.code = notRunning | Connect Meshway first. | 请先连接 Meshway。 | `error-ping-not-connected` |
+| `ERROR_PING_UNSUPPORTED` | 错误 | Ping failed.code = unsupported | Ping to this target isn’t supported on macOS yet. | macOS 版暂不支持 ping 此目标。 | `error-ping-unsupported` |
+| `ERROR_PING_PERMISSION_DENIED` | 错误 | Ping failed.code = permissionDenied | You don’t have permission to ping this target. | 你无权 ping 此目标。 | `error-ping-permission-denied` |
+| `ERROR_PING_TARGET_NOT_FOUND` | 错误 | Ping failed.code = targetNotFound | Target not found. | 未找到目标。 | `error-ping-target-not-found` |
+| `ERROR_PING_FAILED` | 错误 | Ping failed.code = failed | Ping failed. | Ping 失败。 | `error-ping-failed` |
+| `WARN_PING_TIMEOUT` | 警告 | Ping failed.code = timeout | Ping timed out. | Ping 超时。 | `warn-ping-timeout` |
+| `WARN_PING_BUSY` | 警告 | Ping failed.code = busy | Another ping is running. | 另一个 Ping 正在进行。 | `warn-ping-busy` |
+| `WARN_PING_STOPPED` | 警告 | Ping failed.code = stopped | Ping stopped. | Ping 已停止。 | `warn-ping-stopped` |
+| `WARN_NETCHECK_NOT_CONNECTED` | 警告 | Netcheck unavailable = notRunning | Connect Meshway to test UDP and NAT. | 连接 Meshway 后才能测试 UDP 与 NAT。 | `warn-netcheck-not-connected` |
+| `WARN_NETCHECK_BUSY` | 警告 | Netcheck unavailable = busy | Network check is busy. Try again. | 网络检查正忙，请重试。 | `warn-netcheck-busy` |
 
 ## 复用白名单 {#reuse}
 

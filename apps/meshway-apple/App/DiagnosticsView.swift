@@ -2,146 +2,166 @@ import SwiftUI
 
 struct DiagnosticsView: View {
     @Bindable var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var netcheckOnly = false
     @State private var checking = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var ping: PingPresentation { PingPresentation(events: model.pingEvents) }
     var body: some View {
-        Form {
-            Section("Network check") {
-                HStack {
-                    Label("Reachability & NAT", systemImage: "network")
-                    Spacer()
-                    ProgressView().controlSize(.small).opacity(checking ? 1 : 0).frame(width: 16)
-                    Button("Run netcheck") {
-                        checking = true
-                        Task { await model.perform(.netcheck); checking = false }
-                    }.disabled(model.busy || model.sampleMode)
-                        .help(unavailableHelp(model, fallback: "Probe Server reachability and UDP mappings"))
-                }
-                ScrollView {
-                    if let report = model.netcheck { netcheckReport(report) }
-                    else {
-                        placeholder("network", title: checking ? "Checking your network…" : "See how this Mac reaches your network", subtitle: "Server reachability, UDP and address mappings.", active: checking)
-                    }
-                }.frame(height: 174)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.netcheck != nil)
-            }
-            Section("Ping") {
-                HStack {
-                    TextField("Node name, IP or domain", text: $model.pingTarget).textFieldStyle(.roundedBorder).onSubmit { model.ping() }
-                    ProgressView().controlSize(.small).opacity(model.pingRunning ? 1 : 0).frame(width: 16)
-                    Button { if model.pingRunning { model.cancelPing() } else { model.ping() } } label: {
-                        Text(model.pingRunning ? "Cancel" : "Ping").frame(width: 44)
-                    }.disabled(!model.pingRunning && (model.sampleMode || model.pingTarget.isEmpty))
-                        .help(unavailableHelp(model, fallback: model.pingTarget.isEmpty ? "Enter a name, IP or domain" : "Measure four probes, or cancel the current measurement"))
-                }
-                ScrollView {
-                    if !model.pingEvents.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(model.pingEvents.enumerated()), id: \.offset) { _, event in
-                                Text(describe(event)).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.vertical, 4).transition(.opacity).contentTransition(.numericText())
+        VStack(spacing: 12) {
+            if !netcheckOnly { pingCard }
+            netcheckCard
+            Spacer(minLength: 0)
+        }.padding(4).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+    private var pingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
+                TextField("Device, IP or domain", text: $model.pingTarget).textFieldStyle(.plain).onSubmit { model.ping() }
+                Button(model.pingRunning ? String(localized: "Cancel") : "Ping") {
+                    if model.pingRunning { model.cancelPing() } else { model.ping() }
+                }.buttonStyle(.glassProminent).tint(.teal)
+                    .disabled(!model.pingRunning && (model.sampleMode || model.pingTarget.isEmpty))
+                    .help(unavailableHelp(model, fallback: model.pingTarget.isEmpty ? String(localized: "Enter a target first") : String(localized: "Sends four probes")))
+            }.padding(8).background(.background.opacity(0.65), in: .rect(cornerRadius: 12))
+            ZStack(alignment: .topLeading) {
+                if model.pingEvents.isEmpty && !model.pingRunning {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            ForEach(Array((model.status?.peers ?? []).prefix(3)), id: \.nodeId) { peer in
+                                Button { model.pingTarget = peer.node.hostname } label: { Text(verbatim: peer.node.hostname) }.buttonStyle(.glass).controlSize(.small)
                             }
-                        }.animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.pingEvents.count)
-                    } else {
-                        placeholder("waveform.path.ecg", title: model.pingRunning ? "Preparing measurement…" : "Follow a packet's path", subtitle: "Local routing decision and measured replies appear here.", active: model.pingRunning)
+                        }
+                        Text("Shows the route, then measures latency.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                    }.padding(.top, 4)
+                } else {
+                    VStack(alignment: .leading, spacing: 7) {
+                        if let decision = ping.decision { decisionRow(decision) }
+                        else { MeshLoader(label: String(localized: "Finding route…"), labelVisible: true).frame(height: 26) }
+                        if !ping.readings.isEmpty {
+                            PingBars(readings: Array(ping.readings.suffix(24)))
+                            HStack(spacing: 24) {
+                                stat(String(localized: "Median"), ping.median.map { ms($0) } ?? "—")
+                                stat(String(localized: "Min / max"), ping.durations.first.flatMap { low in ping.durations.last.map { ms(low) + " / " + ms($0) } } ?? "—")
+                                stat(String(localized: "Replies"), ping.counts.map { "\($0.success) / \($0.sent)" } ?? "—")
+                                stat(String(localized: "Loss"), ping.counts.flatMap { $0.sent > 0 ? (Double($0.timeout) / Double($0.sent)).formatted(.percent.precision(.fractionLength(0))) : nil } ?? "—")
+                                    .help("Timeouts out of probes sent")
+                            }
+                            Text(ping.readings.contains(where: \.setup) ? "Lighter bars include connection setup and are left out of the stats." : "Empty slots had no reply.")
+                                .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        } else if model.pingRunning { MeshLoader(label: String(localized: "Measuring…"), labelVisible: true).padding(.top, 18) }
+                        else { Text("No replies yet").font(.caption).foregroundStyle(.secondary).padding(.top, 18) }
                     }
-                }.frame(height: 190)
-            }
-        }.formStyle(.grouped)
-    }
-
-    private func placeholder(_ symbol: String, title: String, subtitle: String, active: Bool) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol).font(.title).foregroundStyle(.tertiary)
-                .symbolEffect(.pulse, isActive: active && !reduceMotion)
-            Text(title).foregroundStyle(.secondary)
-            Text(subtitle).font(.caption).foregroundStyle(.tertiary)
-        }.frame(maxWidth: .infinity).frame(height: 152)
-    }
-
-    private func netcheckReport(_ report: ClientNetcheck) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack { Text("Network check").font(.subheadline.weight(.semibold)); Spacer(); RelativeTime(date: report.observedAt) }
-            LabeledContent("Server", value: report.serverReachable.map { $0 ? "Reachable" : "Unreachable" } ?? "Not probed")
-            LabeledContent("Server RTT", value: report.serverRttUs.map(milliseconds) ?? "Not measured")
-            if let reason = report.unavailable { Text("Network not checked: \(human(reason))").foregroundStyle(.secondary) }
-            else {
-                Text("Fresh IPv4 mapping: \(report.ipv4 ? "yes" : "no") · IPv6: \(report.ipv6 ? "yes" : "no") · UDP: \(report.udp ? "yes" : "no")").font(.caption)
-                ForEach(Array(report.observers.enumerated()), id: \.offset) { _, observer in
-                    Text("STUN \(observer.observer) · \(observer.rttUs.map(milliseconds) ?? "RTT ambiguous")").font(.caption)
-                    if let probe = observer.sizeProbe { Text("DF probe \(probe.size) bytes · \(probe.answered ? "answered" : "unanswered (not a size measurement)")").font(.caption).foregroundStyle(.secondary) }
-                    if let mtu = observer.pathMtu { Text("Route MTU \(mtu)").font(.caption).foregroundStyle(.secondary) }
                 }
-                ForEach(Array(report.sockets.enumerated()), id: \.offset) { _, socket in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(socket.boundAddress).font(.caption.monospaced())
-                        Text("Port: \(human(socket.portMapping)) · Mapping: \(human(socket.endpointMapping))").font(.caption).foregroundStyle(.secondary)
-                        ForEach(Array(socket.mappings.enumerated()), id: \.offset) { _, mapping in
-                            Text("\(mapping.mapped) via \(mapping.observer)\(mapping.fresh ? "" : " (earlier)")").font(.caption.monospaced())
+            }.frame(height: 142, alignment: .top)
+            Group {
+                if let issue = ping.failure ?? model.issue { IssueRow(issue: issue, compact: true) } else { Color.clear }
+            }.frame(height: 30, alignment: .top)
+        }.padding(14).frame(maxWidth: .infinity).background(.background.opacity(0.5), in: .rect(cornerRadius: 18))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.pingEvents.count)
+    }
+    private func ms(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(2))) + " ms" }
+    private func stat(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value).font(.system(size: 13, weight: .semibold)).contentTransition(reduceMotion ? .identity : .numericText())
+            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+    }
+    private func decisionRow(_ decision: ClientDecision) -> some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 5) {
+                    ForEach(Array(path(decision).enumerated()), id: \.offset) { index, name in
+                        if index > 0 { Image(systemName: "arrow.right").foregroundStyle(.tertiary) }
+                        Text(verbatim: name).padding(.horizontal, 8).padding(.vertical, 4).background(.quaternary, in: Capsule())
+                    }
+                }
+            }.scrollIndicators(.hidden)
+            Text(summary(decision)).foregroundStyle(.secondary).lineLimit(1).help(summary(decision))
+                .frame(maxWidth: 270, alignment: .trailing)
+        }.font(.system(size: 11)).frame(height: 26)
+    }
+    private func path(_ decision: ClientDecision) -> [String] {
+        var result = decision.path.map { id in id == model.status?.identity?.nodeId ? String(localized: "This Mac") : model.name(id) }
+        // Empty path is unknown/unmanaged, not evidence of a direct circuit.
+        if let destination = decision.destination, decision.node == nil { result.append(destination) }
+        return result.isEmpty ? [String(localized: "Route unknown")] : result
+    }
+    private func summary(_ decision: ClientDecision) -> String {
+        var parts: [String] = []
+        if let profile = decision.profile { parts.append(String(localized: "Profile \(profile)")) }
+        if let rule = decision.rule { parts.append(String(localized: "Rule \(rule.remark.isEmpty ? rule.pointer : rule.remark)")) }
+        let action: String?
+        switch decision.action {
+        case .mesh: action = "Mesh"
+        case .exit: action = String(localized: "Exit")
+        case .direct: action = String(localized: "Direct from this Mac")
+        case .unmanaged: action = String(localized: "This Mac’s network")
+        case .denied: action = String(localized: "Blocked")
+        case nil: action = nil
+        }
+        return parts.joined(separator: " · ") + (action.map { (parts.isEmpty ? "" : " → ") + $0 } ?? "")
+    }
+    private var netcheckCard: some View {
+        Group {
+            if let report = model.netcheck {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Network check").fontWeight(.semibold)
+                        RelativeTime(date: report.observedAt).font(.caption)
+                        Spacer()
+                        checkButton(String(localized: "Check again"))
+                    }
+                    if let issue = NetcheckPresentation(report: report).issue { IssueRow(issue: issue, compact: true) }
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), alignment: .leading)], alignment: .leading, spacing: 8) {
+                            ForEach(NetcheckPresentation(report: report).facts) { fact in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(verbatim: fact.title).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(verbatim: fact.value).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                }.font(.system(size: 11)).padding(9).frame(maxWidth: .infinity, alignment: .leading).help(fact.help ?? "")
+                                    .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+                            }
                         }
                     }
                 }
+            } else {
+                QuietEmptyState(symbol: "waveform.path", title: String(localized: "Check this Mac’s network"),
+                                explanation: String(localized: "Tests the server, UDP, IPv4, IPv6 and NAT."),
+                                compact: true, actionTitle: checking ? String(localized: "Checking…") : String(localized: "Check"), action: runCheck,
+                                actionDisabled: model.busy || model.sampleMode || checking,
+                                actionHelp: unavailableHelp(model, fallback: String(localized: "Run a network check")))
             }
-        }.frame(maxWidth: .infinity, alignment: .leading).transition(.opacity)
+        }.frame(height: netcheckOnly ? 250 : 170).padding(14).frame(maxWidth: .infinity)
+            .background(.background.opacity(0.5), in: .rect(cornerRadius: 18))
+            .overlay(alignment: .topTrailing) { if checking { MeshLoader(label: String(localized: "Checking…")).padding(20) } }
     }
-    private func describe(_ event: ClientPingEvent) -> String {
-        switch event {
-        case .preparing(let elapsed): return "Preparing · \(elapsed) ms (not RTT)"
-        case .accepted(_, _, let target): return "Measuring \(target.node.hostname)"
-        case .decision(let decision):
-            var text = "Destination \(decision.destination ?? "unresolved")"
-            if let profile = decision.profile { text += " · profile \(profile)" }
-            if let rule = decision.rule {
-                text += " · rule \(rule.pointer) \(rule.remark)"
-                if let match = rule.ruleSet { text += " [\(match.key): \(match.entry)]" }
+    private func checkButton(_ title: String) -> some View {
+        Button(checking ? String(localized: "Checking…") : title, action: runCheck).buttonStyle(.glass).controlSize(.small)
+            .disabled(model.busy || model.sampleMode || checking).help(unavailableHelp(model, fallback: String(localized: "Run a network check")))
+    }
+    private func runCheck() {
+        checking = true
+        Task { await model.perform(.netcheck); checking = false }
+    }
+}
+
+struct PingBars: View {
+    let readings: [PingReading]
+    var body: some View {
+        let maximum = max(readings.compactMap(\.duration).max() ?? 1, 1)
+        HStack(alignment: .bottom, spacing: 4) {
+            ForEach(readings) { reading in
+                ZStack(alignment: .bottom) {
+                    RoundedRectangle(cornerRadius: 3).strokeBorder(.quaternary).frame(height: 42)
+                    if let duration = reading.duration {
+                        RoundedRectangle(cornerRadius: 3).fill(.teal.opacity(reading.setup ? 0.35 : 0.85))
+                            .frame(height: max(2, 42 * Double(duration) / Double(maximum)))
+                    }
+                }.frame(width: 9).help(reading.duration.map { milliseconds($0) + (reading.setup ? " · " + String(localized: "includes setup") : "") } ?? String(localized: "No reply"))
             }
-            if let action = decision.action { text += " · \(actionText(action))" }
-            if !decision.path.isEmpty { text += "\nPath " + decision.path.map(model.name).joined(separator: " → ") }
-            if let resolution = decision.resolution {
-                text += "\nDNS \(resolution.name) · \(resolverText(resolution.resolver))"
-                if let association = resolution.association { text += "\nTrusted association: \(association.names.joined(separator: ", ")) · \(association.remainingSeconds)s remaining at decision" }
-            }
-            return text
-        case .sample(_, _, _, _, _, _, let probe):
-            guard let probe else { return "Sample without probe data" }
-            var text = "\(human(probe.outcome)) · \(probe.durationUs.map(milliseconds) ?? "RTT not measured") · " + probe.path.map(model.name).joined(separator: " → ")
-            if let channel = probe.channels?.request { text += "\n\(channel.transport) \(channel.remoteAddress) · \(acquisitionText(channel.acquisition))" }
-            return text
-        case .echo(let echo):
-            var text = "\(echo.sequence): \(human(echo.outcome)) · \(echo.durationUs.map(milliseconds) ?? "RTT not measured")\(echo.setup ? " (includes setup)" : "")"
-            if let from = echo.from { text += " from \(from)" }
-            if let error = echo.error { text += " · ICMP \(error.kind)/\(error.code)" }
-            if !echo.path.isEmpty { text += "\n" + echo.path.map(model.name).joined(separator: " → ") }
-            return text
-        case .completed(let sent, let success, let timeout, let failed): return "\(sent) sent · \(success) replies · \(timeout) timeouts · \(failed) failed"
-        case .failed(let code): return "Ping failed: \(human(code))"
-        }
-    }
-    private func actionText(_ action: ClientPingAction) -> String {
-        switch action {
-        case .mesh: "Mesh"
-        case .direct: "Direct"
-        case .unmanaged: "Unmanaged"
-        case .exit(let node): "Exit via \(model.name(node))"
-        case .denied(let reason): "Denied: \(human(reason))"
-        }
-    }
-    private func resolverText(_ resolver: ClientResolver) -> String {
-        switch resolver {
-        case .magicDns: "MagicDNS"
-        case .system: "System resolver"
-        case .unavailable: "No DNS path"
-        case .exit(let node): "Exit resolver \(model.name(node))"
-        case .resolvers(let keys): "Configured resolvers: \(keys.joined(separator: ", "))"
-        }
-    }
-    private func acquisitionText(_ acquisition: ClientAcquisition) -> String {
-        switch acquisition {
-        case .publishedEndpoint: "Published endpoint"
-        case .localEndpoint: "Local endpoint"
-        case .stunEndpoint: "STUN endpoint"
-        case .acceptedInbound: "Accepted inbound"
-        case .coordinatedUdp(_, let source): "Coordinated UDP · \(human(source)) endpoint"
-        }
+            Spacer(minLength: 0)
+        }.frame(height: 42).accessibilityLabel(Text("Recent latency samples"))
     }
 }

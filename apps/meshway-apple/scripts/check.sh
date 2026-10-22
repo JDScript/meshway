@@ -7,4 +7,5 @@ done
 for script in "$root"/scripts/*.sh; do
   bash -n "$script"
 done
-exec bash "$root/scripts/build.sh" CODE_SIGNING_ALLOWED=NO
+bash "$root/scripts/build.sh" CODE_SIGNING_ALLOWED=NO
+python3 "$root/scripts/check-strings.py"

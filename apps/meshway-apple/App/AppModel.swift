@@ -12,8 +12,8 @@ final class AppModel {
     var enrollmentKey = ""
     var search = ""
     var busy = false
-    var issue: String?
-    var ipcIssue: String?
+    var issue: AppIssue?
+    var ipcIssue: AppIssue?
     var notice: String?
     var netcheck: ClientNetcheck?
     var pingEvents: [ClientPingEvent] = []
@@ -37,8 +37,7 @@ final class AppModel {
             query.isEmpty || [peer.node.hostname, peer.node.ipv4, peer.node.ipv6, peer.nodeId].compactMap { $0 }.contains { $0.localizedStandardContains(query) }
         }
     }
-    var title: String { status?.node?.hostname ?? (status?.identity == nil ? "Join your network" : "This Mac") }
-    var phase: String { status.map { label($0.phase) } ?? "Node status unavailable" }
+    var phase: String { status.map { label($0.phase) } ?? String(localized: "Unavailable") }
     var selection: ClientSelection? { status?.netmap?.routing }
     // Presentation readiness only. The Node still validates each request and CAS.
     var canRequestSelection: Bool {
@@ -52,52 +51,43 @@ final class AppModel {
         return reference == applied
     }
     var vpnLabel: String {
-        if sampleMode { return "Sample VPN state" }
-        if tunnel.preferencesError != nil { return "Status unavailable" }
-        guard tunnel.preferencesLoaded else { return "Not checked" }
-        guard tunnel.hasConfiguration else { return "Configuration missing" }
+        if sampleMode { return String(localized: "Preview") }
+        if tunnel.preferencesError != nil { return String(localized: "Unavailable") }
+        guard tunnel.preferencesLoaded else { return String(localized: "Not checked") }
+        guard tunnel.hasConfiguration else { return String(localized: "Not set up") }
         switch tunnel.vpnStatus {
-        case .invalid: return "Invalid configuration"
-        case .disconnected: return "Disconnected"
-        case .connecting: return "Connecting"
-        case .connected: return "Connected"
-        case .reasserting: return "Reasserting"
-        case .disconnecting: return "Disconnecting"
-        @unknown default: return "Unknown"
+        case .invalid: return String(localized: "Invalid")
+        case .disconnected: return String(localized: "Disconnected")
+        case .connecting: return String(localized: "Connecting")
+        case .connected: return String(localized: "Connected")
+        case .reasserting: return String(localized: "Reconnecting")
+        case .disconnecting: return String(localized: "Disconnecting")
+        @unknown default: return String(localized: "Unknown")
         }
     }
     func name(_ id: String) -> String { status?.peers.first { $0.nodeId == id }?.node.hostname ?? id }
+    func via(_ ids: [String]) -> String { String(localized: "Via \(ids.map(name).joined(separator: " → "))") }
     func path(_ peer: ClientPeer) -> String {
-        if peer.state == .direct { return peer.endpoint ?? "Endpoint not reported" }
-        if peer.state == .relay { return "via " + peer.via.map(name).joined(separator: " → ") }
+        if peer.state == .direct { return peer.endpoint ?? String(localized: "Direct") }
+        if peer.state == .relay { return via(peer.via) }
         if let idle = peer.idlePath {
             switch idle.route {
-            case .direct: return "Direct · idle"
-            case .relay: return "Relay · idle via " + idle.via.map(name).joined(separator: " → ")
-            case .none: return "No path"
+            case .direct: return String(localized: "Direct · idle")
+            case .relay: return String(localized: "Relay · idle") + " · " + via(idle.via)
+            case .none: return String(localized: "No route")
             }
         }
-        return "Path not reported"
+        return peerStateLabel(peer)
     }
     func peerStateLabel(_ peer: ClientPeer) -> String {
         if peer.state == .idle || peer.state == .relayIdle, let idle = peer.idlePath {
             switch idle.route {
-            case .direct: return "Direct · idle"
-            case .relay: return "Relay · idle"
+            case .direct: return String(localized: "Direct · idle")
+            case .relay: return String(localized: "Relay · idle")
             case .none: break
             }
         }
-        return human(peer.state)
-    }
-    func peerPathDetail(_ peer: ClientPeer) -> String? {
-        if peer.state == .idle || peer.state == .relayIdle, let idle = peer.idlePath {
-            switch idle.route {
-            case .direct: return nil
-            case .relay: return "via " + idle.via.map(name).joined(separator: " → ")
-            case .none: break
-            }
-        }
-        return path(peer)
+        return peerStateName(peer.state)
     }
     func accept(_ status: ClientStatus) {
         self.status = status
@@ -111,7 +101,7 @@ final class AppModel {
            let local = selection, committed.version == local.version,
            committed.requestedProfile == local.requestedProfile,
            netmapApplied {
-            notice = "Routing selection applied."
+            notice = String(localized: "Exit profile switched.")
             committedSelection = nil
         }
         if !sampleMode, status.phase == .awaitingApproval, let link = status.enrollmentUrl,
@@ -154,7 +144,7 @@ final class AppModel {
             ipcIssue = nil
         } catch {
             guard !read.isCancelled else { return }
-            status = nil; receivedAt = nil; ipcIssue = error.localizedDescription
+            status = nil; receivedAt = nil; ipcIssue = AppIssue(error: error)
         }
     }
     func connect(_ enabled: Bool) async {
@@ -168,14 +158,14 @@ final class AppModel {
                 await tunnel.refresh()
                 if tunnel.vpnStatus != .connected && tunnel.vpnStatus != .reasserting {
                     do { server = try clientServerOrigin(value: server) }
-                    catch { issue = "Use an HTTPS Server origin without a path, query or credentials. HTTP is supported only for numeric loopback addresses."; return }
-                    guard await tunnel.start(defaultRoute: false, includeAllNetworks: false, serverOrigin: server) else { issue = tunnel.message; return }
+                    catch { issue = AppIssue(.serverURLInvalid); return }
+                    guard await tunnel.start(defaultRoute: false, includeAllNetworks: false, serverOrigin: server) else { issue = AppIssue(.vpnStartFailed, detail: tunnel.message); return }
                     for _ in 0..<30 {
                         try await Task.sleep(for: .milliseconds(500))
                         await tunnel.refresh()
                         if tunnel.vpnStatus == .connected { break }
                     }
-                    guard tunnel.vpnStatus == .connected else { issue = "Waiting for the VPN. Check System Settings for extension or VPN approval."; return }
+                    guard tunnel.vpnStatus == .connected else { issue = AppIssue(.vpnStartTimeout); return }
                 }
             }
             let response = try await IPCExchange().run(.status)
@@ -193,9 +183,9 @@ final class AppModel {
                     try await Task.sleep(for: .seconds(1))
                     try handle(try await IPCExchange().run(.status))
                 }
-                notice = "Down was submitted; waiting for Node cleanup before stopping the VPN."
+                notice = String(localized: "Disconnecting…")
             }
-        } catch { issue = error.localizedDescription }
+        } catch { issue = AppIssue(error: error) }
     }
     func perform(_ command: ClientCommand) async {
         guard !busy, !sampleMode else { return }
@@ -203,7 +193,7 @@ final class AppModel {
         statusRead?.cancel()
         defer { busy = false }
         do { try handle(try await IPCExchange().run(command)) }
-        catch { issue = error.localizedDescription }
+        catch { issue = AppIssue(error: error) }
     }
     func identityOperation(logout: Bool) async {
         guard !busy, !sampleMode else { return }
@@ -213,16 +203,16 @@ final class AppModel {
         do {
             guard case .status(let current) = try await IPCExchange().run(.status) else { throw IPCFailure.result }
             try handle(try await IPCExchange().run(logout ? .logout(revision: current.revision) : .rotateKey(revision: current.revision)))
-            if logout { notice = status?.phase == .leaving ? "Logout submitted. The Node is waiting for Server confirmation." : "Logout response received." }
-        } catch { issue = error.localizedDescription }
+            if logout { notice = status?.phase == .leaving ? String(localized: "Signing out; waiting for the server.") : String(localized: "Signed out.") }
+        } catch { issue = AppIssue(error: error) }
     }
     private func handle(_ result: ClientResult) throws {
         switch result {
         case .status(let status): accept(status)
-        case .error(_, let message): throw IPCFailure.remote(message)
+        case .error(let code, let message): throw IPCFailure.remote(code, message)
         case .selection(let selection):
             committedSelection = selection
-            notice = "Server committed the selection. Waiting for its netmap to be applied."
+            notice = String(localized: "Switching exit profile…")
         case .netcheck(let report): netcheck = report
         case .ping: throw IPCFailure.result
         }
@@ -236,8 +226,8 @@ final class AppModel {
                 let result = try await IPCExchange().run(.ping(target: pingTarget, count: 4)) { event in
                     self.recordPing(event)
                 }
-                if case .error(_, let message) = result { issue = message }
-            } catch is CancellationError {} catch { issue = error.localizedDescription }
+                if case .error(let code, let message) = result { issue = AppIssue(.ipc(code), detail: message) }
+            } catch is CancellationError {} catch { issue = AppIssue(error: error) }
         }
     }
     func cancelPing() { pingTask?.cancel() }
@@ -257,15 +247,15 @@ final class AppModel {
 
 func label(_ value: ClientPhase) -> String {
     switch value {
-    case .down: "Down"
-    case .starting: "Starting"
-    case .awaitingApproval: "Awaiting approval"
-    case .synchronizing: "Synchronizing"
-    case .controlReady: "Control ready"
-    case .running: "Running"
-    case .retrying: "Retrying"
-    case .blocked: "Blocked"
-    case .stopping: "Stopping"
-    case .leaving: "Leaving"
+    case .down: String(localized: "Off")
+    case .starting: String(localized: "Starting")
+    case .awaitingApproval: String(localized: "Waiting for approval")
+    case .synchronizing: String(localized: "Syncing")
+    case .controlReady: String(localized: "Applying settings")
+    case .running: String(localized: "Running")
+    case .retrying: String(localized: "Retrying")
+    case .blocked: String(localized: "Stopped by an error")
+    case .stopping: String(localized: "Stopping")
+    case .leaving: String(localized: "Signing out")
     }
 }
