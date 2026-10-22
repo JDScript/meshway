@@ -189,7 +189,7 @@
 
 ### roam/relay 行 {#roam-relay-row}
 
-`roam/relay`（`--netmap-scenario roam-relay`）在 `roam/nat` 拓扑上加公网中继 R（A、B 都拨它，A–R、R–B 常驻），无 `via`，Policy 候选为 `[A, B]` 与 `[A, R, B]`。A 每 250 ms 用新 5 元组发一个 UDP 报文（每个都是新流）；A 失去对 B 的直连时启动 100 pps 的“中继流”，恢复直连 2 秒后启动 4 秒的“恢复后流”；R 的收包每 250 ms 采样。门槛（在 `roam/nat` 之外）：
+`roam/relay`（`--netmap-scenario roam-relay`）在 `roam/nat` 拓扑上加公网中继 R（A、B 都拨它，A–R、R–B 常驻），无 `via`，Policy 候选为 `[A, B]` 与 `[A, R, B]`。A 每 250 ms 用新 5 元组发一个 UDP 报文（每个都是新流：各自绑定 20000 起的源端口，1,000 秒内不重复，在临时端口范围之外——内核选的临时端口关闭后会被随机复用，A 流表 60 秒空闲内的同一 5 元组是原流，见[漫游中的策略中继](/v2/node/connectivity#roaming)；发送失败的流按无回复计入）；A 失去对 B 的直连时启动 100 pps 的“中继流”，恢复直连 2 秒后启动 4 秒的“恢复后流”；R 的收包每 250 ms 采样。门槛（在 `roam/nat` 之外）：
 
 - 旧直连流最长中断 ≤ 重新获取＋1 秒（已有流不迁移，空窗就是重新穿透时间，D7）。
 - 空窗（失去直连 0.25 秒后至恢复前 0.25 秒，记为 `gapWindowS`）内每个新流 1 秒内经 R 得到回复，且中继流启动前 R 的收包速率 > 0；窗内没有新流时为不适用（`newFlowsThroughR: null`，不是通过）；未测到失去直连或恢复时刻为失败。
@@ -297,7 +297,6 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 
 | 跟踪 | 症状 | 频率 | 证据 |
 | --- | --- | --- | --- |
-| R4 | `roam/relay`：重新穿透已开始而新直连通道尚未认证时发出的单报文新流没有回复（同时经 R 的中继流正常），`newFlowsThroughR` 失败 | 约每 10 轮一次 | `.meshway/validation/h4/matrix10/`（行 `20261017T090359Z-49e94e80`）；`.meshway/validation/x16/`（`20261022T052624Z-929bea24` hard 格） |
 | I6-2 | IPv6 出口前缀变化不退役旧流；出口不对外部超限回包合成 packet too big | 未实现（v0.1.0 后，已知限制） | [IPv6 出口设计](/v2/node/ipv6-exit-design) |
 | 未定位 | `exit/off` 第 12 阶段 `A live UDP flow through the exit did not start`：20 个报文 0 回显，E 两次 `Exit forwarding refused by the kernel route decision`；单行复跑通过 | 一次 | `.meshway/validation/f7/`（`20261022T065619Z-34e5d00e`） |
 | 未定位 | `exit/off` 组件 `recovery`（`netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role`）：重装后的第 4 个 echo 投影 `ConfirmFailed`；同一测试本机 5 次与下一轮 `exit/off` 通过 | 一次 | `.meshway/validation/rc1/remote/`（`20261022T104457Z-5d2b3308`） |
