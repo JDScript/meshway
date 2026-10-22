@@ -44,6 +44,11 @@ impl super::super::Kernel {
         families: &[ExitFamily],
     ) -> Result<ExitCapability, Reason> {
         self.ready().await.map_err(|_| Reason::OwnershipConflict)?;
+        // A proven change of an exit-owned object keeps the role withdrawn
+        // until a re-read finds the evidence gone.
+        if self.exit_blocked().await {
+            return Err(Reason::OwnershipConflict);
+        }
         self.reconcile_stopped_exit()
             .await
             .map_err(|_| Reason::OwnershipConflict)?;

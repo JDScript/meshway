@@ -161,6 +161,7 @@ impl Kernel {
             changes,
             cleanups,
             ownership: _,
+            exit,
         } = published;
         network.routes = Some(observer.clone());
         let shared = Arc::new(Shared {
@@ -178,6 +179,7 @@ impl Kernel {
             execution: RwLock::new(None),
             changes,
             cleanups,
+            exit,
         });
         // Permissions and readback are real even before the first connection.
         for socket in [

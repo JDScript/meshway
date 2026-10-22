@@ -668,6 +668,7 @@ mod cancel_tests {
             changes: watch::channel(None).0,
             cleanups: watch::channel(None).0,
             ending: Default::default(),
+            exit: Default::default(),
             resources: Resources::new(1),
         });
         drop(Installing(Some(shared.clone())));

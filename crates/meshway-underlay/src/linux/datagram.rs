@@ -396,6 +396,7 @@ mod tests {
             changes: tokio::sync::watch::channel(None).0,
             cleanups: tokio::sync::watch::channel(None).0,
             ending: Default::default(),
+            exit: Default::default(),
         })
     }
 

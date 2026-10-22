@@ -19,9 +19,17 @@ impl Drop for Installing {
 }
 
 /// The audit proved the role's objects changed, or could not read them for
-/// the whole limit: the owner stops.
-fn audit_ended(check: &'static str, verification: &Verification) {
+/// the whole limit: the owner stops. A proven change is kept with the exit
+/// role's ownership (it does not install again until a re-read finds that
+/// evidence gone); an unreadable one is the role's own failure, retried by
+/// its reinstallation.
+fn audit_ended(check: &'static str, verification: &Verification, proven: &Mutex<Option<String>>) {
     tracing::warn!(operation = "audit", check, error = %verification, "Exit owner stopping after a failed kernel operation");
+    if check == "verify"
+        && let Ok(mut proven) = proven.lock()
+    {
+        proven.get_or_insert_with(|| verification.to_string());
+    }
 }
 
 /// A failed projection change stops the whole owner; say why.
@@ -34,6 +42,8 @@ fn stopped(operation: &'static str, check: &'static str, error: &Error) {
 struct Retrying<'a> {
     changes: &'a tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
     stops: [&'a CancellationToken; 3],
+    /// What proved an exit-owned object changed, if the owner stopped for it.
+    proven: &'a Mutex<Option<String>>,
 }
 
 impl Retrying<'_> {
@@ -63,6 +73,12 @@ impl Retrying<'_> {
         .map_err(|(error, check)| {
             if check != "stopped" {
                 stopped(operation, check, &error);
+            }
+            let proven = check == "verify"
+                || (check == "refused"
+                    && super::super::super::kind(&error) == super::super::super::Kind::Proven);
+            if proven && let Ok(mut recorded) = self.proven.lock() {
+                recorded.get_or_insert_with(|| format!("{operation}: {error}"));
             }
             error
         })
@@ -101,6 +117,7 @@ impl super::super::super::Kernel {
             expected.exit_tun = None;
             expected.exit_tables.clear();
             expected.exit_stop = None;
+            expected.exit_ownership = None;
             self.exit.take();
         }
         Ok(())
@@ -123,7 +140,11 @@ impl super::super::super::Kernel {
             self.exit = Some(owner);
             return if stopped { Ok(()) } else { result };
         }
-        self.expected.lock().map_err(|_| Error::Worker)?.exit_stop = None;
+        {
+            let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
+            expected.exit_stop = None;
+            expected.exit_ownership = None;
+        }
         match result {
             Ok(()) => Ok(()),
             Err(error) if stopped => {
@@ -134,8 +155,39 @@ impl super::super::super::Kernel {
         }
     }
 
+    /// Whether a proven change of an exit-owned object still keeps the role
+    /// withdrawn. Read again at most every 60 s, read only: the evidence is
+    /// gone once the stopped role's cleanup removed everything it owned.
+    pub(in crate::linux::kernel) async fn exit_blocked(&mut self) -> bool {
+        let meshway_model::recovery::Health::Blocked(blocked) = self.shared.exit.health() else {
+            return false;
+        };
+        let now = Instant::now();
+        if blocked.reread_at.is_some_and(|at| now < at) {
+            return true;
+        }
+        let cleaned = self.reconcile_stopped_exit().await.is_ok() && self.exit.is_none();
+        let observation = if cleaned {
+            meshway_model::recovery::Observation::Holds
+        } else {
+            meshway_model::recovery::Observation::proven(blocked.check, blocked.reason.clone())
+        };
+        self.shared.exit.observe(observation, now);
+        if cleaned {
+            tracing::info!(
+                check = blocked.check,
+                blocked_ms = now.duration_since(blocked.since).as_millis() as u64,
+                "Exit role ownership read again: its changed objects are gone; the role may install again"
+            );
+        }
+        !cleaned
+    }
+
     pub async fn install_exit_role(&mut self, plan: RoleIdentity) -> Result<ExitRole> {
         self.ready().await?;
+        if self.exit_blocked().await {
+            return Err(Error::Conflict);
+        }
         self.reconcile_stopped_exit().await?;
         if let Some(owner) = &self.exit {
             if owner.role.plan == plan && owner.role.is_active() {
@@ -292,7 +344,11 @@ impl super::super::super::Kernel {
         };
         let view = Arc::new(RwLock::new(BTreeMap::new()));
         let stop = CancellationToken::new();
-        self.expected.lock().map_err(|_| Error::Worker)?.exit_stop = Some(stop.clone());
+        {
+            let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
+            expected.exit_stop = Some(stop.clone());
+            expected.exit_ownership = Some(self.shared.exit.clone());
+        }
         let routing = Routing {
             handle: self.handle.clone(),
             expected: self.expected.clone(),
@@ -323,9 +379,11 @@ impl super::super::super::Kernel {
         let shutdown = self.shared.tasks.stop.clone();
         let shared = self.shared.clone();
         let task = tokio::spawn(async move {
+            let proven = Mutex::new(None::<String>);
             let retrying = Retrying {
                 changes: &shared.changes,
                 stops: [&stop, &conflict, &shutdown],
+                proven: &proven,
             };
             // Confirmations wait for a kernel fact; they never hold the owner.
             let mut confirming: Vec<(
@@ -350,7 +408,7 @@ impl super::super::super::Kernel {
                     _ = audit.due() => {
                         let verification = backend.check().await;
                         audit.ran();
-                        if let Err(reason) = unverified.record(&verification, Instant::now()) { audit_ended(reason, &verification); break; }
+                        if let Err(reason) = unverified.record(&verification, Instant::now()) { audit_ended(reason, &verification, &proven); break; }
                     },
                     _ = tokio::time::sleep_until(next_poll.into()), if !confirming.is_empty() => {
                         let mut failed = false;
@@ -397,7 +455,7 @@ impl super::super::super::Kernel {
                                     Verification::Unavailable(_) => Err(Error::Netlink),
                                     Verification::Changed(_) => Err(Error::Conflict),
                                 });
-                                if let Err(reason) = ended { audit_ended(reason, &verification); break; }
+                                if let Err(reason) = ended { audit_ended(reason, &verification, &proven); break; }
                             },
                             Request::Install { items, reply } => {
                                 // Rejected queued work never entered the kernel
@@ -472,6 +530,15 @@ impl super::super::super::Kernel {
                 }
             }
             stop.cancel();
+            if let Some(reason) = proven.lock().ok().and_then(|mut proven| proven.take()) {
+                shared.exit.observe(
+                    meshway_model::recovery::Observation::proven(
+                        "exit_verify",
+                        format!("exitOwnership: {reason}"),
+                    ),
+                    Instant::now(),
+                );
+            }
             // A stopped owner serves nothing more: requests queued before it
             // stopped are dropped now (their callers see `Worker` at once),
             // never left waiting on its cleanup retries below.
@@ -486,17 +553,32 @@ impl super::super::super::Kernel {
             };
             // A failed cleanup keeps its resources and is retried from what
             // the kernel holds then, until it completes or the Host ends.
-            let mut attempts = 1u32;
-            let mut wait = CLEANUP_RETRY;
+            // Its own recovery: retried without a total limit, until it
+            // completes or the Host's tasks stop.
+            let mut cleanup =
+                meshway_model::recovery::Recovery::new(meshway_model::recovery::Policy {
+                    backoff: meshway_model::Backoff::new(CLEANUP_RETRY, CLEANUP_RETRY_MAX),
+                    horizon: meshway_model::recovery::Horizon::Unbounded,
+                    reread_blocked: None,
+                });
             while let Err(error) = result {
+                let now = Instant::now();
+                let at = match cleanup.observe(
+                    meshway_model::recovery::Observation::unknown("exit_cleanup", &error),
+                    now,
+                ) {
+                    meshway_model::recovery::Step::RetryAt(at) => at,
+                    _ => now + CLEANUP_RETRY_MAX,
+                };
+                let (attempts, wait) = (cleanup.attempts(), at.saturating_duration_since(now));
                 if attempts.is_power_of_two() {
                     tracing::warn!(attempts, %error, retry_ms = wait.as_millis() as u64, "Exit role cleanup failed; resources kept, retrying");
                 }
-                let pending = RetryPending {
+                let pending = cleanup.health().pending().unwrap_or_else(|| RetryPending {
                     reason: error.to_string(),
                     attempts,
                     retry_at: std::time::SystemTime::now() + wait,
-                };
+                });
                 shared.cleanups.send_replace(Some(pending.clone()));
                 done.send_replace(Closing::Pending(pending));
                 tokio::select! { biased;
@@ -507,10 +589,9 @@ impl super::super::super::Kernel {
                     },
                     _ = tokio::time::sleep(wait) => {},
                 }
-                wait = meshway_model::Backoff::new(CLEANUP_RETRY, CLEANUP_RETRY_MAX).next(wait);
-                attempts = attempts.saturating_add(1);
                 result = backend.close_observed(true).await;
             }
+            let attempts = cleanup.attempts() + 1;
             if attempts > 1 {
                 tracing::info!(
                     attempts,

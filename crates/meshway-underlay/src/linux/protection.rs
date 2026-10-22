@@ -58,6 +58,8 @@ pub(super) struct Shared {
     pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
     /// The stopped exit role's cleanup its owner is retrying, live.
     pub cleanups: tokio::sync::watch::Sender<Option<crate::RetryPending>>,
+    /// The exit role's ownership across installations and terms.
+    pub exit: Arc<ExitOwnership>,
 }
 
 /// What a Host publishes across its ownership terms: a re-proved term
@@ -68,6 +70,7 @@ pub(super) struct Published {
     pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
     pub cleanups: tokio::sync::watch::Sender<Option<crate::RetryPending>>,
     pub ownership: Arc<Ownership>,
+    pub exit: Arc<ExitOwnership>,
 }
 
 /// The first re-proof of an unavailable end, and the longest wait between two.
@@ -76,33 +79,21 @@ const REPROOF_MAX: std::time::Duration = std::time::Duration::from_secs(8);
 /// How often a proven conflict is read again (read only).
 const REREAD_CONFLICT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The Host's kernel ownership across its terms (owner #1): one recovery,
-/// fed by every end a term records and by every re-proof, and its health,
-/// live. An unavailable end is retried (re-proved) 1 s after it, doubling to
-/// at most 8 s apart, without a total limit; a proven conflict is blocked
-/// and read again every 60 s.
-pub(super) struct Ownership {
+/// One owner's recovery and its health, live: what the owner judged, as
+/// Status and the network worker read it. It carries no authority.
+pub(super) struct Watched {
     recovery: Mutex<meshway_model::recovery::Recovery>,
     health: tokio::sync::watch::Sender<meshway_model::recovery::Health>,
 }
 
-impl Default for Ownership {
-    fn default() -> Self {
+impl Watched {
+    pub fn new(policy: meshway_model::recovery::Policy) -> Self {
         Self {
-            recovery: Mutex::new(meshway_model::recovery::Recovery::new(
-                meshway_model::recovery::Policy {
-                    backoff: meshway_model::Backoff::new(REPROOF, REPROOF_MAX),
-                    horizon: meshway_model::recovery::Horizon::Unbounded,
-                    reread_blocked: Some(REREAD_CONFLICT),
-                },
-            )),
+            recovery: Mutex::new(meshway_model::recovery::Recovery::new(policy)),
             health: tokio::sync::watch::channel(Default::default()).0,
         }
     }
-}
-
-impl Ownership {
-    /// Judge the end of a term or a re-proof, and publish the outcome.
+    /// Judge one read-back or change, and publish the outcome.
     pub fn observe(
         &self,
         observation: meshway_model::recovery::Observation,
@@ -121,6 +112,39 @@ impl Ownership {
         });
         step
     }
+    pub fn health(&self) -> meshway_model::recovery::Health {
+        self.health.borrow().clone()
+    }
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<meshway_model::recovery::Health> {
+        self.health.subscribe()
+    }
+}
+
+/// The Host's kernel ownership across its terms (owner #1): one recovery,
+/// fed by every end a term records and by every re-proof. An unavailable
+/// end is retried (re-proved) 1 s after it, doubling to at most 8 s apart,
+/// without a total limit; a proven conflict is blocked and read again every
+/// 60 s.
+pub(super) struct Ownership(Watched);
+
+impl Default for Ownership {
+    fn default() -> Self {
+        Self(Watched::new(meshway_model::recovery::Policy {
+            backoff: meshway_model::Backoff::new(REPROOF, REPROOF_MAX),
+            horizon: meshway_model::recovery::Horizon::Unbounded,
+            reread_blocked: Some(REREAD_CONFLICT),
+        }))
+    }
+}
+
+impl std::ops::Deref for Ownership {
+    type Target = Watched;
+    fn deref(&self) -> &Watched {
+        &self.0
+    }
+}
+
+impl Ownership {
     /// The observation of a recorded end.
     pub fn of(end: crate::OwnershipEnd) -> meshway_model::recovery::Observation {
         match end {
@@ -132,11 +156,29 @@ impl Ownership {
             }
         }
     }
-    pub fn health(&self) -> meshway_model::recovery::Health {
-        self.health.borrow().clone()
+}
+
+/// The exit role's ownership (owner #6), across its installations: blocked
+/// once an exit-owned object was read back changed by someone else; read
+/// again every 60 s, and healthy again once the stopped role's cleanup
+/// removed everything it owned. Unknown reads stay with the role's own
+/// recovery (its audit and change limits); only a proof is kept here.
+pub(super) struct ExitOwnership(Watched);
+
+impl Default for ExitOwnership {
+    fn default() -> Self {
+        Self(Watched::new(meshway_model::recovery::Policy {
+            backoff: meshway_model::Backoff::new(REREAD_CONFLICT, REREAD_CONFLICT),
+            horizon: meshway_model::recovery::Horizon::Unbounded,
+            reread_blocked: Some(REREAD_CONFLICT),
+        }))
     }
-    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<meshway_model::recovery::Health> {
-        self.health.subscribe()
+}
+
+impl std::ops::Deref for ExitOwnership {
+    type Target = Watched;
+    fn deref(&self) -> &Watched {
+        &self.0
     }
 }
 
@@ -266,6 +308,7 @@ impl Shared {
             changes: self.changes.clone(),
             cleanups: self.cleanups.clone(),
             ownership: self.ending.ownership.clone(),
+            exit: self.exit.clone(),
         }
     }
 

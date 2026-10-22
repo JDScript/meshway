@@ -131,6 +131,32 @@ fn return_table() -> String {
         .expect("pair rule of the source")
 }
 
+/// RC-1 Q4: a proven change of an exit-owned object keeps the role
+/// withdrawn until the exit owner reads it again (every 60 s, read only) and
+/// finds the evidence gone; then the role installs on the same content.
+async fn reinstalled_after_reread(
+    host: &mut meshway_underlay::Host,
+    plan: &meshway_configuration::netmap::ExitRole,
+) -> ExitRole {
+    assert!(
+        host.install_netmap_exit_role(plan).await.is_err(),
+        "a proven change is not reinstalled before its re-read"
+    );
+    let stopped = std::time::Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        match host.install_netmap_exit_role(plan).await {
+            Ok(role) => {
+                let waited = stopped.elapsed();
+                println!("RC1_EXIT_REREAD_AFTER_S={}", waited.as_secs());
+                return role;
+            }
+            Err(_) if stopped.elapsed() < Duration::from_secs(75) => {}
+            Err(error) => panic!("not reinstalled after its re-read: {error}"),
+        }
+    }
+}
+
 async fn ends(role: &ExitRole) {
     tokio::time::timeout(Duration::from_secs(6), async {
         while role.is_active() {
@@ -208,8 +234,9 @@ async fn netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role() {
     host.install(next)
         .await
         .expect("Host protection survives the exit role's failure");
-    // And the role installs again on the same content.
-    let again = host.install_netmap_exit_role(&role_plan).await.unwrap();
+    // And the role installs again on the same content, once a re-read
+    // finds the removed route's evidence gone.
+    let again = reinstalled_after_reread(&mut host, &role_plan).await;
     let renewed = exchange(&again, &scope, 4).await;
     again.retire_flow(incarnation(4)).await.unwrap();
     assert!(again.is_active());
@@ -363,7 +390,7 @@ async fn netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again() {
         !tool("nft", &["-j", "list", "tables"]).contains(&table),
         "the role's tables are gone"
     );
-    let again = host.install_netmap_exit_role(&role_plan).await.unwrap();
+    let again = reinstalled_after_reread(&mut host, &role_plan).await;
     let renewed = exchange(&again, &scope, 2).await;
     again.retire_flow(incarnation(2)).await.unwrap();
     assert!(again.is_active());

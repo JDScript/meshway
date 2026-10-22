@@ -53,6 +53,8 @@ pub(super) struct Expected {
     /// outside its owner stops that role alone: its owner retires every
     /// projection and cleans up; the Host keeps its own resources.
     pub exit_stop: Option<tokio_util::sync::CancellationToken>,
+    /// The exit role's ownership: such a removal is a proven change.
+    pub exit_ownership: Option<Arc<crate::linux::protection::ExitOwnership>>,
     pub probe_tun: Option<u32>,
     pub egress_rules: Vec<Vec<u8>>,
     pub egress_table: Option<u32>,
@@ -151,6 +153,15 @@ impl Expected {
             reason,
             "Exit-owned kernel object removed outside its owner; stopping the exit role"
         );
+        if let Some(ownership) = &self.exit_ownership {
+            ownership.observe(
+                meshway_model::recovery::Observation::proven(
+                    "exit_object_removed",
+                    format!("exitOwnership: {reason}"),
+                ),
+                std::time::Instant::now(),
+            );
+        }
         stop.cancel();
         true
     }
