@@ -43,6 +43,8 @@
 - Rust 业务代码 forbid unsafe；确需 native/FFI 的桥接隔离审计，不静默放开应用 lint 或 TLS 默认 features。
 - Rust 程序入口复用 `meshway-logging`，库只发 `tracing` 事件、不安装全局 subscriber；字段与 stdout／stderr 边界见 `docs/v2/logging.md`。
 - 取消后的已接纳事务仍由数据库 owner 完成；异步生产者有明确停止／join，缓冲和任务有界。
+- 每条 fail-closed 路径必须区分两类并写明 owner：读到**已证实**的不一致为持久阻断（Status `blocked`＋原因，需人工或重启）；读取失败、超时或变更结果未知为暂态阻断，由命名 owner 按有界退避重证，原因消失后以同一 netmap 自动恢复（Status `retrying`＋最早原因）。不得出现无 owner、无重证周期的永久阻断；一次失败的读取或变更不能证明归属已变。
+- 事件循环每轮至少推进一个状态，不得有电平分支：`watch` 克隆在等待前 `mark_unchanged`／处理时 `borrow_and_update`，已关闭的分支禁用，同一事实只处理一次直到它变化；定时恢复不得被立即就绪的分支饿死。
 
 ## 验证与环境
 
@@ -53,6 +55,8 @@
 - 文档：`mise run check:docs` 检查构建、链接／锚点、公开 OpenAPI 一致性及标注完整示例；外部链接按需额外核对。
 - 运行服务、身份数据与源码合并分开处理。先核对实际进程／接口；不把重新编译当作部署，不覆盖另一工作流账户／配置。
 - 不改未知归属的宿主路由／DNS／防火墙／Docker daemon，不用 host network 或 privileged（含构建器）。测试资源隔离并可精确清理。
+- Planck 是共享宿主：同时跑矩阵的工作包至多 2 个，跑前 `docker ps` 确认（push main 会触发 validate 矩阵）；不在 Planck 制造宿主级 RTNL 停顿。
+- 现场部署验收固定采样：六台空闲时 meshwayd 每线程 CPU 与 underlay 直连对照；每个 alpha 发布后现场 soak ≥24 h 再发下一版（紧急修复除外）。
 - 大型构建前检查磁盘，低于 50 GiB 先处理已结束且无进程／挂载引用的缓存。`CARGO_INCREMENTAL=0`，相同任务复用指定 target；不同 feature 的可执行测试不并发共用 target。不全量 prune 未知 volumes。
 
 ## 协作
