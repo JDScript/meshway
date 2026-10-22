@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T08:58:36.854148+00:00",
+  "updatedAt": "2026-10-22T10:16:27.252028+00:00",
   "runs": [
+    {
+      "id": 39761649789,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "dbd49e6ba07682fcb8e659f28c8def1fdb44700d",
+      "message": "AGENTS: full checks and large builds on Planck; keep the Mac quiet during soak",
+      "createdAt": "2026-10-22T10:14:51Z",
+      "updatedAt": "2026-10-22T10:15:07Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39761649789",
+      "jobs": [
+        {
+          "id": 119767023448,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T10:14:54Z",
+          "completedAt": "2026-10-22T10:15:06Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39761649789/job/119767023448"
+        },
+        {
+          "id": 119767128767,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T10:15:07Z",
+          "completedAt": "2026-10-22T10:15:06Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39761649789/job/119767128767"
+        },
+        {
+          "id": 119767129311,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T10:15:07Z",
+          "completedAt": "2026-10-22T10:15:06Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39761649789/job/119767129311"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 39750685463,
       "attempt": 1,
