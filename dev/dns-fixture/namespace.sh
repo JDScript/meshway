@@ -98,11 +98,15 @@ fi
 cat /proc/self/mountinfo > /evidence/dns-namespace-after.txt
 cp /usr/share/meshway-dns-packages.tsv /evidence/os-packages.tsv
 # The actor's SIGUSR1 asks for one resolved restart: a new process and D-Bus
-# owner with the same configuration, as `systemctl restart` does.
+# owner with the same configuration, as `systemctl restart` does. At most
+# MESHWAY_DNS_RESTARTS (default 1) per run; restart n also writes
+# resolved-restarted-<n>.txt.
+restarts=0
 restart_resolved() {
-    if [ "$MESHWAY_DNS_BACKEND" != resolved ] || [ -e /evidence/resolved-restarted.txt ]; then
+    if [ "$MESHWAY_DNS_BACKEND" != resolved ] || [ "$restarts" -ge "${MESHWAY_DNS_RESTARTS:-1}" ]; then
         return
     fi
+    restarts=$((restarts + 1))
     old=$resolved
     kill -TERM "$old"
     wait "$old" 2>/dev/null || true
@@ -115,7 +119,10 @@ restart_resolved() {
         attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || return
         sleep .1
     done
-    printf 'old=%s new=%s\n' "$old" "$resolved" > /evidence/resolved-restarted.txt
+    if [ "$restarts" -eq 1 ]; then
+        printf 'old=%s new=%s\n' "$old" "$resolved" > /evidence/resolved-restarted.txt
+    fi
+    printf 'old=%s new=%s\n' "$old" "$resolved" > "/evidence/resolved-restarted-$restarts.txt"
 }
 trap restart_resolved USR1
 "$@" &

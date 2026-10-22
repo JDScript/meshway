@@ -4,11 +4,10 @@
 //! perturbation and measurement belong to `dev/roam-fixture/runtime.py`;
 //! these actors only run the daemons.
 use crate::{Cli, Result, actor};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr},
-    path::Path,
     time::Duration,
 };
 
@@ -122,32 +121,13 @@ pub struct Configured {
     pub mesh: BTreeMap<String, Ipv4Addr>,
 }
 
-pub async fn write<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let temporary = path.with_extension("tmp");
-    tokio::fs::write(&temporary, serde_json::to_vec_pretty(value)?).await?;
-    tokio::fs::rename(temporary, path).await?;
-    Ok(())
-}
-pub async fn read<T: DeserializeOwned>(path: &Path) -> Result<T> {
-    Ok(serde_json::from_slice(&tokio::fs::read(path).await?)?)
-}
+pub use crate::supervised::{read, ready, write};
+
 pub async fn stopped(cli: &Cli) -> Result<bool> {
-    Ok(tokio::fs::try_exists(cli.signals.join("roam-stop")).await?)
+    crate::supervised::stopped(cli, "roam").await
 }
 pub async fn wait(cli: &Cli, name: &str) -> Result<()> {
-    tokio::time::timeout(crate::remaining(Duration::from_secs(600))?, async {
-        while !tokio::fs::try_exists(cli.signals.join(name)).await? {
-            if stopped(cli).await? {
-                return Err("roam supervisor stopped the run".into());
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        Ok(())
-    })
-    .await?
-}
-pub async fn ready(cli: &Cli, name: &str) -> Result<()> {
-    write(&cli.signals.join(name), &true).await
+    crate::supervised::wait(cli, "roam", name).await
 }
 
 pub async fn run(cli: &Cli, role: Role) -> Result<()> {
@@ -174,25 +154,7 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     };
     let mut daemon = actor::spawn_named_daemon(cli, role.name(), controller)?;
     let result = async {
-        actor::wait_ipc(cli, &mut daemon).await?;
-        actor::command(cli, "up").await?;
-        let status = actor::wait_status(cli, |s| s.enrollment_request_id.is_some()).await?;
-        if daemon.id() != Some(status.process_id) {
-            return Err("wrong daemon process".into());
-        }
-        write(
-            &cli.signals
-                .join(format!("roam-enrollment-{}.json", role.name())),
-            &status,
-        )
-        .await?;
-        let status = actor::wait_status(cli, |s| s.identity.is_some()).await?;
-        write(
-            &cli.signals
-                .join(format!("roam-enrolled-{}.json", role.name())),
-            &status,
-        )
-        .await?;
+        crate::supervised::enroll(cli, "roam", role.name(), &mut daemon).await?;
         while !stopped(cli).await? && !tokio::fs::try_exists(cli.signals.join("roam-down")).await? {
             let status = actor::command(cli, "status").await?;
             write(&cli.evidence.join("status.json"), &status).await?;
