@@ -21,6 +21,8 @@ const MAX_ATTEMPTS: usize = 64;
 const FIRST_PACKET_POLL: Duration = Duration::from_secs(10);
 const RETENTION: Duration = Duration::from_secs(20);
 const MAX_SENDS: usize = 32;
+/// A packet turn this long is logged (diagnostics).
+const SLOW_TURN: Duration = Duration::from_millis(100);
 
 struct Queued {
     packet: Packet,
@@ -54,6 +56,8 @@ pub(super) struct Packets {
     pub dropped: u64,
     carrier_wait_logged: Option<Instant>,
     held_logged: Option<Instant>,
+    /// Time this turn spent awaiting carrier sends and TUN writes.
+    awaited: Duration,
     scan_remaining: usize,
     sends:
         meshway_dataplane::carrier::SendPending<(Result<(), meshway_connectivity::Error>, usize)>,
@@ -359,6 +363,8 @@ impl Packets {
         let Some(carriers) = carriers else {
             return;
         };
+        let turn = std::time::Instant::now();
+        self.awaited = Duration::ZERO;
         // `meshway ping` echoes outside the Mesh enter as local packets.
         for packet in diagnostics
             .externals
@@ -590,10 +596,10 @@ impl Packets {
             && let Some(tun) = host.tun()
         {
             let count = deliveries.len();
-            if meshway_dataplane::carrier::deliver_batch(tun, deliveries)
-                .await
-                .is_err()
-            {
+            let started = std::time::Instant::now();
+            let delivered = meshway_dataplane::carrier::deliver_batch(tun, deliveries).await;
+            self.awaited += started.elapsed();
+            if delivered.is_err() {
                 for _ in 0..count {
                     self.drop_packet("tun_delivery");
                 }
@@ -719,10 +725,10 @@ impl Packets {
             && let Some(tun) = host.tun()
         {
             let count = errors.len();
-            if meshway_dataplane::carrier::deliver_batch(tun, errors)
-                .await
-                .is_err()
-            {
+            let started = std::time::Instant::now();
+            let delivered = meshway_dataplane::carrier::deliver_batch(tun, errors).await;
+            self.awaited += started.elapsed();
+            if delivered.is_err() {
                 for _ in 0..count {
                     self.drop_packet("too_big_delivery");
                 }
@@ -732,6 +738,15 @@ impl Packets {
             exit.drive(secure);
         }
         self.trace_held(secure, pool, incoming_done, local_done);
+        if turn.elapsed() >= SLOW_TURN {
+            tracing::debug!(
+                turn_ms = u64::try_from(turn.elapsed().as_millis()).unwrap_or(u64::MAX),
+                awaited_ms = u64::try_from(self.awaited.as_millis()).unwrap_or(u64::MAX),
+                incoming_done,
+                local_done,
+                "Packet turn was slow"
+            );
+        }
         self.scan_remaining = self
             .scan_remaining
             .saturating_sub(incoming_done + local_done)
@@ -764,12 +779,21 @@ impl Packets {
                     .map_or(Instant::now() + Duration::from_secs(10), Into::into),
             });
         }
-        if manager.send(init).await.is_err() {
+        let started = std::time::Instant::now();
+        let sent = manager.send(init).await;
+        self.awaited += started.elapsed();
+        if sent.is_err() {
             self.drop_packet("handshake_send");
         }
     }
 
     async fn flush_sends(&mut self, manager: &Manager, outgoing: &mut Vec<secure::PendingFrame>) {
+        let started = std::time::Instant::now();
+        self.flush_frames(manager, outgoing).await;
+        self.awaited += started.elapsed();
+    }
+
+    async fn flush_frames(&mut self, manager: &Manager, outgoing: &mut Vec<secure::PendingFrame>) {
         let mut data = Vec::new();
         for frame in outgoing.drain(..) {
             if frame.is_data() {
