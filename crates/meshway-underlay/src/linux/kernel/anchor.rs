@@ -55,32 +55,40 @@ struct Reader {
     closed: CancellationToken,
 }
 impl Guard {
+    /// Whether the anchor still holds. The end of kernel ownership is judged
+    /// by the Host, not here: an unavailable end proves nothing about the
+    /// anchor (`Backend`; the Host re-proves it and DNS prepares again on
+    /// the new term), only a proven conflict or the anchor's own removal is
+    /// one (`Conflict`).
     fn check(&self) -> std::result::Result<(), SystemDnsFailure> {
-        let actual = if let Some((cause, _)) = self.shared.ended() {
+        let (error, actual) = if let Some((cause, _)) = self.shared.ended() {
             match cause {
-                crate::OwnershipEnd::Unavailable { .. } => {
-                    "the host's kernel ownership ended unavailable (the Host proves it again; DNS prepares again on its next term)"
-                }
-                crate::OwnershipEnd::Conflict { .. } => {
-                    "the host's kernel ownership ended on a conflict (its owner logged why)"
-                }
+                crate::OwnershipEnd::Unavailable { .. } => (
+                    SystemDnsError::Backend,
+                    "the host's kernel ownership ended unavailable (the Host proves it again; DNS prepares again on its next term)",
+                ),
+                crate::OwnershipEnd::Conflict { .. } => (
+                    SystemDnsError::Conflict,
+                    "the host's kernel ownership ended on a conflict (its owner logged why)",
+                ),
             }
         } else if self.shared.tasks.stop.is_cancelled() {
-            "the host owner stopped"
+            (SystemDnsError::Backend, "the host owner stopped")
         } else if self.cancelled.is_cancelled() {
-            "the anchor was removed or its guard dropped"
+            (
+                SystemDnsError::Conflict,
+                "the anchor was removed or its guard dropped",
+            )
         } else {
             return Ok(());
         };
-        Err(
-            SystemDnsFailure::new(SystemDnsError::Conflict, "anchor_ended")
-                .expected(format!(
-                    "anchor {} owned by this Kernel",
-                    self.record.identity.name
-                ))
-                .actual(actual)
-                .source("Kernel DNS anchor"),
-        )
+        Err(SystemDnsFailure::new(error, "anchor_ended")
+            .expected(format!(
+                "anchor {} owned by this Kernel",
+                self.record.identity.name
+            ))
+            .actual(actual)
+            .source("Kernel DNS anchor"))
     }
     /// A new request socket and its connection task, bounded by the host's
     /// task capacity.
@@ -101,6 +109,12 @@ impl Guard {
         Ok(Reader { handle, closed })
     }
     fn failure(&self, mismatch: Mismatch) -> SystemDnsFailure {
+        // Ended while verifying: why it ended is the guard's own judgement.
+        if mismatch.check == "anchor_ended"
+            && let Err(ended) = self.check()
+        {
+            return ended;
+        }
         let identity = &self.record.identity;
         SystemDnsFailure::new(SystemDnsError::Conflict, mismatch.check)
             .expected(format!(

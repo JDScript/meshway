@@ -4,6 +4,7 @@
 //! crypto. Packets, ping and DNS are decided locally on the desired netmap.
 mod diagnostics;
 mod dns;
+pub(crate) use dns::DnsFact;
 mod facts;
 mod packets;
 mod plane;
@@ -77,9 +78,9 @@ pub(super) struct Report {
     pub expires_at: Option<DateTime<Utc>>,
     /// Egress capture Engine computed for `content`; reporting only.
     pub capture: Option<meshway_configuration::evaluation::CaptureSummary>,
-    pub dns_guard: Option<watch::Receiver<Option<meshway_dns::SystemDnsError>>>,
-    /// The check the DNS owner's current fault failed, live beside `dns_guard`.
-    pub dns_detail: Option<watch::Receiver<Option<meshway_dns::SystemDnsFailure>>>,
+    /// The DNS owner's state, live: its fault, the check it failed and its
+    /// recovery.
+    pub dns_guard: Option<watch::Receiver<DnsFact>>,
     /// Netmap whose installation this report describes.
     pub netmap: Option<NetmapRef>,
     pub completion: Option<Result<(), ApplyFailure>>,
@@ -148,7 +149,6 @@ impl Report {
             expires_at: None,
             capture: None,
             dns_guard: None,
-            dns_detail: None,
             netmap: None,
             completion: None,
             persistent: false,
@@ -180,7 +180,7 @@ impl Report {
     pub fn current(&self) -> bool {
         self.dns_guard
             .as_ref()
-            .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none())
+            .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().fault.is_none())
             && self.content.is_some()
     }
     /// The DNS owner's fault while content is installed, with the check it
@@ -188,14 +188,11 @@ impl Report {
     /// cause Status shows before the worker's own report.
     pub fn dns_fault(&self) -> Option<Option<String>> {
         let guard = self.dns_guard.as_ref()?;
-        if self.content.is_none() || (guard.has_changed().is_ok() && guard.borrow().is_none()) {
+        if self.content.is_none() || (guard.has_changed().is_ok() && guard.borrow().fault.is_none())
+        {
             return None;
         }
-        Some(
-            self.dns_detail
-                .as_ref()
-                .and_then(|detail| detail.borrow().as_ref().map(ToString::to_string)),
-        )
+        Some(guard.borrow().detail.as_ref().map(ToString::to_string))
     }
     /// The failed plane recovers by itself: its failure is transient, or a
     /// kernel change or exit cleanup is being retried right now.

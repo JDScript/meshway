@@ -62,8 +62,7 @@ async fn shutdown_during_observation(stall: bool) {
         observations: observations.clone(),
         stall,
     });
-    let fault = actor.fault.clone();
-    let actor_detail = actor.detail.clone();
+    let state = actor.state.clone();
     tokio::time::timeout(Duration::from_secs(3), observing.recv())
         .await
         .unwrap()
@@ -77,10 +76,10 @@ async fn shutdown_during_observation(stall: bool) {
     .unwrap();
     assert!(!join.await.unwrap());
     assert_eq!(observations.load(Ordering::SeqCst), 1);
-    assert_eq!(fault.borrow().is_some(), stall);
+    assert_eq!(state.borrow().fault.is_some(), stall);
     if stall {
         // A stalled observation names the deadline it missed.
-        let detail = actor_detail.borrow().clone().unwrap();
+        let detail = state.borrow().detail.clone().unwrap();
         assert_eq!(detail.check, "observe_deadline");
         assert_eq!(detail.error, SystemDnsError::Backend);
     }
@@ -133,28 +132,31 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     let (scopes, _) = watch::channel(None);
     let observations = Arc::new(AtomicUsize::new(0));
     let recoveries = Arc::new(AtomicUsize::new(0));
-    let mut actor = Actor::start(FailingOwner {
+    let actor = Actor::start(FailingOwner {
         scopes,
         observations: observations.clone(),
         recoveries: recoveries.clone(),
         unavailable: 1,
     });
-    let mut fault = actor.fault.clone();
-    fault.wait_for(Option::is_some).await.unwrap();
+    let mut state = actor.state.clone();
+    state.wait_for(|fact| fact.fault.is_some()).await.unwrap();
     tokio::time::timeout(
         RECOVERY_INTERVAL / 2,
-        super::Health::new(actor.fault.clone(), actor.recovered.clone()).failed(),
+        super::DnsHealth::new(actor.state.clone(), 0).failed(),
     )
     .await
     .expect("a fault not yet re-proved is a failure");
     // The fault carries the check the owner recorded, for the report.
-    let detail = actor.detail.borrow().clone().unwrap();
+    let detail = state.borrow().detail.clone().unwrap();
     assert_eq!(detail.check, "anchor_netlink");
     assert_eq!(detail.source.as_deref(), Some("rtnetlink RTM_GETROUTE"));
-    let mut recovered = actor.recovered.clone();
+    assert!(matches!(
+        state.borrow().health,
+        meshway_model::recovery::Health::Retrying(_)
+    ));
     tokio::time::timeout(
         RECOVERY_INTERVAL * 3,
-        recovered.wait_for(|recovered| *recovered),
+        state.wait_for(|fact| fact.health.is_healthy()),
     )
     .await
     .expect("an available backend is recovered without a parent retry")
@@ -164,18 +166,18 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     tokio::time::sleep(RECOVERY_INTERVAL * 2).await;
     assert_eq!(observations.load(Ordering::SeqCst), 1);
     assert_eq!(recoveries.load(Ordering::SeqCst), 2);
-    assert_eq!(*fault.borrow(), Some(SystemDnsError::Backend));
+    assert_eq!(state.borrow().fault, Some(SystemDnsError::Backend));
     // Not yet acknowledged, the re-proved fault is still the plane's failure.
     tokio::time::timeout(
         RECOVERY_INTERVAL,
-        super::Health::new(actor.fault.clone(), actor.recovered.clone()).failed(),
+        super::DnsHealth::new(actor.state.clone(), 0).failed(),
     )
     .await
     .expect("an unacknowledged re-proved fault is a failure");
     // The plane sees that fault once (`Attachment::acknowledge`): re-proved,
     // it is a recovery and no longer a failure while it waits for the hold.
-    actor.fault.borrow_and_update();
-    let health = super::Health::new(actor.fault.clone(), actor.recovered.clone());
+    let epoch = state.borrow().epoch;
+    let health = super::DnsHealth::new(actor.state.clone(), epoch);
     assert!(
         tokio::time::timeout(RECOVERY_INTERVAL, health.clone().failed())
             .await
@@ -244,9 +246,11 @@ fn compiled() -> meshway_configuration::netmap::CompiledNetmap {
 
 /// F6a B9: a failed hold or installation publishes its recorded check
 /// before the plane sees the answer (`lastErrorDetail` is never empty over
-/// a known reason); a later successful installation clears it.
+/// a known reason). RC-1 M6 (G2): a failure of the system is the owner's
+/// fault, which it re-proves itself (a recovery edge for the plane); a later
+/// successful hold and installation clear it.
 #[tokio::test]
-async fn a_failed_hold_or_installation_publishes_its_check_before_answering() {
+async fn a_failed_hold_or_installation_publishes_its_check_and_is_recovered() {
     let (scopes, _) = watch::channel(None);
     let actor = Actor::start(RefusingOwner {
         scopes,
@@ -255,18 +259,21 @@ async fn a_failed_hold_or_installation_publishes_its_check_before_answering() {
     let compiled = std::sync::Arc::new(compiled());
     let netmap = compiled.netmap.as_ref().clone();
     assert_eq!(actor.hold(&netmap).await, Err(SystemDnsError::Backend));
-    let detail = actor.detail.borrow().clone().expect("the hold's check");
+    let detail = actor
+        .state
+        .borrow()
+        .detail
+        .clone()
+        .expect("the hold's check");
     assert_eq!(detail.check, "link_settings");
     assert_eq!(detail.source.as_deref(), Some("resolve1 SetLinkDNS"));
-    let desired = Desired::new(&compiled, &Default::default()).unwrap();
-    assert_eq!(
-        actor.install(desired.clone()).await,
-        Err(SystemDnsError::Backend)
-    );
-    assert_eq!(
-        actor.detail.borrow().as_ref().map(|failure| failure.check),
-        Some("link_settings")
-    );
+    assert_eq!(actor.state.borrow().fault, Some(SystemDnsError::Backend));
+    tokio::time::timeout(
+        RECOVERY_INTERVAL * 3,
+        super::DnsHealth::new(actor.state.clone(), 0).recovered(),
+    )
+    .await
+    .expect("a failed hold has an owner that recovers it");
     actor.shutdown(true).await.unwrap();
 
     let (scopes, _) = watch::channel(None);
@@ -274,9 +281,136 @@ async fn a_failed_hold_or_installation_publishes_its_check_before_answering() {
         scopes,
         install: true,
     });
+    let desired = Desired::new(&compiled, &Default::default()).unwrap();
     assert!(actor.hold(&netmap).await.is_err());
-    assert!(actor.detail.borrow().is_some());
+    assert!(actor.state.borrow().detail.is_some());
+    let mut state = actor.state.clone();
+    tokio::time::timeout(
+        RECOVERY_INTERVAL * 3,
+        state.wait_for(|fact| fact.health.is_healthy()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     actor.install(desired).await.unwrap();
-    assert!(actor.detail.borrow().is_none(), "success clears it");
+    assert!(
+        actor.state.borrow().detail.is_some(),
+        "a fault keeps its detail until a hold"
+    );
+    actor.shutdown(true).await.unwrap();
+}
+
+/// An owner whose hold succeeds after one failure of the system.
+struct HoldOnce {
+    scopes: watch::Sender<Option<meshway_dns::Scope>>,
+    holds: Arc<AtomicUsize>,
+}
+impl Owner for HoldOnce {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>> {
+        self.scopes.clone()
+    }
+    async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
+        if self.holds.fetch_add(1, Ordering::SeqCst) == 0 {
+            Err(SystemDnsError::Backend)
+        } else {
+            Ok(())
+        }
+    }
+    async fn install(&mut self, _: Desired) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn shutdown(self, _: bool) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+}
+
+/// RC-1 M6 (G2; red on 83c5d3a2): a hold that failed on the system has an
+/// owner: it re-proves itself, the plane sees one recovery, and its next
+/// hold clears the fault.
+#[tokio::test]
+async fn a_failed_hold_is_recovered_by_its_owner_and_the_next_hold_clears_it() {
+    let (scopes, _) = watch::channel(None);
+    let actor = Actor::start(HoldOnce {
+        scopes,
+        holds: Arc::new(AtomicUsize::new(0)),
+    });
+    let netmap = compiled().netmap.as_ref().clone();
+    assert!(actor.hold(&netmap).await.is_err());
+    let epoch = actor.state.borrow().epoch;
+    tokio::time::timeout(
+        RECOVERY_INTERVAL / 2,
+        super::DnsHealth::new(actor.state.clone(), epoch - 1).failed(),
+    )
+    .await
+    .expect("one failure edge");
+    tokio::time::timeout(
+        RECOVERY_INTERVAL * 3,
+        super::DnsHealth::new(actor.state.clone(), epoch).recovered(),
+    )
+    .await
+    .expect("a failed hold has an owner that recovers it");
+    actor.hold(&netmap).await.unwrap();
+    assert_eq!(actor.state.borrow().fault, None, "the next hold clears it");
+    actor.shutdown(true).await.unwrap();
+}
+
+/// An owner whose link settings someone else wrote.
+struct ForeignSettings {
+    scopes: watch::Sender<Option<meshway_dns::Scope>>,
+    recoveries: Arc<AtomicUsize>,
+}
+impl Owner for ForeignSettings {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>> {
+        self.scopes.clone()
+    }
+    async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        Err(SystemDnsError::Conflict)
+    }
+    async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        self.recoveries.fetch_add(1, Ordering::SeqCst);
+        Err(SystemDnsError::Conflict)
+    }
+    async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
+        unreachable!("the plane does not hold a blocked owner")
+    }
+    async fn install(&mut self, _: Desired) -> Result<(), SystemDnsError> {
+        unreachable!("the plane does not install on a blocked owner")
+    }
+    async fn shutdown(self, _: bool) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    fn failure(&self) -> Option<SystemDnsFailure> {
+        Some(SystemDnsFailure::new(
+            SystemDnsError::Conflict,
+            "link_settings",
+        ))
+    }
+}
+
+/// RC-1 M6 (G3, Q2; red on 83c5d3a2): link settings someone else wrote are
+/// proven: the owner is blocked and reads them again every 60 s, not every
+/// second (its re-proof refuses foreign settings, never overwrites them).
+#[tokio::test(start_paused = true)]
+async fn foreign_link_settings_block_and_are_read_again_every_60_s() {
+    let (scopes, _) = watch::channel(None);
+    let recoveries = Arc::new(AtomicUsize::new(0));
+    let actor = Actor::start(ForeignSettings {
+        scopes,
+        recoveries: recoveries.clone(),
+    });
+    let mut state = actor.state.clone();
+    state.wait_for(|fact| fact.fault.is_some()).await.unwrap();
+    assert!(state.borrow().health.is_blocked(), "proven, not retried");
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(recoveries.load(Ordering::SeqCst), 0);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(recoveries.load(Ordering::SeqCst), 1, "read again at 60 s");
+    assert!(state.borrow().health.is_blocked());
     actor.shutdown(true).await.unwrap();
 }

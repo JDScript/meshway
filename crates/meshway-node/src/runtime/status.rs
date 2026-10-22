@@ -699,10 +699,10 @@ mod tests {
         network.content = Some(std::sync::Arc::new(meshway_test_server::single_node(
             "a", None,
         )));
-        let (fault, guard) = watch::channel(None);
+        let (fault, guard) = watch::channel(super::super::network::DnsFact::default());
         // A hold before the report was published: the receiver every
         // report clones from has not seen it.
-        fault.send_replace(None);
+        fault.send_replace(super::super::network::DnsFact::default());
         assert!(guard.has_changed().unwrap());
         network.dns_guard = Some(guard);
         let (view, _reported, _network, _desired) = view(network);
@@ -723,7 +723,7 @@ mod tests {
             "an unchanged input woke the tracker {idle} times"
         );
         // A later fault is a change: one turn reads it, then it sleeps again.
-        fault.send_replace(Some(meshway_dns::SystemDnsError::Backend));
+        fault.send_modify(|fact| fact.fault = Some(meshway_dns::SystemDnsError::Backend));
         for _ in 0..200 {
             tokio::task::yield_now().await;
         }
@@ -744,21 +744,21 @@ mod tests {
         network.content = Some(std::sync::Arc::new(meshway_test_server::single_node(
             "a", None,
         )));
-        let (fault, guard) = watch::channel(None);
-        let (detail, details) = watch::channel(None);
+        let (fault, guard) = watch::channel(super::super::network::DnsFact::default());
         network.dns_guard = Some(guard);
-        network.dns_detail = Some(details);
         let (view, _reported, _network, _desired) = view(network);
         assert_eq!(view.status().last_error, None);
-        fault.send_replace(Some(meshway_dns::SystemDnsError::Backend));
-        detail.send_replace(Some(
-            meshway_dns::SystemDnsFailure::new(
-                meshway_dns::SystemDnsError::Backend,
-                "observe_deadline",
-            )
-            .expected("an observation within 2000 ms")
-            .actual("abandoned after 2101 ms"),
-        ));
+        fault.send_modify(|fact| {
+            fact.fault = Some(meshway_dns::SystemDnsError::Backend);
+            fact.detail = Some(
+                meshway_dns::SystemDnsFailure::new(
+                    meshway_dns::SystemDnsError::Backend,
+                    "observe_deadline",
+                )
+                .expected("an observation within 2000 ms")
+                .actual("abandoned after 2101 ms"),
+            );
+        });
         let status = view.status();
         assert_eq!(status.data_plane, DataPlane::Suspended);
         assert!(status.applied.is_none());

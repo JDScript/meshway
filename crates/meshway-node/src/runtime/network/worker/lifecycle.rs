@@ -3,7 +3,7 @@
 //! ready while the worker cannot act on it may starve it. The DNS facts are
 //! edges (see [`Health`]): each fault is one failure and at most one
 //! recovery, whatever the reinstall it triggers reaches.
-use super::super::dns::Health;
+use super::super::dns::DnsHealth as Health;
 use std::future::Future;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -38,32 +38,64 @@ pub(super) async fn next(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::dns::DnsFact;
     use super::*;
     use meshway_dns::SystemDnsError;
     use std::time::Duration;
     use tokio::sync::watch;
 
-    /// The DNS owner's two facts, driven as its actor drives them.
+    /// The DNS owner's fact, driven as its actor drives it.
     struct Owner {
-        fault: watch::Sender<Option<SystemDnsError>>,
-        recovered: watch::Sender<bool>,
+        state: watch::Sender<DnsFact>,
     }
     impl Owner {
         fn new() -> Self {
             Self {
-                fault: watch::channel(None).0,
-                recovered: watch::channel(false).0,
+                state: watch::channel(DnsFact::default()).0,
             }
         }
+        /// A new fault, retried by the owner.
+        fn fail(&self, error: SystemDnsError) {
+            self.state.send_modify(|fact| {
+                if fact.fault.is_none() || fact.health.is_healthy() {
+                    fact.epoch += 1;
+                }
+                fact.fault = Some(error);
+                fact.health =
+                    meshway_model::recovery::Health::Retrying(meshway_model::recovery::Retrying {
+                        check: "observe_deadline",
+                        reason: "stalled".into(),
+                        since: std::time::Instant::now(),
+                        attempts: 1,
+                        retry_at: std::time::Instant::now(),
+                    });
+            });
+        }
+        /// The owner re-proved its installation.
+        fn recover(&self) {
+            self.state
+                .send_modify(|fact| fact.health = meshway_model::recovery::Health::Healthy);
+        }
+        /// The plane's hold cleared the fault.
+        fn hold(&self) {
+            self.state.send_modify(|fact| fact.fault = None);
+        }
+        /// As the plane sees it after acknowledging every fault so far.
         fn health(&self) -> Health {
-            Health::new(self.fault.subscribe(), self.recovered.subscribe())
+            self.health_acknowledging(self.epoch())
+        }
+        fn health_acknowledging(&self, acknowledged: u64) -> Health {
+            Health::new(self.state.subscribe(), acknowledged)
+        }
+        fn epoch(&self) -> u64 {
+            self.state.borrow().epoch
         }
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_due_reproof_is_selected_before_dns_facts_that_stay_ready() {
         let owner = Owner::new();
-        owner.fault.send_replace(Some(SystemDnsError::Backend));
+        owner.fail(SystemDnsError::Backend);
         let due = Some(tokio::time::Instant::now());
         // Failed and not yet withdrawn for: ready, still after the re-proof.
         assert_eq!(
@@ -77,7 +109,7 @@ mod tests {
             .await,
             Lifecycle::HostRecovery
         );
-        owner.recovered.send_replace(true);
+        owner.recover();
         assert_eq!(
             next(
                 due,
@@ -113,37 +145,35 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_fault_re_proved_before_the_plane_looked_is_one_failure_and_one_recovery() {
         let owner = Owner::new();
-        let mut acknowledged = owner.fault.subscribe();
-        let health = |acknowledged: &watch::Receiver<Option<SystemDnsError>>| {
-            Health::new(acknowledged.clone(), owner.recovered.subscribe())
-        };
+        let mut acknowledged = owner.epoch();
+        let health = |acknowledged: u64| owner.health_acknowledging(acknowledged);
         let within = |next| tokio::time::timeout(Duration::from_secs(10), next);
-        owner.fault.send_replace(Some(SystemDnsError::Backend));
-        owner.recovered.send_replace(true);
+        owner.fail(SystemDnsError::Backend);
+        owner.recover();
         let failed = within(next(
             None,
-            Some(health(&acknowledged)),
+            Some(health(acknowledged)),
             false,
             std::future::pending(),
             true,
         ))
         .await;
         assert_eq!(failed.ok(), Some(Lifecycle::DnsFailure));
-        acknowledged.borrow_and_update();
+        acknowledged = owner.epoch();
         let recovered = within(next(
             None,
-            Some(health(&acknowledged)),
+            Some(health(acknowledged)),
             true,
             std::future::pending(),
             false,
         ))
         .await;
         assert_eq!(recovered.ok(), Some(Lifecycle::DnsRecovered));
-        acknowledged.borrow_and_update();
+        acknowledged = owner.epoch();
         // The reinstall did not reach the hold: no second failure.
         let idle = within(next(
             None,
-            Some(health(&acknowledged)),
+            Some(health(acknowledged)),
             false,
             std::future::pending(),
             false,
@@ -154,13 +184,12 @@ mod tests {
             "an acknowledged re-proved fault is no failure"
         );
         // The hold clears it; a later fault is a new failure, re-proved or not.
-        owner.fault.send_replace(None);
-        owner.recovered.send_replace(false);
-        owner.fault.send_replace(Some(SystemDnsError::Conflict));
-        owner.recovered.send_replace(true);
+        owner.hold();
+        owner.fail(SystemDnsError::Conflict);
+        owner.recover();
         let again = within(next(
             None,
-            Some(health(&acknowledged)),
+            Some(health(acknowledged)),
             false,
             std::future::pending(),
             true,
@@ -180,7 +209,7 @@ mod tests {
         let owner = Owner::new();
         let started = tokio::time::Instant::now();
         let mut dns_failed = false;
-        owner.fault.send_replace(Some(SystemDnsError::Backend));
+        owner.fail(SystemDnsError::Backend);
         assert_eq!(
             next(
                 None,
@@ -193,7 +222,7 @@ mod tests {
             Lifecycle::DnsFailure
         );
         dns_failed = true;
-        owner.recovered.send_replace(true);
+        owner.recover();
         // Ownership ends now; its re-proof is due 1 s later.
         let recovery_at = Some(tokio::time::Instant::now() + Duration::from_secs(1));
         let mut turns = 0;
@@ -225,9 +254,8 @@ mod tests {
         assert_eq!(turns, 2, "one recovery, then the re-proof");
         assert!(started.elapsed() <= Duration::from_secs(10));
         // A new fault after the plane's hold is a new failure.
-        owner.fault.send_replace(None);
-        owner.recovered.send_replace(false);
-        owner.fault.send_replace(Some(SystemDnsError::Conflict));
+        owner.hold();
+        owner.fail(SystemDnsError::Conflict);
         assert_eq!(
             next(
                 None,

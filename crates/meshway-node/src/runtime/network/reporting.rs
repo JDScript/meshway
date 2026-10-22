@@ -53,7 +53,7 @@ impl Key {
         let dns_live = report
             .dns_guard
             .as_ref()
-            .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none());
+            .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().fault.is_none());
         let mut key = Self {
             netmap: report.netmap,
             plane: report.plane,

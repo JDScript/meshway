@@ -734,7 +734,6 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let plane = engine.components_mut();
                 let mut report = std::mem::replace(&mut plane.report, Report::stopped());
                 report.dns_guard = plane.dns.guard();
-                report.dns_detail = plane.dns.detail_watch();
                 report.exit_dns = exit_dns.borrow_and_update().clone();
                 report.observed_at = chrono::Utc::now();
                 let installed = matches!(result, Ok(()) | Err(meshway_engine::Error::Degraded));

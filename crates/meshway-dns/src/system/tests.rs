@@ -138,3 +138,48 @@ fn explicit_file_proxy_requires_loopback_port_53_and_an_absolute_nontraversing_p
     };
     assert_eq!(cfg.validate(), Err(SystemDnsError::Settings));
 }
+
+/// RC-1 M6 (G3): the runtime reference's two columns, as the owner judges
+/// them. Proven (stays blocked, read again slowly): the anchor changed or
+/// ended on a conflict, foreign link settings, an interrupted settings
+/// change, another owner's reservation, another namespace. Anything a read
+/// could not settle, or that recovers by itself, is unknown.
+#[test]
+fn failures_are_proven_only_when_read_back_different() {
+    use super::{SystemDnsError::*, SystemDnsFailure};
+    for check in [
+        "namespace",
+        "owner_record",
+        "link_settings",
+        "record_pending",
+        "record_plan",
+        "anchor_link",
+        "anchor_identity",
+        "anchor_address_collision",
+        "anchor_ended",
+    ] {
+        assert!(SystemDnsFailure::new(Conflict, check).proven(), "{check}");
+    }
+    for (error, check) in [
+        (Backend, "anchor_ended"),
+        (Backend, "observe_deadline"),
+        (Backend, "anchor_netlink"),
+        (Conflict, "foreign_domain"),
+        (Conflict, "resolved_owner"),
+        (Conflict, "resolved_namespace"),
+        (Conflict, "owner_fenced"),
+        (Backend, "link_settings"),
+        (Storage, "record_write"),
+        (Conflict, "record_read"),
+        (Unsupported, "resolv_conf_mode"),
+    ] {
+        assert!(
+            !SystemDnsFailure::new(error, check).proven(),
+            "{error:?} {check}"
+        );
+    }
+    assert!(SystemDnsFailure::new(Backend, "link_settings").system());
+    assert!(SystemDnsFailure::new(Unsupported, "resolv_conf_mode").system());
+    assert!(!SystemDnsFailure::new(ResolverPlan, "unrecorded").system());
+    assert!(!SystemDnsFailure::new(Unsupported, "unrecorded").system());
+}

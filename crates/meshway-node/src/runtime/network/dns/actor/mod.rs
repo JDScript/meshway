@@ -4,14 +4,47 @@ use crate::host::Host;
 use meshway_configuration::netmap::NodeNetmap;
 use meshway_dns::{SystemDnsError, SystemDnsFailure, SystemDnsSettings};
 use meshway_engine::Desired;
+use meshway_model::recovery::{Health, Observation, Recovery, Step};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot, watch};
 
 // A stalled observation withdraws query authority. Accepted backend writes
 // remain owned by Runtime and are settled by its normal shutdown path.
 const OBSERVE_TIMEOUT: Duration = Duration::from_secs(2);
-/// A failed owner re-proves itself at most this often until it succeeds.
+/// A failed owner re-proves itself this often until it succeeds (fixed: the
+/// resolved restart recovers within 5 s).
 const RECOVERY_INTERVAL: Duration = Duration::from_secs(1);
+/// A proven inconsistency is read again this often (the re-proof refuses,
+/// never overwrites, settings it did not install).
+const REREAD_PROVEN: Duration = Duration::from_secs(60);
+
+/// The DNS owner's recovery (owner #9): unknown failures re-proved every
+/// second without a total limit, proven ones every 60 s.
+fn recovery() -> Recovery {
+    Recovery::new(meshway_model::recovery::Policy {
+        backoff: meshway_model::Backoff::new(RECOVERY_INTERVAL, RECOVERY_INTERVAL),
+        horizon: meshway_model::recovery::Horizon::Unbounded,
+        reread_blocked: Some(REREAD_PROVEN),
+    })
+}
+
+/// The DNS owner's state, as the packet plane and Status read it: one live
+/// fact. It carries no authority (query authority is the published scope).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DnsFact {
+    /// The fault that withdrew query authority; the plane's next hold
+    /// clears it, after the owner re-proved itself (`health` healthy).
+    pub fault: Option<SystemDnsError>,
+    /// Counts faults: a fault with a later epoch than the plane
+    /// acknowledged is a new failure for it.
+    pub epoch: u64,
+    /// The check the current fault (or the last failed hold or install)
+    /// failed, for `lastErrorDetail`.
+    pub detail: Option<SystemDnsFailure>,
+    /// The owner's recovery of the fault: retrying (unknown) or blocked
+    /// (proven); healthy once re-proved, or without a fault.
+    pub health: Health,
+}
 
 /// Private I/O seam for the actor loop. Runtime is the sole production owner;
 /// tests substitute observation latency, never DNS selection or installation.
@@ -90,27 +123,75 @@ enum Command {
 struct Actor {
     commands: mpsc::Sender<Command>,
     scopes: watch::Sender<Option<meshway_dns::Scope>>,
-    fault: watch::Receiver<Option<SystemDnsError>>,
-    /// The check the current fault failed, for the plane's report.
-    detail: watch::Receiver<Option<SystemDnsFailure>>,
-    /// The failed owner re-proved its installation; the fault stays until
-    /// the parent's next hold starts a new installation on it.
-    recovered: watch::Receiver<bool>,
+    state: watch::Receiver<DnsFact>,
     task: tokio::task::JoinHandle<()>,
 }
+
+/// The actor's own recovery of its fault, published as one [`DnsFact`].
+struct Faults {
+    state: watch::Sender<DnsFact>,
+    recovery: Recovery,
+    /// When the failed owner re-proves itself next.
+    recovery_at: tokio::time::Instant,
+}
+
+impl Faults {
+    /// The owner failed `failure` now: query authority is withdrawn and the
+    /// owner re-proves itself, every second, or every 60 s once proven.
+    fn fail(&mut self, failure: SystemDnsFailure) {
+        let now = tokio::time::Instant::now();
+        let observation = if failure.proven() {
+            Observation::proven(failure.check, &failure)
+        } else {
+            Observation::unknown(failure.check, &failure)
+        };
+        self.recovery_at = match self.recovery.observe(observation, now.into_std()) {
+            Step::RetryAt(at) | Step::Block(Some(at)) => tokio::time::Instant::from_std(at),
+            _ => now + RECOVERY_INTERVAL,
+        };
+        let health = self.recovery.health().clone();
+        self.state.send_modify(|fact| {
+            if fact.fault.is_none() || fact.health.is_healthy() {
+                fact.epoch = fact.epoch.wrapping_add(1);
+            }
+            fact.fault = Some(failure.error);
+            // Why before the fault itself: one send carries both.
+            fact.detail = Some(failure);
+            fact.health = health;
+        });
+    }
+    /// The failed owner re-proved its installation; the fault stays until
+    /// the plane's next hold.
+    fn recovered(&mut self) {
+        self.recovery
+            .observe(Observation::Holds, std::time::Instant::now());
+        self.state.send_modify(|fact| fact.health = Health::Healthy);
+    }
+    /// The fault that blocks a hold: one not re-proved yet.
+    fn blocking(&self) -> Option<SystemDnsError> {
+        let fact = self.state.borrow();
+        fact.fault.filter(|_| !fact.health.is_healthy())
+    }
+    fn faulted(&self) -> bool {
+        self.state.borrow().fault.is_some()
+    }
+}
+
 impl Actor {
     fn start(mut runtime: impl Owner) -> Self {
         let (commands, mut received) = mpsc::channel(4);
-        let (faults, fault) = watch::channel(None);
-        let (details, detail) = watch::channel(None::<SystemDnsFailure>);
-        let (recoveries, recovered) = watch::channel(false);
+        let (sender, state) = watch::channel(DnsFact::default());
         let scopes = runtime.scopes();
         let query_scopes = scopes.clone();
         let task = tokio::spawn(async move {
+            let mut faults = Faults {
+                state: sender,
+                recovery: recovery(),
+                recovery_at: tokio::time::Instant::now(),
+            };
             let mut timer = tokio::time::interval(super::OBSERVE_INTERVAL);
             timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut command_turn = true;
-            let mut recovery_at = tokio::time::Instant::now();
             loop {
                 // An overdue tick and a command alternate deterministically.
                 // At most one due observation separates already queued commands;
@@ -136,25 +217,27 @@ impl Actor {
                     command_turn = false;
                     match command {
                         Some(Command::Hold(netmap, reply)) => {
-                            let blocked = (*faults.borrow()).filter(|_| !*recoveries.borrow());
+                            let blocked = faults.blocking();
                             let result = match blocked {
                                 Some(error) => Err(error),
                                 None => {
-                                    faults.send_replace(None);
-                                    details.send_replace(None);
-                                    recoveries.send_replace(false);
+                                    faults.state.send_modify(|fact| {
+                                        fact.fault = None;
+                                        fact.detail = None;
+                                    });
                                     runtime.hold(&netmap).await
                                 }
                             };
                             if let Err(error) = result {
                                 let failure = match blocked {
-                                    Some(_) => details.borrow().clone(),
+                                    Some(_) => faults.state.borrow().detail.clone(),
                                     None => Some(failure_of(&runtime, error)),
                                 }
                                 .unwrap_or_else(|| SystemDnsFailure::new(error, "unrecorded"));
                                 warn_failure("hold", "DNS owner operation failed", &failure);
-                                // The plane reads why before it sees the answer.
-                                details.send_replace(Some(failure));
+                                if blocked.is_none() {
+                                    settle(&mut faults, &query_scopes, failure);
+                                }
                             }
                             let _ = reply.send(result);
                             continue;
@@ -165,11 +248,13 @@ impl Actor {
                                 Err(error) => {
                                     let failure = failure_of(&runtime, error);
                                     warn_failure("install", "DNS owner operation failed", &failure);
-                                    details.send_replace(Some(failure));
+                                    settle(&mut faults, &query_scopes, failure);
                                 }
                                 // A fault keeps its own detail until a hold.
-                                Ok(()) if faults.borrow().is_none() => {
-                                    details.send_replace(None);
+                                Ok(()) if !faults.faulted() => {
+                                    faults
+                                        .state
+                                        .send_if_modified(|fact| fact.detail.take().is_some());
                                 }
                                 Ok(()) => {}
                             }
@@ -190,15 +275,14 @@ impl Actor {
                 // A failed owner stays failed (the parent withdraws) until it
                 // re-proves its installation against the backend as it is now;
                 // then it waits for the parent's hold, observing nothing.
-                let faulted = faults.borrow().is_some();
-                if faulted && *recoveries.borrow() {
+                let faulted = faults.faulted();
+                if faulted && faults.blocking().is_none() {
                     continue;
                 }
                 let result = if faulted {
-                    if tokio::time::Instant::now() < recovery_at {
+                    if tokio::time::Instant::now() < faults.recovery_at {
                         continue;
                     }
-                    recovery_at = tokio::time::Instant::now() + RECOVERY_INTERVAL;
                     runtime
                         .recover()
                         .await
@@ -226,10 +310,9 @@ impl Actor {
                 };
                 match result {
                     Err(failure) => {
-                        let error = failure.error;
                         // Each distinct failure once: a recovery that keeps
                         // failing the same check is not repeated every second.
-                        if details.borrow().as_ref() != Some(&failure) {
+                        if faults.state.borrow().detail.as_ref() != Some(&failure) {
                             warn_failure(
                                 if faulted { "recover" } else { "observe" },
                                 "DNS owner health check failed",
@@ -237,14 +320,11 @@ impl Actor {
                             );
                         }
                         meshway_dns::publish_scope(&query_scopes, None);
-                        // Why before the fault itself: the plane reads the
-                        // detail as soon as it sees the fault.
-                        details.send_replace(Some(failure));
-                        faults.send_replace(Some(error));
+                        faults.fail(failure);
                     }
                     Ok(()) if faulted => {
                         tracing::info!("DNS owner recovered its system installation");
-                        recoveries.send_replace(true);
+                        faults.recovered();
                     }
                     Ok(()) => {}
                 }
@@ -253,9 +333,7 @@ impl Actor {
         Self {
             commands,
             scopes,
-            fault,
-            detail,
-            recovered,
+            state,
             task,
         }
     }
@@ -292,55 +370,71 @@ impl Actor {
     }
 }
 
+/// A failed hold or installation. The system's failure (an installation,
+/// a read, the backend) is the owner's fault like a failed observation: it
+/// re-proves itself and the plane reinstalls once it has. A refused plan or
+/// setting is the netmap's, recorded for the report only: another netmap
+/// ends it, nothing here retries it.
+fn settle(
+    faults: &mut Faults,
+    scopes: &watch::Sender<Option<meshway_dns::Scope>>,
+    failure: SystemDnsFailure,
+) {
+    if failure.system() {
+        meshway_dns::publish_scope(scopes, None);
+        faults.fail(failure);
+    } else {
+        // The plane reads why before it sees the answer.
+        faults.state.send_modify(|fact| fact.detail = Some(failure));
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
-/// The DNS owner's health as the packet plane observes it. Each fault is one
-/// failure and at most one recovery: a fault the plane has not acknowledged
-/// ([`Attachment::acknowledge`]) is a failure even when the owner re-proved
-/// it before the plane looked (its query authority stays withdrawn until the
-/// plane's next hold, so the plane withdraws and reinstalls); an
-/// acknowledged fault the owner re-proved is not, and waits for that hold
-/// without becoming a level that stays ready while the plane cannot reach
-/// the hold (another component's installation failing first).
+/// The DNS owner's health as the packet plane observes it, as edges. Each
+/// fault is one failure and at most one recovery: a fault the plane has not
+/// acknowledged ([`Attachment::acknowledge`]) is a failure even when the
+/// owner re-proved it before the plane looked (its query authority stays
+/// withdrawn until the plane's next hold, so the plane withdraws and
+/// reinstalls); an acknowledged fault the owner re-proved is not, and waits
+/// for that hold without becoming a level that stays ready while the plane
+/// cannot reach the hold (another component's installation failing first).
 #[derive(Clone)]
-pub(in crate::runtime::network) struct Health {
-    fault: watch::Receiver<Option<SystemDnsError>>,
-    recovered: watch::Receiver<bool>,
+pub(in crate::runtime::network) struct DnsHealth {
+    state: watch::Receiver<DnsFact>,
+    /// The fault epoch the plane acknowledged.
+    acknowledged: u64,
 }
-impl Health {
-    pub fn new(
-        fault: watch::Receiver<Option<SystemDnsError>>,
-        recovered: watch::Receiver<bool>,
-    ) -> Self {
-        Self { fault, recovered }
+impl DnsHealth {
+    pub fn new(state: watch::Receiver<DnsFact>, acknowledged: u64) -> Self {
+        Self {
+            state,
+            acknowledged,
+        }
     }
     /// Resolves while the owner has a fault the plane has not acknowledged
     /// or the owner has not re-proved, or once the owner has gone.
     pub async fn failed(mut self) {
-        // `fault` carries the plane's acknowledged version: a change since
-        // is a fault (or a hold's clearing) the plane has not reacted to.
-        let mut unacknowledged = self.fault.has_changed().unwrap_or(true);
         loop {
-            if self.fault.borrow_and_update().is_some()
-                && (unacknowledged || !*self.recovered.borrow_and_update())
             {
-                return;
+                let fact = self.state.borrow_and_update();
+                if fact.fault.is_some()
+                    && (fact.epoch != self.acknowledged || !fact.health.is_healthy())
+                {
+                    return;
+                }
             }
-            tokio::select! {
-                changed = self.fault.changed() => {
-                    if changed.is_err() { return }
-                    unacknowledged = true;
-                },
-                changed = self.recovered.changed() => if changed.is_err() { return },
+            if self.state.changed().await.is_err() {
+                return;
             }
         }
     }
     /// Resolves once a failed owner has re-proved its system installation.
     pub async fn recovered(mut self) {
         if self
-            .recovered
-            .wait_for(|recovered| *recovered)
+            .state
+            .wait_for(|fact| fact.fault.is_some() && fact.health.is_healthy())
             .await
             .is_err()
         {
@@ -362,6 +456,8 @@ pub(in crate::runtime::network) struct Attachment {
     report_receiver: Option<mpsc::Receiver<meshway_protocol::DnsAssociationReport>>,
     /// Why preparing the owner failed, while no actor runs.
     prepare_failure: Option<SystemDnsFailure>,
+    /// The fault epoch the plane acknowledged (see [`DnsHealth`]).
+    acknowledged: u64,
 }
 impl Attachment {
     pub fn new(settings: SystemDnsSettings) -> Self {
@@ -377,21 +473,27 @@ impl Attachment {
             dispatcher: None,
             exit_dns: watch::channel(None).0,
             prepare_failure: None,
+            acknowledged: 0,
         }
     }
     /// The plane reacted to the owner's current fault: it withdrew for it,
-    /// or reinstalls after its recovery. [`Health::failed`] then reports
+    /// or reinstalls after its recovery. [`DnsHealth::failed`] then reports
     /// only a later fault, or this one while it is not re-proved.
     pub fn acknowledge(&mut self) {
-        if let Some(actor) = &mut self.actor {
-            actor.fault.borrow_and_update();
+        if let Some(actor) = &self.actor {
+            self.acknowledged = actor.state.borrow().epoch;
         }
     }
     /// The checked reason of the current DNS fault, for the plane's report
     /// (`lastErrorDetail`).
     pub fn detail(&self) -> Option<String> {
         match &self.actor {
-            Some(actor) => actor.detail.borrow().as_ref().map(ToString::to_string),
+            Some(actor) => actor
+                .state
+                .borrow()
+                .detail
+                .as_ref()
+                .map(ToString::to_string),
             None => self.prepare_failure.as_ref().map(ToString::to_string),
         }
     }
@@ -442,6 +544,7 @@ impl Attachment {
             .await?;
             self.dispatcher = Some(runtime.dispatcher.clone());
             self.actor = Some(Actor::start(runtime));
+            self.acknowledged = 0;
         }
         self.actor
             .as_ref()
@@ -461,20 +564,17 @@ impl Attachment {
             actor.suspend();
         }
     }
-    /// The check the running owner's current fault failed, live.
-    pub fn detail_watch(&self) -> Option<watch::Receiver<Option<SystemDnsFailure>>> {
-        self.actor.as_ref().map(|actor| actor.detail.clone())
-    }
-    pub fn guard(&self) -> Option<watch::Receiver<Option<SystemDnsError>>> {
-        self.actor.as_ref().map(|actor| actor.fault.clone())
+    /// The running owner's state, live (Status reads its fault and detail).
+    pub fn guard(&self) -> Option<watch::Receiver<DnsFact>> {
+        self.actor.as_ref().map(|actor| actor.state.clone())
     }
     /// The running owner's health; `None` while no owner runs.
-    pub fn health(&self) -> Option<Health> {
+    pub fn health(&self) -> Option<DnsHealth> {
         self.actor
             .as_ref()
-            .map(|actor| Health::new(actor.fault.clone(), actor.recovered.clone()))
+            .map(|actor| DnsHealth::new(actor.state.clone(), self.acknowledged))
     }
-    /// See [`Health::failed`]; never while no owner runs.
+    /// See [`DnsHealth::failed`]; never while no owner runs.
     pub async fn failed(&self) {
         match self.health() {
             Some(health) => health.failed().await,

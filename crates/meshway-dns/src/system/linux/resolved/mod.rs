@@ -419,8 +419,10 @@ impl Backend {
     {
         self.verify().await?;
         let result = tokio::select! { biased;
+            // Ended mid-call proves nothing by itself (kernel ownership may
+            // have ended unavailable); the anchor's own check judges it.
             _ = self.anchor.ended() => {
-                return Err(SystemDnsFailure::new(SystemDnsError::Conflict, "anchor_ended")
+                return Err(SystemDnsFailure::new(SystemDnsError::Backend, "anchor_ended")
                     .expected("the Kernel's DNS anchor")
                     .actual(format!("anchor ended during {method}"))
                     .source("Kernel DNS anchor"));

@@ -145,6 +145,41 @@ impl SystemDnsFailure {
         self.source = Some(bounded(value.to_string()));
         self
     }
+    /// The owner's judgement of this failure: whether the check read the
+    /// system back and found it different from what this owner installed
+    /// (the "cannot recover by itself" column of the runtime reference: the
+    /// anchor deleted or changed, link settings written by someone else, an
+    /// interrupted settings change, a reservation of another owner, another
+    /// namespace). Anything else (a failed or abandoned read, resolved
+    /// restarting, a transient foreign domain route, the end of kernel
+    /// ownership that the Host re-proves) proves nothing.
+    pub fn proven(&self) -> bool {
+        self.error == SystemDnsError::Conflict
+            && match self.check {
+                "namespace" | "owner_record" | "link_settings" | "anchor_ended" => true,
+                "anchor_netlink" | "anchor_reader" | "anchor_create" => false,
+                check if check.starts_with("anchor_") => true,
+                check if check.starts_with("record_") => {
+                    !matches!(check, "record_read" | "record_write")
+                }
+                _ => false,
+            }
+    }
+    /// Whether the failure is the system's (an installation, a read or the
+    /// backend), which the owner recovers from; otherwise the netmap's plan
+    /// or the local settings were refused, and only another netmap changes
+    /// that.
+    pub fn system(&self) -> bool {
+        match self.error {
+            SystemDnsError::Settings | SystemDnsError::ExitPlan | SystemDnsError::ResolverPlan => {
+                false
+            }
+            // A backend that reports an unsupported mode names its check; an
+            // unsupported configuration has none.
+            SystemDnsError::Unsupported => self.check != "unrecorded",
+            _ => true,
+        }
+    }
 }
 /// One log line and one Status field: keep each part bounded.
 fn bounded(mut value: String) -> String {
