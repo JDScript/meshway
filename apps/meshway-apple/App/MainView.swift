@@ -1,48 +1,84 @@
 import SwiftUI
 
+enum AppPage: String, CaseIterable, Identifiable {
+    case overview, peers, exit, diagnostics, device
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: "Overview"
+        case .peers: "Peers"
+        case .exit: "Exit profiles"
+        case .diagnostics: "Diagnostics"
+        case .device: "This Mac"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .overview: "network"
+        case .peers: "desktopcomputer"
+        case .exit: "arrow.up.forward.circle"
+        case .diagnostics: "waveform.path.ecg"
+        case .device: "laptopcomputer"
+        }
+    }
+}
+
 struct MainView: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Bindable private var navigation = AppNavigation.shared
+    private var page: AppPage? {
+        get { navigation.page }
+        nonmutating set { navigation.page = newValue }
+    }
     @State private var selectedPeer: String?
     @State private var showLogout = false
-    @State private var advanced = false
+
+    private var needsEnrollment: Bool {
+        model.status?.phase == .awaitingApproval ||
+        (model.status?.identity == nil && (model.status == nil || model.status?.phase == .down))
+    }
 
     var body: some View {
-        ScrollViewReader { proxy in
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                ConnectionHeader(model: model, compact: false)
-                if model.sampleMode { SampleBanner() }
-                if let issue = model.issue { NoticeCard(title: "Action needs attention", message: issue, error: true) }
-                if let issue = model.ipcIssue { NoticeCard(title: "Node connection", message: issue, error: true) }
-                if let notice = model.notice { NoticeCard(title: "Node operation", message: notice, error: false) }
-                if model.status == nil { setup }
-                if let status = model.status {
-                    if status.phase == .awaitingApproval { ApprovalCard(model: model, status: status) }
-                    if status.identity == nil && status.phase == .down { enrollment }
-                    nodeCard(status)
-                    if let routing = model.selection { ProfilesView(model: model, selection: routing) }
-                    peerList(status).id("peers")
-                    DiagnosticsView(model: model).id("diagnostics")
-                    HStack {
-                        Button("Rotate key", systemImage: "key.horizontal") { Task { await model.identityOperation(logout: false) } }
-                            .disabled(!model.canRotateKey || model.busy || model.sampleMode)
-                        Spacer()
-                        Button("Log out of network…", role: .destructive) { showLogout = true }
-                            .disabled(!model.canLogout || model.busy || model.sampleMode)
-                    }
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "network").font(.title2).foregroundStyle(.tint)
+                    Text("Meshway").font(.title3.weight(.semibold))
+                    Spacer()
+                }.padding(20)
+                List(AppPage.allCases, selection: $navigation.page) { item in
+                    Label(item.title, systemImage: item.symbol).tag(item)
+                }.listStyle(.sidebar)
+                VStack(alignment: .leading, spacing: 8) {
+                    PhaseLabel(model: model)
+                    Text(model.status?.node?.hostname ?? "This Mac").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if model.sampleMode { SampleBanner() }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+            }.navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+        } detail: {
+            ZStack {
+                Color(nsColor: .windowBackgroundColor)
+                Group {
+                    if needsEnrollment && page != .device { EnrollmentView(model: model) }
+                    else { detail.id(page).transition(.opacity) }
+                }.animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: page)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: needsEnrollment)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { FeedbackShelf(model: model).background(.bar) }
+            .navigationTitle(needsEnrollment && page != .device ? "Meshway" : (page ?? .overview).title)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                        .disabled(model.busy || model.sampleMode)
+                        .help(unavailableHelp(model, fallback: "Read the latest Node status"))
                 }
-            }.padding(28).frame(maxWidth: 1000)
-                .frame(maxWidth: .infinity)
+            }
         }
         .task {
             #if DEBUG
-            if model.sampleMode, let section = model.previewSection { proxy.scrollTo(section, anchor: .top) }
+            if model.sampleMode, let section = model.previewSection { page = AppPage(rawValue: section) ?? .overview }
             #endif
-        }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .toolbar {
-            ToolbarItem { Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }.disabled(model.busy || model.sampleMode) }
         }
         .confirmationDialog("Permanently remove this node from its network?", isPresented: $showLogout, titleVisibility: .visible) {
             Button("Log out", role: .destructive) { Task { await model.identityOperation(logout: true) } }
@@ -55,169 +91,164 @@ struct MainView: View {
         }
     }
 
-    private var setup: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label("Set up Meshway on this Mac", systemImage: "network.badge.shield.half.filled").font(.title3.weight(.semibold))
-            Text("Meshway runs inside a macOS network extension. Approve the extension and VPN configuration when macOS asks.").foregroundStyle(.secondary)
-            HStack {
-                Text("Network Extension").foregroundStyle(.secondary)
-                Spacer()
-                Text(model.tunnel.extensionState)
-                Button("Enable extension…") { model.tunnel.activate() }.disabled(model.sampleMode)
-            }
-            Text(model.tunnel.message).font(.caption).foregroundStyle(.secondary)
-            Divider()
-            enrollment
-            HStack {
-                Text("VPN · \(model.vpnLabel)").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button(model.tunnel.hasConfiguration ? "Connect" : "Create VPN & connect…") { Task { await model.connect(true) } }
-                    .buttonStyle(.borderedProminent).disabled(model.busy || model.server.isEmpty || model.sampleMode)
-            }
-        }.card()
-    }
-    private var enrollment: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Server").font(.headline)
-            TextField("https://mesh.example", text: $model.server).textFieldStyle(.roundedBorder)
-                .disabled(model.status != nil || model.tunnel.hasConfiguration)
-                .accessibilityLabel("Server URL")
-            Text("Your browser will open to approve this Mac for your network.").font(.callout).foregroundStyle(.secondary)
-            DisclosureGroup("Advanced enrollment", isExpanded: $advanced) {
-                SecureField("Enrollment key (optional)", text: $model.enrollmentKey).textFieldStyle(.roundedBorder).padding(.top, 8)
-                Text("A one-use enrollment key supplied by your administrator.").font(.caption).foregroundStyle(.secondary)
-            }
+    @ViewBuilder private var detail: some View {
+        switch page ?? .overview {
+        case .overview: overview
+        case .peers: peers
+        case .exit:
+            if let selection = model.selection { ProfilesView(model: model, selection: selection) }
+            else { ContentUnavailableView("No exit profiles", systemImage: "arrow.up.forward.circle", description: Text("Profiles appear when a netmap is installed.")) }
+        case .diagnostics: DiagnosticsView(model: model)
+        case .device: device
         }
     }
-    private func nodeCard(_ status: ClientStatus) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("This Mac", systemImage: "laptopcomputer").font(.headline)
-            if let node = status.node {
-                Text(node.hostname).font(.title3.weight(.semibold))
-                AddressRow(title: "Mesh IPv4", value: node.ipv4)
-                AddressRow(title: "Mesh IPv6", value: node.ipv6)
-            } else { Text(status.identity == nil ? "Not enrolled" : "No currently installed node addresses").foregroundStyle(.secondary) }
-            Divider()
-            LabeledContent("Server", value: status.server)
-            HStack { Text("Data plane"); Spacer(); Text(human(status.dataPlane)); RelativeTime(date: status.observedAt) }
-            HStack { Text("Sync"); Spacer(); Text(human(status.sync)); if let at = status.lastSyncAt { RelativeTime(date: at) } }
-            if let syncError = status.syncError { LabeledContent("Sync issue", value: human(syncError)).foregroundStyle(.orange) }
-            if let netmap = status.netmap {
-                HStack { Text("Netmap lease"); Spacer(); RelativeTime(date: netmap.expiresAt) }
-                LabeledContent("Netmap", value: "Revision \(netmap.reference.revision) · serial \(netmap.reference.serial)")
-                if status.applied?.digest != netmap.reference.digest || status.applied?.serial != netmap.reference.serial {
-                    Label("This netmap is not applied", systemImage: "exclamationmark.circle").foregroundStyle(.orange)
-                }
-                if !netmap.missingArtifacts.isEmpty { Text("\(netmap.missingArtifacts.count) rule-set artifacts unavailable").foregroundStyle(.orange) }
-            } else { LabeledContent("Netmap lease", value: "No live lease") }
-            if let identity = status.identity { LabeledContent("Key generation", value: String(identity.keyGeneration)) }
-            if let error = status.lastError {
-                NoticeCard(title: "Node · \(human(error))", message: status.lastErrorDetail, error: true)
+
+    private var overview: some View {
+        Form {
+            Section { ConnectionHeader(model: model, compact: false).padding(.vertical, 8) }
+            Section("Network") {
+                LabeledContent("Server", value: model.status?.server ?? model.server)
+                AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
+                AddressRow(title: "Mesh IPv6", value: model.status?.node?.ipv6, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
+                LabeledContent("macOS VPN", value: model.vpnLabel)
             }
-            if let error = status.networkError { NoticeCard(title: "Network · \(human(error.problem))", message: error.detail, error: true) }
-            if let retry = status.retryAt { HStack { Text("Next retry"); Spacer(); RelativeTime(date: retry) } }
-            if let at = status.lastNetworkChange { HStack { Text("Network changed"); Spacer(); RelativeTime(date: at) } }
-        }.font(.callout).card()
+            Section("Connection health") {
+                LabeledContent("Data plane", value: model.status.map { human($0.dataPlane) } ?? "Unavailable")
+                LabeledContent("Control sync", value: model.status.map { human($0.sync) } ?? "Unavailable")
+                LabeledContent("Last sync") { OptionalTime(date: model.status?.lastSyncAt) }
+                LabeledContent("Lease expires") { OptionalTime(date: model.status?.netmap?.expiresAt) }
+                LabeledContent("Netmap", value: model.status?.netmap == nil ? "Not installed" : (model.netmapApplied ? "Applied" : "Waiting to apply"))
+            }
+            Section {
+                Button { page = .exit } label: {
+                    HStack { Label("Exit profile", systemImage: "arrow.up.forward.circle"); Spacer(); Text(model.selection.map { $0.appliedProfile + (model.netmapApplied ? "" : " · pending") } ?? "Unavailable").foregroundStyle(.secondary); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
+                }.buttonStyle(.plain)
+                Button { page = .peers } label: {
+                    HStack { Label("Peers", systemImage: "desktopcomputer"); Spacer(); Text(model.status.map { String($0.peers.count) } ?? "Unavailable").foregroundStyle(.secondary).contentTransition(.numericText()); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
+                }.buttonStyle(.plain)
+            }
+        }.formStyle(.grouped).lineLimit(1)
     }
-    private func peerList(_ status: ClientStatus) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack { Text("Peers").font(.headline); Text("\(status.peers.count)").foregroundStyle(.secondary); Spacer() }
-            HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Search name or Mesh address", text: $model.search).textFieldStyle(.plain) }.padding(10).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
-            if model.peers.isEmpty {
-                ContentUnavailableView(model.search.isEmpty ? (status.node == nil ? "Peers unavailable" : "No visible peers") : "No matching peers", systemImage: "network", description: Text(model.search.isEmpty ? (status.node == nil ? "No netmap is currently installed." : "The installed netmap contains no other nodes.") : "Try another name or address."))
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(model.peers, id: \.nodeId) { peer in
-                        Button { selectedPeer = peer.nodeId } label: { PeerRow(model: model, peer: peer) }.buttonStyle(.plain)
-                            .contextMenu { PeerCopyActions(peer: peer) }
-                        if peer.nodeId != model.peers.last?.nodeId { Divider().padding(.leading, 46) }
+
+    private var peers: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search name, address or Node ID", text: $model.search).textFieldStyle(.plain)
+            }.padding(10).background(.background, in: RoundedRectangle(cornerRadius: 8)).padding(20)
+            List {
+                ForEach(model.peers, id: \.nodeId) { peer in
+                    Button { selectedPeer = peer.nodeId } label: { PeerRow(model: model, peer: peer) }
+                        .buttonStyle(.plain).contextMenu { PeerCopyActions(peer: peer) }
+                        .listRowSeparator(.hidden)
+                }
+            }.listStyle(.inset).animation(reduceMotion ? nil : .smooth(duration: 0.22), value: model.peers.map(\.nodeId))
+                .overlay {
+                    if model.peers.isEmpty {
+                        ContentUnavailableView(model.search.isEmpty ? "No visible peers" : "No matching peers", systemImage: "desktopcomputer", description: Text(model.search.isEmpty ? "Peers from the installed netmap appear here." : "Try another name or address."))
                     }
                 }
+        }
+    }
+
+    private var device: some View {
+        Form {
+            Section("Application icon") { IconPicker() }
+            Section("This Mac") {
+                LabeledContent("Name", value: model.status?.node?.hostname ?? "Not installed")
+                AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
+                AddressRow(title: "Mesh IPv6", value: model.status?.node?.ipv6, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
+                LabeledContent("Key generation", value: model.status?.identity.map { String($0.keyGeneration) } ?? "No identity")
+                LabeledContent("Data plane observed") { OptionalTime(date: model.status?.observedAt) }
+                LabeledContent("Network changed") { OptionalTime(date: model.status?.lastNetworkChange) }
             }
-        }.card()
+            Section("System integration") {
+                LabeledContent("Network Extension", value: model.sampleMode ? "Not inspected in preview" : model.tunnel.extensionState)
+                LabeledContent("macOS VPN", value: model.vpnLabel)
+                Button("Enable extension…") { model.tunnel.activate() }.disabled(model.sampleMode).help(unavailableHelp(model, fallback: "Request macOS Network Extension activation"))
+                Text(model.tunnel.message).font(.caption).foregroundStyle(.secondary).lineLimit(2).frame(height: 32, alignment: .topLeading)
+            }
+            Section("Identity") {
+                Button("Rotate key", systemImage: "key.horizontal") { Task { await model.identityOperation(logout: false) } }
+                    .disabled(!model.canRotateKey || model.busy || model.sampleMode)
+                    .help(unavailableHelp(model, fallback: model.canRotateKey ? "Rotate this node's key" : "Requires an enrolled identity that is not leaving"))
+                Button("Log out of network…", role: .destructive) { showLogout = true }
+                    .disabled(!model.canLogout || model.busy || model.sampleMode)
+                    .help(unavailableHelp(model, fallback: model.canLogout ? "Permanently remove this node" : "No enrolled identity"))
+            }
+            Section("Installed configuration") {
+                LabeledContent("Netmap", value: model.status?.netmap.map { "Revision \($0.reference.revision) · serial \($0.reference.serial)" } ?? "No live lease")
+                LabeledContent("Missing rule sets", value: model.status?.netmap.map { String($0.missingArtifacts.count) } ?? "Not applicable")
+                LabeledContent("Sync issue", value: model.status?.syncError.map(human) ?? "None reported")
+                LabeledContent("Next retry") { OptionalTime(date: model.status?.retryAt) }
+            }
+        }.formStyle(.grouped).lineLimit(1)
     }
 }
 
-struct ConnectionHeader: View {
-    let model: AppModel
-    var compact: Bool
+struct EnrollmentView: View {
+    @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var advanced = false
+    private var approval: Bool { model.status?.phase == .awaitingApproval }
+    private var disabled: Bool { model.busy || model.server.isEmpty || model.sampleMode }
+
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "network").font(compact ? .title2 : .largeTitle).foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(compact ? "Meshway" : model.title).font(compact ? .headline : .title2.weight(.semibold))
-                HStack(spacing: 6) {
-                    Circle().fill(model.status?.phase == .running ? Color.green : Color.secondary).frame(width: 6, height: 6)
-                    Text(model.phase).font(.callout)
-                }
-                Text("macOS VPN · \(model.vpnLabel)").font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 22) {
+            Image(systemName: approval ? "person.badge.key" : "network")
+                .font(.system(size: 40, weight: .light)).foregroundStyle(.tint)
+                .frame(width: 88, height: 88)
+                .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .symbolEffect(.pulse, options: .repeating, isActive: approval && !reduceMotion)
+            VStack(spacing: 8) {
+                Text(approval ? "Approve this Mac" : "Your network, on this Mac").font(.title.weight(.semibold))
+                Text(approval ? "Finish approval in your browser. Meshway will continue automatically." : "Connect to your devices through your Meshway network.")
+                    .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(height: 40)
             }
-            Spacer()
-            if model.busy { ProgressView().controlSize(.small) }
-            Toggle("Connect", isOn: Binding(get: { model.status?.desiredUp ?? false }, set: { enabled in Task { await model.connect(enabled) } }))
-                .labelsHidden().toggleStyle(.switch)
-                .disabled(model.busy || model.sampleMode || (model.status == nil && model.server.isEmpty))
-                .help("Change the Node's desired connection state")
-        }
+            ZStack(alignment: .top) {
+                if approval, let status = model.status {
+                    VStack(spacing: 20) {
+                        HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Waiting for approval").foregroundStyle(.secondary) }.frame(height: 32)
+                        if let link = status.enrollmentUrl, let url = model.approvalURL(link) {
+                            Button("Open approval page", systemImage: "arrow.up.right.square") { NSWorkspace.shared.open(url) }
+                                .buttonStyle(.glassProminent).controlSize(.large).disabled(model.sampleMode)
+                                .help(unavailableHelp(model, fallback: "Reopen the browser approval page"))
+                        } else {
+                            Text("No approval URL was provided. Ask the Server operator to configure its Console origin.").font(.callout).foregroundStyle(.secondary)
+                        }
+                        Button("Cancel connection") { Task { await model.connect(false) } }.disabled(model.busy || model.sampleMode)
+                            .help(unavailableHelp(model, fallback: "Request Node Down"))
+                    }.transition(.opacity)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Server URL").font(.callout.weight(.medium))
+                        TextField("https://mesh.example", text: $model.server).textFieldStyle(.roundedBorder).controlSize(.large)
+                            .accessibilityLabel("Server URL")
+                            .disabled(model.tunnel.hasConfiguration || model.status != nil)
+                            .onSubmit { if !disabled { Task { await model.connect(true) } } }
+                            .help("Use the Server origin supplied by your administrator")
+                        DisclosureGroup("Advanced enrollment", isExpanded: $advanced) {
+                            SecureField("Enrollment key (optional)", text: $model.enrollmentKey).textFieldStyle(.roundedBorder).padding(.top, 8)
+                        }.font(.callout).frame(height: 62, alignment: .top)
+                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: advanced)
+                        Button { Task { await model.connect(true) } } label: {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small).opacity(model.busy ? 1 : 0).frame(width: 16)
+                                Text("Connect to Meshway")
+                                Color.clear.frame(width: 16, height: 16)
+                            }.frame(maxWidth: .infinity)
+                        }.buttonStyle(.glassProminent).controlSize(.large).disabled(disabled)
+                            .help(unavailableHelp(model, fallback: model.server.isEmpty ? "Enter your Server URL first" : "Connect and open browser approval"))
+                        Button("Enable Network Extension…") { model.tunnel.activate() }.buttonStyle(.link).disabled(model.sampleMode)
+                            .help(unavailableHelp(model, fallback: "Approve Meshway in System Settings when prompted"))
+                        Text(model.sampleMode ? "macOS will ask you to approve the extension and VPN." : "\(model.tunnel.extensionState) · \(model.tunnel.message)")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2).frame(height: 30, alignment: .topLeading)
+                            .help(model.tunnel.message)
+                    }.transition(.opacity)
+                }
+            }.frame(width: 340, height: 252, alignment: .top)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: approval)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(24)
     }
 }
-struct ApprovalCard: View {
-    let model: AppModel
-    let status: ClientStatus
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Approve this Mac in your browser", systemImage: "person.badge.key").font(.headline)
-            Text("Waiting for approval. Meshway will continue automatically after your administrator approves this request.").foregroundStyle(.secondary)
-            if let link = status.enrollmentUrl, let url = model.approvalURL(link) {
-                Button("Open approval page", systemImage: "arrow.up.right.square") { NSWorkspace.shared.open(url) }.disabled(model.sampleMode)
-            } else { Text("No approval URL was provided. Ask the Server operator to configure its Console origin.").foregroundStyle(.orange) }
-        }.card()
-    }
-}
-struct SampleBanner: View {
-    var body: some View { Label("SAMPLE DATA · Debug preview · actions disabled", systemImage: "testtube.2").font(.caption.weight(.semibold)).foregroundStyle(.orange).help("Preview only. No Node or VPN connection is opened, and system-changing actions are disabled.") }
-}
-struct NoticeCard: View {
-    let title: String
-    let message: String?
-    let error: Bool
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: error ? "exclamationmark.circle" : "info.circle").font(.callout.weight(.semibold))
-            if let message { Text(message).font(.callout).textSelection(.enabled) }
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
-            .foregroundStyle(error ? Color.orange : Color.secondary)
-            .background((error ? Color.orange : Color.accentColor).opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-struct RelativeTime: View {
-    let date: Date
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            Text(date, format: .relative(presentation: .named)).foregroundStyle(.secondary)
-                .help(date.formatted(date: .complete, time: .complete))
-        }
-    }
-}
-struct AddressRow: View {
-    let title: String
-    let value: String?
-    var body: some View {
-        HStack {
-            Text(title).foregroundStyle(.secondary)
-            Spacer()
-            if let value {
-                Text(value).font(.callout.monospaced()).textSelection(.enabled)
-                Button { copy(value) } label: { Image(systemName: "doc.on.doc") }.buttonStyle(.borderless).help("Copy \(title)")
-            } else { Text("Not assigned").foregroundStyle(.tertiary) }
-        }
-    }
-}
-extension View {
-    func card() -> some View { padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14)).overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.06))) }
-}
-func copy(_ value: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value, forType: .string) }
-func human<T>(_ value: T) -> String {
-    String(describing: value).replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression).capitalized
-}
-func milliseconds(_ value: UInt64) -> String { String(format: "%.2f ms", Double(value) / 1000) }

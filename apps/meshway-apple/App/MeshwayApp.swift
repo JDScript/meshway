@@ -14,14 +14,16 @@ struct MeshwayEntry {
 }
 
 struct MeshwayApp: App {
+    @NSApplicationDelegateAdaptor(MeshwayAppDelegate.self) private var delegate
     @State private var model = AppModel()
     var body: some Scene {
         Window("Meshway", id: "main") {
             MainView(model: model)
+                .environment(IconPreferences.shared)
                 .frame(minWidth: 720, minHeight: 620)
                 .task { model.startPolling() }
         }
-        .defaultSize(width: 860, height: 740)
+        .defaultSize(width: 900, height: 720)
         .commands {
             #if DEBUG
             CommandMenu("Debug") {
@@ -33,5 +35,11 @@ struct MeshwayApp: App {
         MenuBarExtra("Meshway", systemImage: "network") {
             MenuPanel(model: model).task { model.startPolling() }
         }.menuBarExtraStyle(.window)
+    }
+}
+
+final class MeshwayAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        IconPreferences.shared.apply()
     }
 }
