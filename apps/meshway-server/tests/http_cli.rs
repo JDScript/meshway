@@ -488,6 +488,21 @@ async fn migrate_and_persistent_storage_blocks_have_their_own_exit_status() {
         String::from_utf8(output.stdout).unwrap(),
         "Database is already at this build's schema; nothing migrated.\n"
     );
+    let backup = temp.path().canonicalize().unwrap().join("backup");
+    let output = maintenance(&["backup", "--output", backup.to_str().unwrap()]);
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with("Backed up the database (schema 9, "),
+    );
+    assert!(backup.join("master-key").exists());
+    let output = maintenance(&["backup", "--output", backup.to_str().unwrap()]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an existing output is no storage block"
+    );
     let set_version = |version: i64| {
         let db = rusqlite::Connection::open(path.join("controller.sqlite")).unwrap();
         db.pragma_update(None, "user_version", version).unwrap();
@@ -519,9 +534,119 @@ async fn migrate_and_persistent_storage_blocks_have_their_own_exit_status() {
         "Server storage startup failed: database has an earlier schema version; run \
          `meshway-server migrate` with the Server stopped first.",
     );
+    let refused = "Server storage startup failed: database has an earlier schema version; run \
+                   `meshway-server migrate` with the Server stopped first.";
+    failed(
+        maintenance(&[
+            "backup",
+            "--output",
+            temp.path().join("old").to_str().unwrap(),
+        ]),
+        refused,
+    );
+    let offline = |binary: &str, arguments: &[&str]| {
+        Command::new(binary)
+            .env("MESHWAY_LOG_FORMAT", "json")
+            .env("RUST_LOG", "info")
+            .arg("--data-dir")
+            .arg(&path)
+            .args(arguments)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    failed(
+        offline(
+            env!("CARGO_BIN_EXE_reset-password"),
+            &[
+                "--email",
+                "user@example.test",
+                "--console-origin",
+                "https://console.example.test",
+            ],
+        ),
+        refused,
+    );
+    failed(
+        offline(env!("CARGO_BIN_EXE_ip-datasets"), &["status"]),
+        refused,
+    );
     failed(
         maintenance(&["migrate"]),
         "Server storage startup failed: database structure does not match the current schema: \
          unexpected table schema_migrations.",
     );
+}
+
+/// An upgrade compares a data directory's schema with this range before it
+/// stops the running Server.
+#[test]
+fn version_names_the_build_and_its_schema_range() {
+    let output = Command::new(env!("CARGO_BIN_EXE_meshway-server"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        format!("meshway-server {}", meshway_build::identity())
+    );
+    assert_eq!(
+        lines[1],
+        format!(
+            "schema: {} (migrates from {})",
+            meshway_server::SCHEMA_VERSION,
+            meshway_server::MIN_MIGRATABLE_SCHEMA
+        )
+    );
+}
+
+/// `Type=notify`: readiness once the storage is open and the listener bound,
+/// and the stop as it begins.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_service_manager_hears_readiness_and_the_stop() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let socket = root.join("notify");
+    let receiver = std::os::unix::net::UnixDatagram::bind(&socket).unwrap();
+    receiver
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    let mut process = Process(
+        command(&root.join("data"))
+            .env("NOTIFY_SOCKET", &socket)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    let address = line
+        .trim()
+        .strip_prefix("Listening on ")
+        .unwrap()
+        .to_owned();
+    let mut buffer = [0; 256];
+    let length = receiver.recv(&mut buffer).unwrap();
+    assert_eq!(
+        std::str::from_utf8(&buffer[..length]).unwrap(),
+        format!("READY=1\nSTATUS=Serving on {address}")
+    );
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &process.0.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let length = receiver.recv(&mut buffer).unwrap();
+    assert_eq!(&buffer[..length], b"STOPPING=1");
+    let mut rest = String::new();
+    stdout.read_to_string(&mut rest).unwrap();
+    assert!(process.0.wait().unwrap().success());
 }

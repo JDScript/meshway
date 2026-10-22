@@ -127,7 +127,17 @@ pub enum AppError {
     MigrationRequired,
     #[error("not enough free space in the data directory to migrate the database")]
     InsufficientSpace,
+    /// The backup destination, not the data directory: it exists already, its
+    /// parent is not private to this user, or it cannot be written.
+    #[error(
+        "backup output must be a new directory in a private parent directory, with room for the database"
+    )]
+    BackupOutput,
 }
+
+/// `EX_CONFIG`: the exit status of a persistent storage block
+/// ([`AppError::is_persistent`]); a service manager does not restart into it.
+pub const PERSISTENT_STORAGE_BLOCK: u8 = 78;
 
 impl AppError {
     /// A proven inconsistency or unsupported storage that a restart does not
@@ -146,6 +156,28 @@ impl AppError {
                 | Self::MasterKey
                 | Self::MigrationRequired
         )
+    }
+
+    /// The process exit status of a command that stops on this error:
+    /// [`PERSISTENT_STORAGE_BLOCK`] when persistent, else 1. The Server and
+    /// every offline command share it.
+    pub fn exit_code(&self) -> std::process::ExitCode {
+        if self.is_persistent() {
+            std::process::ExitCode::from(PERSISTENT_STORAGE_BLOCK)
+        } else {
+            std::process::ExitCode::FAILURE
+        }
+    }
+
+    /// Operator-facing sentence for a failed storage opening. A safe
+    /// category with, at most, schema object names.
+    pub fn open_failure(&self) -> String {
+        match self {
+            Self::AlreadyRunning => {
+                "Cannot obtain private Server storage ownership. Stop the Server first.".to_owned()
+            }
+            error => format!("Server storage startup failed: {error}."),
+        }
     }
 }
 
