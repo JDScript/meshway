@@ -10,6 +10,8 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 struct Resource {
+    /// Its original tuple, for diagnostics.
+    tuple: exit::ExitTuple,
     revoked: CancellationToken,
     confirmed: bool,
     /// A confirmation of this flow's conntrack entry is outstanding.
@@ -338,7 +340,7 @@ pub(super) async fn run(
                 },
             }
         };
-        let mut failure = None;
+        let mut failure: Option<(FlowIncarnation, &str)> = None;
         let work = match event {
             Event::Work(work) => Some(work),
             Event::Confirmed(Ok((flow, original, confirmed))) => {
@@ -347,7 +349,7 @@ pub(super) async fn run(
                     resource.confirmed |= confirmed;
                     if !confirmed && original.ensure_current().is_ok() {
                         resource.revoked.cancel();
-                        failure = Some(flow);
+                        failure = Some((flow, "unconfirmed"));
                     }
                     if !confirmed {
                         lanes.set(flow, false);
@@ -385,6 +387,7 @@ pub(super) async fn run(
                                 resources.insert(
                                     item.flow,
                                     Resource {
+                                        tuple: item.tuple,
                                         revoked,
                                         confirmed: false,
                                         confirming: false,
@@ -411,7 +414,7 @@ pub(super) async fn run(
                         if ack.complete(renewed).is_err() {
                             revoked.cancel();
                             lanes.set(flow, false);
-                            failure = Some(flow);
+                            failure = Some((flow, "renewal"));
                         }
                     }
                 }
@@ -528,7 +531,7 @@ pub(super) async fn run(
                             if ack.complete(false).is_err() {
                                 revoked.cancel();
                                 lanes.set(flow, false);
-                                failure = Some(flow);
+                                failure = Some((flow, "renewal"));
                             }
                         } else {
                             let deadline = meshway_underlay::ExitCutoff {
@@ -633,18 +636,25 @@ pub(super) async fn run(
                             )
                             && original.ensure_current().is_ok()
                         {
+                            tracing::debug!(?flow, ?error, "Exit packet write ended its flow");
                             resource.revoked.cancel();
                             lanes.set(flow, false);
-                            failure = Some(flow);
+                            failure = Some((flow, "send"));
                         }
                     }
                 }
             }
         }
-        if let Some(flow) = failure {
-            tracing::debug!(?flow, "Exit flow failed by its own projection");
+        if let Some((flow, cause)) = failure {
+            let tuple = resources.get(&flow).map(|resource| &resource.tuple);
+            tracing::debug!(
+                ?flow,
+                cause,
+                ?tuple,
+                "Exit flow failed by its own projection"
+            );
         }
-        if let Some(flow) = failure
+        if let Some((flow, _)) = failure
             && failures.try_send(flow).is_err()
         {
             failed = true;

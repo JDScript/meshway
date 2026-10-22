@@ -103,6 +103,15 @@ impl FirstPackets {
 }
 
 impl SecureNode {
+    /// First packets waiting for a circuit or an adjacency (diagnostics).
+    pub fn first_packets_waiting(&self) -> usize {
+        self.first
+            .waiting
+            .iter()
+            .map(|waiting| waiting.packets.len())
+            .sum()
+    }
+
     /// Queue a first packet behind a pending or new handshake on the first
     /// path whose next hop has an admitted carrier, or behind adjacency interest.
     pub(super) fn wait(

@@ -21,6 +21,10 @@ const MAX_ATTEMPTS: usize = 64;
 const FIRST_PACKET_POLL: Duration = Duration::from_secs(10);
 const RETENTION: Duration = Duration::from_secs(20);
 const MAX_SENDS: usize = 32;
+/// Each direction's share of one packet turn.
+const SHARE: Duration = Duration::from_micros(200);
+/// A packet turn this long is logged (diagnostics).
+const SLOW_TURN: Duration = Duration::from_millis(100);
 
 struct Queued {
     packet: Packet,
@@ -53,6 +57,12 @@ pub(super) struct Packets {
     traced_circuits: BTreeMap<[u8; 32], Instant>,
     pub dropped: u64,
     carrier_wait_logged: Option<Instant>,
+    held_logged: Option<Instant>,
+    /// The last turn left ready packets for want of time, not of capacity:
+    /// the next turn is due at once.
+    deferred: bool,
+    /// Time this turn spent awaiting carrier sends and TUN writes.
+    awaited: Duration,
     scan_remaining: usize,
     sends:
         meshway_dataplane::carrier::SendPending<(Result<(), meshway_connectivity::Error>, usize)>,
@@ -159,9 +169,49 @@ impl Packets {
         tracing::debug!(target: TARGET, %cid, ?target, %path_json, observed_at_ms,
             "Mesh circuit packet ready");
     }
+    /// At most once a second while local packets wait after a turn (in this
+    /// queue, as first packets inside SecureNode, or unread in the TUN):
+    /// where they wait.
+    fn trace_held(
+        &mut self,
+        secure: &SecureNode,
+        pool: &secure::pipeline::Pool,
+        incoming_done: usize,
+        local_done: usize,
+    ) {
+        let first = secure.first_packets_waiting();
+        let can_read = self.can_read(pool);
+        if (self.local.is_empty() && first == 0 && can_read)
+            || self
+                .held_logged
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.held_logged = Some(Instant::now());
+        let oldest_local_ms = self.local.front().map(|item| {
+            u64::try_from((item.deadline - RETENTION).elapsed().as_millis()).unwrap_or(u64::MAX)
+        });
+        tracing::debug!(
+            local = self.local.len(),
+            oldest_local_ms,
+            first_waiting = first,
+            can_read,
+            deferred = self.deferred,
+            scan_remaining = self.scan_remaining,
+            incoming = self.incoming.len(),
+            control = self.control.len(),
+            local_done,
+            incoming_done,
+            pool_available = pool.available(),
+            sends = self.sends.occupancy().0,
+            deliveries = self.deliveries.occupancy().0,
+            "Local packets held after a turn"
+        );
+    }
     pub fn wake_at(&self) -> Option<Instant> {
         let now = Instant::now();
-        if self.scan_remaining != 0 || !self.closes.is_empty() {
+        if self.scan_remaining != 0 || self.deferred || !self.closes.is_empty() {
             return Some(now);
         }
         let first = self
@@ -317,9 +367,12 @@ impl Packets {
     ) {
         let local = desired.netmap().node_id;
         let now = Instant::now();
+        self.deferred = false;
         let Some(carriers) = carriers else {
             return;
         };
+        let turn = std::time::Instant::now();
+        self.awaited = Duration::ZERO;
         // `meshway ping` echoes outside the Mesh enter as local packets.
         for packet in diagnostics
             .externals
@@ -388,7 +441,7 @@ impl Packets {
         let local_count = self.local.len().min(per_direction);
         let mut incoming_done = 0;
         let mut local_done = 0;
-        let quantum = std::time::Instant::now();
+        let incoming_share = Share::new(SHARE);
         let mut outgoing = Vec::new();
         let mut ready = Vec::new();
         for _ in 0..incoming_count {
@@ -399,14 +452,17 @@ impl Packets {
             else {
                 break;
             };
-            incoming_done += 1;
-            if secure::is_data_frame(&item.bytes)
-                && (!pool.can_submit_capacity(item.bytes.capacity())
-                    || quantum.elapsed() >= Duration::from_micros(200))
-            {
-                self.incoming.push_front(item);
-                break;
+            if secure::is_data_frame(&item.bytes) {
+                // Capacity returns with the pool's or an output's completion;
+                // time only with the next turn.
+                let spent = incoming_share.spent();
+                if spent || !pool.can_submit_capacity(item.bytes.capacity()) {
+                    self.deferred |= spent;
+                    self.incoming.push_front(item);
+                    break;
+                }
             }
+            incoming_done += 1;
             // Queues are cleared by every apply; only their own bound remains.
             if item.deadline <= Instant::now() {
                 self.drop_packet("cipher_deadline");
@@ -551,10 +607,10 @@ impl Packets {
             && let Some(tun) = host.tun()
         {
             let count = deliveries.len();
-            if meshway_dataplane::carrier::deliver_batch(tun, deliveries)
-                .await
-                .is_err()
-            {
+            let started = std::time::Instant::now();
+            let delivered = meshway_dataplane::carrier::deliver_batch(tun, deliveries).await;
+            self.awaited += started.elapsed();
+            if delivered.is_err() {
                 for _ in 0..count {
                     self.drop_packet("tun_delivery");
                 }
@@ -594,6 +650,9 @@ impl Packets {
                     .map_or(info.expires_at.into(), |at| at.min(info.expires_at).into());
             }
         }
+        // Local packets have their own share, never what the incoming half
+        // (with its sends and TUN writes) left over.
+        let local_share = Share::new(SHARE);
         for _ in 0..local_count {
             if self.local.front().is_some_and(|item| {
                 !pool.can_submit_capacity(
@@ -601,8 +660,11 @@ impl Packets {
                         + meshway_dataplane::DEFAULT_HEADROOM
                         + meshway_dataplane::DEFAULT_TAILROOM,
                 )
-            }) || quantum.elapsed() >= Duration::from_micros(200)
-            {
+            }) {
+                break;
+            }
+            if local_share.spent() {
+                self.deferred = true;
                 break;
             }
             let Some(item) = self.local.pop_front() else {
@@ -680,10 +742,10 @@ impl Packets {
             && let Some(tun) = host.tun()
         {
             let count = errors.len();
-            if meshway_dataplane::carrier::deliver_batch(tun, errors)
-                .await
-                .is_err()
-            {
+            let started = std::time::Instant::now();
+            let delivered = meshway_dataplane::carrier::deliver_batch(tun, errors).await;
+            self.awaited += started.elapsed();
+            if delivered.is_err() {
                 for _ in 0..count {
                     self.drop_packet("too_big_delivery");
                 }
@@ -691,6 +753,16 @@ impl Packets {
         }
         if let Some(exit) = exit {
             exit.drive(secure);
+        }
+        self.trace_held(secure, pool, incoming_done, local_done);
+        if turn.elapsed() >= SLOW_TURN {
+            tracing::debug!(
+                turn_ms = u64::try_from(turn.elapsed().as_millis()).unwrap_or(u64::MAX),
+                awaited_ms = u64::try_from(self.awaited.as_millis()).unwrap_or(u64::MAX),
+                incoming_done,
+                local_done,
+                "Packet turn was slow"
+            );
         }
         self.scan_remaining = self
             .scan_remaining
@@ -724,12 +796,21 @@ impl Packets {
                     .map_or(Instant::now() + Duration::from_secs(10), Into::into),
             });
         }
-        if manager.send(init).await.is_err() {
+        let started = std::time::Instant::now();
+        let sent = manager.send(init).await;
+        self.awaited += started.elapsed();
+        if sent.is_err() {
             self.drop_packet("handshake_send");
         }
     }
 
     async fn flush_sends(&mut self, manager: &Manager, outgoing: &mut Vec<secure::PendingFrame>) {
+        let started = std::time::Instant::now();
+        self.flush_frames(manager, outgoing).await;
+        self.awaited += started.elapsed();
+    }
+
+    async fn flush_frames(&mut self, manager: &Manager, outgoing: &mut Vec<secure::PendingFrame>) {
         let mut data = Vec::new();
         for frame in outgoing.drain(..) {
             if frame.is_data() {
@@ -813,5 +894,49 @@ impl Packets {
             self.deliveries
                 .push(delivery_credits, deliveries, Delivered { count });
         }
+    }
+}
+
+/// One direction's share of a packet turn, from when that direction starts.
+struct Share {
+    started: std::time::Instant,
+    length: Duration,
+}
+
+impl Share {
+    fn new(length: Duration) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            length,
+        }
+    }
+    fn spent(&self) -> bool {
+        self.started.elapsed() >= self.length
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Packets, Share};
+    use std::time::Duration;
+
+    #[test]
+    fn a_turn_left_short_of_time_is_due_again_at_once() {
+        let mut packets = Packets::default();
+        assert_eq!(packets.wake_at(), None);
+        packets.deferred = true;
+        let due = packets.wake_at().expect("due");
+        assert!(due <= tokio::time::Instant::now());
+    }
+
+    #[test]
+    fn each_direction_has_its_own_share_of_a_turn() {
+        // The incoming half spent its share (with its sends and TUN writes);
+        // the local half starts its own.
+        let incoming = Share::new(Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(incoming.spent());
+        let local = Share::new(Duration::from_secs(60));
+        assert!(!local.spent());
     }
 }

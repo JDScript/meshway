@@ -12,6 +12,13 @@ R4 `roam/relay` 空窗新流无回复（`r4/handoff-flows`）：产品代码、w
 
 验证：判别（产品为 `f9c564ff`）——每个流改用 5 秒前已回复流的源端口时 2 行 4 格空窗内 11 个流全部无回复、其余门槛通过（`20261022T141006Z-778cacdc`、`20261022T141011Z-361357c8`）；只记录内核端口的基线 12 行 97 个空窗流无复用、全部经 R；修复后 `roam/relay` 单行 12 次（并行 4）90 个空窗流全部 1 秒内经 R、0 次 `newFlowsThroughR` 失败；Planck 25 行矩阵 `20261022T145506Z-d176310c`（`d2cb2f72`，并行 4）全部通过；证据 `.meshway/validation/r4/`。
 
+出口压力停顿（X17，`x17/exit-stress`）：wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
+
+- 修复（不变量：一个方向的包压力不饿死另一个方向，有就绪工作的事件循环不睡到无关的唤醒；owner：包调度 `runtime::network::packets`）：入向与本机包各有一份从该方向开始计时的 200 µs 配额，本机方向不再只拿入向（含其发送与 TUN 写）剩下的时间；一轮因时间（而非容量）留下就绪包时下一轮立即进行，因时间推迟的入向帧不计为已扫描。此前刚结束的出口流的迟到帧在 A 被逐个拒绝、每轮吃完配额，本机包每轮 0 个，本机＋入向越过读取上限后 TUN 与载体数据停读，worker 睡到 1 秒节拍：`exit/off` 第 16 阶段新出口流 0.9–8 秒无回复（15 轮中 4 次，`oldest_local_ms` 最大 7,984），严重时压力步 iperf3 超时；修复后 12 轮首个 echo 56–129 ms、`oldest_local_ms` 最大 69。见[已修复问题索引](/v2/node/validation#x17-starvation)。
+- 诊断：`Local packets held after a turn`（每秒至多一次：本机队列、最老包等待、SecureNode 首包、入向、可读、池与输出占用、是否推迟）、`Packet turn was slow`／`Network worker turn was slow`／`Network worker woke late`（≥ 100 ms）；出口 driver 结束一条流时记录 `cause`（`unconfirmed`／`renewal`／`send`）与原始元组，写失败另记错误。`exit/off` 第 16 阶段全程抓 E 出口 TUN 与 A Mesh TUN（`-s 128`、每文件 ≤ 600,000 包）并每秒采样两端计数、Status、conntrack、`Exit queue full` 与 iperf3 socket，见[出口场景](/v2/node/validation#exit-scenario)第 16 阶段。
+- 测试：`exit/off` 组件 `recovery` 一次 `ConfirmFailed` 是测试自身的错误——重装后的 echo 复用了序号 4，当槽位循环恰好走到序号 4（连续两次相同的 conntrack id）时该序号已退役在重装恢复的 quarantine 中，请求被当作旧流的包丢弃；改用新序号。强制循环走到 4 时旧测试 3／3 失败、新测试 3／3 通过，正常 20／20 通过。
+- 未解决：停顿之后 E 结束一条出口 TCP 流使 iperf3 中断（X17b，旧证据无原因），修复前 15 轮、修复后 12 轮均未再出现，见[剩余边界](/v2/node/validation#remaining-boundaries)。
+
 Server 部署形态（MIG-2，`mig2/server-deploy`）：wire、IPC、`compilerVersion`、Server schema 9 与 HTTP 契约均不变；Server 首次作为 Release 产物发布。
 
 - 新增（不变量：服务管理器看到的就绪只在存储已打开、迁移与启动重编译完成且监听已绑定之后，持续推进的迁移不被启动超时杀掉；owner：新 crate `meshway-service` 是唯一的 sd_notify 实现，`meshwayd` 只换调用路径，Server `main` 发 `READY=1`／`STOPPING=1`，`store::schema::migrate` 每步发 `EXTEND_TIMEOUT_USEC`）：`dist/systemd/meshway-server.service`——`Type=notify`、静态系统用户 `meshway-server`、零 capability、`ProtectSystem=strict`、`StateDirectory=meshway-server`、`RestartPreventExitStatus=78`。见[安装 · Server](/v2/install#server)。

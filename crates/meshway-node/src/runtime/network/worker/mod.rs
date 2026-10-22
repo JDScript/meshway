@@ -281,7 +281,14 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             None => std::future::pending().await,
                         }
                     }, if live => if event.iter().any(|event| matches!(event, Event::Closed)) { Work::CarrierClosed } else { Work::Carrier(event) },
-                    _ = sleep_until(wake_at) => Work::Tick,
+                    _ = sleep_until(wake_at) => {
+                        // Diagnostics: a timer that fires late means this
+                        // worker was not polled although its work was due.
+                        if let Some(late) = wake_at.map(|at| at.elapsed()).filter(|late| *late >= Duration::from_millis(100)) {
+                            tracing::debug!(late_ms = u64::try_from(late.as_millis()).unwrap_or(u64::MAX), "Network worker woke late");
+                        }
+                        Work::Tick
+                    },
                     else => std::future::pending().await,
                 }
             } => work,
@@ -431,6 +438,19 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 | Work::ExitRecovered
                 | Work::ListenersChanged
         ) || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
+        let _turn = SlowTurn::new(match &work {
+            Work::Command(_) => "command",
+            Work::Expired => "expired",
+            Work::Packet(_) => "packet",
+            Work::Carrier(_) => "carrier",
+            Work::Tick => "tick",
+            Work::SampleDue => "sample",
+            Work::ExitReply(_) => "exitReply",
+            Work::DnsQuery(_) | Work::DnsReport(_) => "dns",
+            Work::Offer => "offer",
+            Work::Lifecycle(_) => "lifecycle",
+            _ => "other",
+        });
         match work {
             Work::DnsQuery(query) => dns_queries.enqueue(*query),
             Work::DnsReport(report) => {
@@ -1178,6 +1198,35 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             sample_at.get_or_insert_with(|| {
                 tokio::time::Instant::now() + super::reporting::CHANGE_INTERVAL
             });
+        }
+    }
+}
+
+/// A worker turn that took long is logged with its kind when it ends
+/// (diagnostics: the packet plane waits for every turn).
+struct SlowTurn {
+    kind: &'static str,
+    started: std::time::Instant,
+}
+
+impl SlowTurn {
+    fn new(kind: &'static str) -> Self {
+        Self {
+            kind,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for SlowTurn {
+    fn drop(&mut self) {
+        let elapsed = self.started.elapsed();
+        if elapsed >= Duration::from_millis(100) {
+            tracing::debug!(
+                kind = self.kind,
+                turn_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                "Network worker turn was slow"
+            );
         }
     }
 }
