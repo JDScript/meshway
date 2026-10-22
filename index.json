@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T14:38:33.504851+00:00",
+  "updatedAt": "2026-10-22T14:45:48.566794+00:00",
   "runs": [
     {
       "id": 39790367965,
@@ -373,9 +373,9 @@
       "commit": "f9c564ffb0e88726d6e539bb4c9adacdab360a16",
       "message": "docs: RC-1 verification in the changelog",
       "createdAt": "2026-10-22T13:50:00Z",
-      "updatedAt": "2026-10-22T14:35:19Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-22T14:44:38Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/39790367857",
       "jobs": [
         {
@@ -393,11 +393,11 @@
           "id": 119864501726,
           "name": "node-linux (x86_64-unknown-linux-musl)",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-22T14:26:26Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-22T14:33:40Z",
+          "seconds": 434.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/39790367857/job/119864501726"
         }
       ],
