@@ -281,8 +281,8 @@ async fn a_failed_hold_or_installation_publishes_its_check_and_is_recovered() {
     .unwrap();
     actor.install(desired).await.unwrap();
     assert!(
-        actor.state.borrow().detail.is_some(),
-        "a fault keeps its detail until a hold"
+        actor.state.borrow().fault.is_none() && actor.state.borrow().detail.is_none(),
+        "a successful installation supersedes the fault"
     );
     actor.shutdown(true).await.unwrap();
 }
@@ -395,5 +395,60 @@ async fn foreign_link_settings_block_and_are_read_again_every_60_s() {
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(recoveries.load(Ordering::SeqCst), 1, "read again at 60 s");
     assert!(state.borrow().health.is_blocked());
+    actor.shutdown(true).await.unwrap();
+}
+
+/// An owner whose observation failed once (a stalled process) while a
+/// re-proof would still fail, and whose installation succeeds.
+struct StalledOnce {
+    scopes: watch::Sender<Option<meshway_dns::Scope>>,
+    observations: Arc<AtomicUsize>,
+}
+impl Owner for StalledOnce {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>> {
+        self.scopes.clone()
+    }
+    async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        if self.observations.fetch_add(1, Ordering::SeqCst) == 0 {
+            Err(SystemDnsError::Backend)
+        } else {
+            Ok(())
+        }
+    }
+    async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        Err(SystemDnsError::Backend)
+    }
+    async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn install(&mut self, _: Desired) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn shutdown(self, _: bool) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+}
+
+/// RC-1 G15 (F7 `fault/throttle`: one more withdrawal at every restore): an
+/// observation failed after the plane's hold, and the plane's installation
+/// then succeeded. A successful installation ends with its own observation
+/// and publishes query authority: it supersedes that fault (as a hold
+/// does), so the plane does not withdraw again for a fault the installed
+/// content already outlived.
+#[tokio::test]
+async fn a_successful_installation_supersedes_an_earlier_fault() {
+    let (scopes, _) = watch::channel(None);
+    let actor = Actor::start(StalledOnce {
+        scopes,
+        observations: Arc::new(AtomicUsize::new(0)),
+    });
+    let mut state = actor.state.clone();
+    state.wait_for(|fact| fact.fault.is_some()).await.unwrap();
+    let compiled = std::sync::Arc::new(compiled());
+    let desired = Desired::new(&compiled, &Default::default()).unwrap();
+    actor.install(desired).await.unwrap();
+    let fact = actor.state.borrow().clone();
+    assert_eq!(fact.fault, None, "superseded by the installation");
+    assert!(fact.health.is_healthy() && fact.detail.is_none());
     actor.shutdown(true).await.unwrap();
 }

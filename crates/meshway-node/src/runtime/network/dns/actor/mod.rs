@@ -167,6 +167,18 @@ impl Faults {
             .observe(Observation::Holds, std::time::Instant::now());
         self.state.send_modify(|fact| fact.health = Health::Healthy);
     }
+    /// A successful installation (it observes the system last) ended the
+    /// fault.
+    fn superseded(&mut self) {
+        tracing::info!("DNS owner fault superseded by a successful installation");
+        self.recovery
+            .observe(Observation::Holds, std::time::Instant::now());
+        self.state.send_modify(|fact| {
+            fact.fault = None;
+            fact.detail = None;
+            fact.health = Health::Healthy;
+        });
+    }
     /// The fault that blocks a hold: one not re-proved yet.
     fn blocking(&self) -> Option<SystemDnsError> {
         let fact = self.state.borrow();
@@ -250,13 +262,17 @@ impl Actor {
                                     warn_failure("install", "DNS owner operation failed", &failure);
                                     settle(&mut faults, &query_scopes, failure);
                                 }
-                                // A fault keeps its own detail until a hold.
                                 Ok(()) if !faults.faulted() => {
                                     faults
                                         .state
                                         .send_if_modified(|fact| fact.detail.take().is_some());
                                 }
-                                Ok(()) => {}
+                                // The installation ended with its own
+                                // observation and published query authority:
+                                // it supersedes the earlier fault, as a hold
+                                // does (no withdrawal for a fault the content
+                                // installed since outlived).
+                                Ok(()) => faults.superseded(),
                             }
                             let _ = reply.send(result);
                             continue;
