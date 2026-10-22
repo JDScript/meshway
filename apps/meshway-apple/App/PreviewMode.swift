@@ -33,12 +33,14 @@ enum PreviewMode {
                 default: throw IPCFailure.result
                 }
                 let model = try await model(sample)
+                let dark = args.contains("--dark")
+                NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 if let index = args.firstIndex(of: "--preview-section"), args.count > index + 1 {
-                    guard ["peers", "diagnostics"].contains(args[index + 1]) else { throw IPCFailure.result }
+                    guard AppPage(rawValue: args[index + 1]) != nil else { throw IPCFailure.result }
                     model.previewSection = args[index + 1]
                 }
-                let main = window(MainView(model: model).safeAreaInset(edge: .bottom) { SampleBanner().padding(10).frame(maxWidth: .infinity).background(Color(nsColor: .windowBackgroundColor)) }, size: NSSize(width: 860, height: 1040), title: "Meshway · SAMPLE DATA")
-                let panel = window(MenuPanel(model: model), size: NSSize(width: 380, height: sample == .running ? 650 : 380), title: "Meshway menu panel · SAMPLE DATA")
+                let main = window(MainView(model: model), size: NSSize(width: 900, height: 720), title: "Meshway · SAMPLE DATA")
+                let panel = window(MenuPanel(model: model), size: NSSize(width: 344, height: 480), title: "Meshway menu panel · SAMPLE DATA")
                 windows = [main, panel]
                 main.setFrameOrigin(NSPoint(x: 60, y: 80)); panel.setFrameOrigin(NSPoint(x: 950, y: 160))
                 main.makeKeyAndOrderFront(nil); panel.orderFront(nil); NSApp.activate()
@@ -46,7 +48,7 @@ enum PreviewMode {
                     try await Task.sleep(for: .seconds(2))
                     let directory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "")
+                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (dark ? "-dark" : "-light")
                     try snapshot(main, to: directory.appendingPathComponent("\(stem)-main.png"))
                     try snapshot(panel, to: directory.appendingPathComponent("\(stem)-panel.png"))
                     print("Preview screenshots saved to \(directory.path)")
