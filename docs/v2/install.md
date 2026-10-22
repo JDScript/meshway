@@ -1,6 +1,6 @@
 # Linux 安装与系统服务
 
-本页定义 Node（`meshwayd` 与 `meshway`）在 Linux 上作为 systemd 系统服务的安装、升级与卸载。daemon 参数与运行行为见[网络模式与本机运行](/v2/node/runtime)，发布产物由 [Release 工作流](#发布产物) 生成。
+本页定义 Node（`meshwayd` 与 `meshway`）与 [Server](#server)（`meshway-server`）在 Linux 上作为 systemd 系统服务的安装、升级与卸载；两者由同一个 `install.sh` 安装（`--component`），下载与校验只有一份实现。daemon 参数与运行行为见[网络模式与本机运行](/v2/node/runtime)，Server 运行参数见 [Server](/v2/server#运行参数)，发布产物由 [Release 工作流](#发布产物) 生成。
 
 ## 要求
 
@@ -173,9 +173,9 @@ compiler: meshway-netmap-4
 
 `--json` 输出同名字段（`version`、`git`、`target`、`ipc`、`wire`、`compilerVersion`）。`wire` 是受保护 circuit 版本，同一路径上的节点必须一致；`compilerVersion` 是 netmap 编译契约。该命令不联系 daemon。
 
-### Server 升级 {#server-upgrade}
+### 与 Server 的顺序
 
-先升级全部 Node（CLI 与 daemon 一起），再升级 Server。Server schema 变化的版本（changelog 范围句写明）由新 Server 在打开数据库前自动迁移，保留旧库为备份、不需重置或重新接入，见 [Server · 存储迁移](/v2/server#存储迁移)。新 Server 启动时、受理请求之前，把每个网络已存的 netmap 按本构建重新编译（[Server 构建是编译输入](/v2/node/netmap-design#server-侧)）：内容因新构建而变化的节点得到新 serial，下一次 `sync` 即收到，内容不变的节点保留 serial；不需要为此改配置、改选择或手动触发重编译。有节点得到新 serial 时 Server 记 info `Stored netmaps compiled again by this build`（`build`、`networks`、`changed_nodes`、`elapsed_ms`）；没有变化（同一构建重启，或新构建编译出相同内容）只记 debug `Stored netmaps checked against this build; nothing changed`。启动耗时随节点数线性，1000 节点的网络约 2–3 秒。
+先升级全部 Node（CLI 与 daemon 一起），再升级 Server；Server 的步骤见 [Server 升级](#server-upgrade)。
 
 ### compilerVersion 变化的版本 {#compiler-version-upgrade}
 
@@ -199,14 +199,179 @@ sudo sh install.sh --uninstall --purge   # 同时删除 /var/lib/meshway 与 /et
 
 卸载先执行 `meshway down`：显式 down 才会移除 TUN、DNS 锚点与负向 capture 规则；仅停止服务会保留它们供下次启动。down 失败时脚本停止并保留运行中的服务。随后停止并禁用服务，删除 unit、两个二进制和 `/run/meshway`。不带 `--purge` 时保留 Node 身份（`/var/lib/meshway`）、`/etc/meshway` 与 `systemctl edit` 建立的 drop-in；`--purge` 一并删除它们；保留身份时重新安装后仍是同一个 Node，`--purge` 后再次安装需要重新接入。
 
+## Server {#server}
+
+Server（`meshway-server`）作为 systemd 系统服务运行在一台 Linux 主机上。路径与 Node 完全分开（`/var/lib/meshway-server`、`/etc/meshway-server`），可与 `meshwayd` 同机。运行参数、退出状态与离线命令见 [Server](/v2/server#运行参数)。
+
+### 要求 {#server-requirements}
+
+| 项 | 要求 |
+| --- | --- |
+| 架构 | x86_64 或 aarch64；静态链接的 musl 程序 |
+| init | systemd，unit 使用 `Type=notify` |
+| 用户 | 安装脚本创建静态系统用户 `meshway-server`；不用 `DynamicUser`：它的 `StateDirectory` 经 `/var/lib/private` 符号链接暴露，与 data-dir 不接受符号链接的检查冲突，离线命令也需要以同一 UID 运行 |
+| 前置代理 | Server 只监听明文 HTTP；TLS 与 Console 静态文件由同源的前置反向代理提供，见 [Console 与 TLS](#server-proxy) |
+| 工具 | `curl`、`sha256sum`、`tar`、`od`、`runuser`、`useradd`（Debian／Ubuntu 默认具备） |
+| 磁盘 | 迁移需要 data-dir 所在文件系统有不少于库大小 110% 的余量 |
+
+### 安装 {#server-install}
+
+```sh
+curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0/install.sh
+sudo sh install.sh --component server --version v0.1.0
+sudoedit /etc/meshway-server/server.env    # MESHWAY_CONSOLE_ORIGIN、监听地址等
+sudo systemctl restart meshway-server
+```
+
+`--component server` 选择 `meshway-server-<target>.tar.gz`，下载、`SHA256SUMS` 校验、架构识别与 `--version`／`--artifact`／`--no-start` 与 Node 共用同一实现；`--server`／`--daemon-options` 只属于 Node，与之同用即拒绝。脚本先运行一次新程序的 `--version` 确认能在本机执行，创建系统用户，首次安装时写出设置文件，安装程序与 unit，`systemctl enable` 并启动；`systemctl start` 在 Server 发出 `READY=1` 后返回，脚本再请求 `GET /api/v1/auth/options` 确认可用。内容相同则不替换、不重启（MainPID 不变）。
+
+| 路径 | 内容 |
+| --- | --- |
+| `/usr/local/bin/meshway-server` | 服务程序，root 0755；升级时上一版保留为 `meshway-server.previous` |
+| `/usr/local/libexec/meshway-server/{ip-datasets,reset-password}` | 离线命令，同上保留 `.previous` |
+| `/etc/systemd/system/meshway-server.service` | unit，原文为仓库 `dist/systemd/meshway-server.service` |
+| `/etc/meshway-server/server.env` | 实例设置（`EnvironmentFile`），首次安装创建，此后归运维、脚本不改写 |
+| `/var/lib/meshway-server` | data-dir（`StateDirectory`，0700，属主 `meshway-server`）：`controller.lock`、`controller.sqlite`、`master-key`、迁移备份 `controller.sqlite.v<N>-<ms>` |
+
+首次安装写出的设置文件：
+
+```sh
+# /etc/meshway-server/server.env
+MESHWAY_LISTEN=127.0.0.1:8420
+#MESHWAY_CONSOLE_ORIGIN=https://console.example.com
+#MESHWAY_PUBLIC_ORIGIN=https://meshway.example.com
+#MESHWAY_REGISTRATION_ENABLED=true
+# Further arguments, e.g. --stun-listen 0.0.0.0:3478 --stun-server main=meshway.example.com:3478
+MESHWAY_SERVER_OPTIONS=
+```
+
+变量即 [Server · 运行参数](/v2/server#运行参数) 的同名环境变量；只有命令行形式的参数（`--stun-listen`、`--stun-server`）放进 `MESHWAY_SERVER_OPTIONS`。脚本的健康检查读取其中的 `MESHWAY_LISTEN`（`0.0.0.0`／`[::]` 按 loopback 访问）。
+
+### systemd unit {#server-unit}
+
+| 项 | 取值与理由 |
+| --- | --- |
+| 就绪 | `Type=notify`、`NotifyAccess=main`：存储已打开（含迁移与启动重编译）且监听已绑定后发 `READY=1` 与 `STATUS=Serving on <地址>`，开始停止时发 `STOPPING=1`；发送实现与 `meshwayd` 共用 `meshway-service` |
+| 启动超时 | `TimeoutStartSec=120s`；迁移的每一步（检查旧库、每张表、检查结果）发 `EXTEND_TIMEOUT_USEC`（120 秒）与 `STATUS=Migrating the database from schema <N> to <M>: …`，大库迁移只要持续推进就不会被启动超时杀掉 |
+| 重启 | `Restart=on-failure`、`RestartSec=5s`；`RestartPreventExitStatus=78`：存储持久阻断（[退出状态](/v2/server#运行参数)）不重启，`systemctl status` 显示 `status=78`，需要人工处理；其他失败为暂态，按 5 秒重启并重新执行同一检查与迁移 |
+| 用户与权限 | `User=`／`Group=meshway-server`；`CapabilityBoundingSet=` 与 `AmbientCapabilities=` 为空（零 capability：默认端口 8420 与 STUN 3478 都在 1024 以上）；`NoNewPrivileges=yes` |
+| 文件系统 | `ProtectSystem=strict`：程序与 `/etc` 只读，进程只可写 `StateDirectory=meshway-server`（`StateDirectoryMode=0700`）；`UMask=0077`；`ProtectHome`、`PrivateTmp`、`PrivateDevices` |
+| 其余沙箱 | `ProtectHostname`、`ProtectClock`、`ProtectKernelModules`／`Logs`／`Tunables`、`ProtectControlGroups`、`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`、`RestrictNamespaces`、`RestrictRealtime`、`RestrictSUIDSGID`、`LockPersonality`、`MemoryDenyWriteExecute`、`SystemCallArchitectures=native`、`SystemCallFilter=@system-service` |
+| 日志 | `MESHWAY_LOG_FORMAT=json`、`RUST_LOG=info`，stderr 进入 journald；迁移（`Database migration started`／`Database migrated`）、持久阻断原因与首次应答 sync（`First Node sync answered by this Server process`）各有固定消息，字段见[运行日志](/v2/logging) |
+
+本机定制用 `sudo systemctl edit meshway-server` 写 drop-in，不编辑安装的 unit。
+
+### Console 与 TLS {#server-proxy}
+
+Server 不提供静态文件。Console 是纯 SPA，要求与 `/api` 同源：前置反向代理终结 TLS，把 `/api/` 与 `/agent-api/` 转发到 Server，其余路径为 Console 静态文件、未知路径回退到 `index.html`。Caddy 示例：
+
+```text
+meshway.example.com {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8420
+	}
+	handle /agent-api/* {
+		reverse_proxy 127.0.0.1:8420
+	}
+	handle {
+		root * /srv/meshway-console
+		try_files {path} /index.html
+		file_server
+	}
+}
+```
+
+Console 静态文件来自 Release 的 `meshway-console.tar.gz`（解包到 `root` 目录）。`MESHWAY_CONSOLE_ORIGIN` 设为该站点的 origin（`https://meshway.example.com`），Node 的 `--server` 用同一 origin。用户事件流（SSE）需要代理不缓冲响应（Caddy 对 `text/event-stream` 自动立即转发）。
+
+### 升级 {#server-upgrade}
+
+先升级全部 Node（CLI 与 daemon 一起），再升级 Server。Server 停机期间节点按已持有的租约继续运行（默认 24 h），升级窗口远小于它。
+
+```sh
+sudo sh install.sh --component server --version v0.1.1
+```
+
+| 步骤 | 行为 |
+| --- | --- |
+| 1. 预检 | 下载并校验产物；新程序 `--version` 报告 `schema: <N> (migrates from <M>)`；从 `controller.sqlite` 的文件头读 `application_id` 与 `user_version`，不是 Server 库、比新程序新或早于 M 即失败；需要迁移时检查磁盘余量。**任何一项失败都在停止服务之前退出，什么也不改** |
+| 2. 停止 | `systemctl stop meshway-server`（服务正在启动或按 `Restart=` 重启中时同样先停止，否则它持有 data-dir 锁） |
+| 3. 迁移 | `runuser -u meshway-server -- meshway-server.new migrate --data-dir /var/lib/meshway-server`：备份旧库、迁移、完整检查、启动重编译，不监听端口（库已是当前版本时只检查与重编译）。失败时库保持原样：删除新程序、重新启动原服务、报告原因并退出 |
+| 4. 替换 | 原程序保留为 `meshway-server.previous`（离线命令同样），新程序原子替换，安装新 unit |
+| 5. 启动与健康 | `systemctl start` 等到 `READY=1`，再请求 `GET /api/v1/auth/options`（最多 10 次，每次间隔 1 秒） |
+| 6. 回退 | 第 5 步失败时按[回退边界](#server-rollback)自动回退 |
+
+迁移成功时脚本输出 `migrate` 的结果行（`Database migrated from schema 8 to 9 in <ms> ms; the previous database is kept as <path>.`），升级完成为 `upgraded to <版本>; the previous program is kept as /usr/local/bin/meshway-server.previous, the previous database as <path>`。
+
+Server schema 变化的版本（changelog 范围句写明）由新 Server 在打开数据库前迁移，保留旧库为备份、不需重置或重新接入，见 [Server · 存储迁移](/v2/server#存储迁移)。新 Server 启动时、受理请求之前，把每个网络已存的 netmap 按本构建重新编译（[Server 构建是编译输入](/v2/node/netmap-design#server-侧)）：内容因新构建而变化的节点得到新 serial，下一次 `sync` 即收到，内容不变的节点保留 serial；不需要为此改配置、改选择或手动触发重编译。有节点得到新 serial 时 Server 记 info `Stored netmaps compiled again by this build`（`build`、`networks`、`changed_nodes`、`elapsed_ms`）；没有变化（同一构建重启，或新构建编译出相同内容）只记 debug `Stored netmaps checked against this build; nothing changed`。启动耗时随节点数线性，1000 节点的网络约 2–3 秒。
+
+### 回退边界 {#server-rollback}
+
+**只有在新 Server 从未应答过任何 Node `sync` 时才能回退。** 新 Server 一旦签发过 netmap，节点就持有更高的 serial；回退后旧库签发的 serial 更低，节点拒绝（serial 回退），升级之后的接入、签名钥轮换与配置也随旧库丢失。此后只能前进修复（发布修正版本）。新 Server 进程第一次应答 `sync` 时记 info `First Node sync answered by this Server process`（`network_id`、`node_id`），回退以它为依据。
+
+自动回退（第 5 步失败）：脚本在本次升级开始以来的 journal 中查找该消息，有则不回退并报告“fix forward”；没有则停止服务（停止后再查一次），把 `.previous` 程序与原 unit 放回；本次升级迁移过时，把新库及其 `-wal`／`-shm` 改名为 `controller.sqlite.failed-<Unix 秒>*` 留作诊断，把迁移备份改回 `controller.sqlite`，然后启动原服务并做同样的健康检查。脚本以失败退出（`rolled back to <原版本>; <新版本> was not installed`）。
+
+手动回退（例如升级完成后才发现问题）遵守同一边界：
+
+```sh
+sudo systemctl stop meshway-server
+journalctl -u meshway-server --since "<升级开始时刻>" -o cat | grep 'First Node sync answered'   # 有输出就不得回退
+sudo mv /usr/local/bin/meshway-server.previous /usr/local/bin/meshway-server
+# 仅当这次升级迁移了库（脚本输出过备份路径）：
+cd /var/lib/meshway-server
+sudo -u meshway-server sh -c 'for f in controller.sqlite controller.sqlite-wal controller.sqlite-shm; do [ ! -e $f ] || mv $f $f.failed; done'
+sudo -u meshway-server mv controller.sqlite.v<旧版本>-<ms> controller.sqlite
+sudo systemctl start meshway-server
+```
+
+新库的 `-wal`／`-shm` 必须随新库移开：留在原名下会被旧版本当作旧库的日志重放。
+
+### 备份与恢复 {#server-backup}
+
+迁移前的旧库由迁移自动保留（data-dir 内最新 3 份）。完整的离线备份用 `meshway-server backup`，需要短暂停服务（秒级，节点凭租约不受影响）：
+
+```sh
+sudo install -d -o meshway-server -g meshway-server -m 0700 /var/backups/meshway-server
+sudo systemctl stop meshway-server
+sudo runuser -u meshway-server -- meshway-server backup --data-dir /var/lib/meshway-server \
+  --output /var/backups/meshway-server/$(date -u +%Y%m%dT%H%M%SZ)
+sudo systemctl start meshway-server
+```
+
+输出目录本身就是一个 data-dir（`controller.lock`、`controller.sqlite`、`master-key`），行为见 [Server · 备份](/v2/server#备份)。
+
+**风险：库加主密钥等于这台 Server 的全部秘密**——配置中的协议材料（listener 密码、私钥等）与接入设置等密封内容，以及密封在库中的 netmap 签名钥（可为全网签发 netmap）；账户密码哈希与会话摘要也在库中。只有库没有主密钥的备份无法解密，等于无效备份；所以 `backup` 总是两者一起复制。备份离开主机时必须由运维另行加密（如 `age`），并与 Server 主机分开保管；迁移产生的备份留在 data-dir 内，与主密钥同一保护边界。
+
+恢复到一个新的 data-dir：
+
+```sh
+sudo systemctl stop meshway-server
+sudo mv /var/lib/meshway-server /var/lib/meshway-server.replaced-$(date -u +%Y%m%dT%H%M%SZ)
+sudo cp -a /var/backups/meshway-server/<stamp> /var/lib/meshway-server
+sudo systemctl start meshway-server
+```
+
+`cp -a` 保留 0700／0600 与属主。恢复的备份与回退受同一 serial 边界约束：备份之后与 Server 同步过的节点持有更高的 serial，拒绝恢复后的 netmap，直到租约到期 fail closed，需要重新接入；备份点之后的接入、配置与签名钥轮换也不在其中。因此备份用于主机丢失后的灾难恢复与离线快照，不用于日常回滚。
+
+### 卸载 {#server-uninstall}
+
+```sh
+sudo sh install.sh --component server --uninstall           # 保留库、主密钥与设置
+sudo sh install.sh --component server --uninstall --purge   # 同时删除 /var/lib/meshway-server、/etc/meshway-server 与用户
+```
+
+卸载停止并禁用服务，删除 unit、程序及其 `.previous`。不带 `--purge` 时 data-dir、设置文件、drop-in 与系统用户保留，重新安装后是同一个 Server；`--purge` 删除库与主密钥（全部秘密，不可恢复，先做[备份](#server-backup)）。
+
 ## 发布产物
 
 tag `v*` 触发 `.github/workflows/release.yml`：
 
 1. tag 必须等于 workspace `Cargo.toml` 的 `version` 加 `v` 前缀，且本页同级的 [changelog](/v2/changelog) 有同名 `## <tag>` 段，否则失败且不构建。
-2. 以 `workflow_call` 复用 `build.yml`，交叉编译两个 musl target 的 release 程序；`meshway version` 的 git 描述来自 `git describe --tags`。
-3. 打包 `meshway-<target>.tar.gz`（`meshwayd`、`meshway`、`meshwayd.service`），附 `install.sh`，生成 `SHA256SUMS`；x86_64 CLI 在 runner 上执行一次，报告的版本必须等于 tag。
-4. 创建 GitHub Release（非 draft），说明取 changelog 对应段；版本含 `-`（如 `-alpha.1`）时标记为 prerelease。
+2. 以 `workflow_call` 复用 `build.yml`，交叉编译两个 musl target 的 release 程序（Node 与 Server 分两次 cargo 调用，依赖 feature 不互相合并）；`meshway version` 与 `meshway-server --version` 的 git 描述来自 `git describe --tags`。
+3. 发布门槛 `server-upgrade`：`scripts/ci/server-upgrade.py` 用上一 release 的 Server（取其 `meshway-server-<target>.tar.gz`；该 release 没有发布 Server 时按其 tag 源码构建）经真实 HTTP 建库——账户、网络、已应用的配置、一个以接入密钥接入并保持运行的 control-only Node（本次构建；Node 先于 Server 升级）——停机后以本次 x86_64 构建 `migrate` 同一 data-dir 并在同一地址启动，要求同一密码登录、revision 与配置原文不变、之前的活动记录都在、该 Node 不重新接入且接受新 Server 签发的租约，schema 变化时上一版本拒绝新库且不修改它。不通过则不发布。Check 在存储相关路径变化时运行同一测试（`mise run test:server-upgrade`）。
+4. 打包 `meshway-<target>.tar.gz`（`meshwayd`、`meshway`、`meshwayd.service`）与 `meshway-server-<target>.tar.gz`（`meshway-server`、`ip-datasets`、`reset-password`、`meshway-server.service`），以及 Console 静态文件 `meshway-console.tar.gz`；附 `install.sh`，生成 `SHA256SUMS`。x86_64 的 CLI 与 Server 在 runner 上各执行一次，报告的版本必须等于 tag；`export-openapi` 是开发工具，不发布。
+5. 创建 GitHub Release（非 draft），说明取 changelog 对应段；版本含 `-`（如 `-alpha.1`）时标记为 prerelease。
+
+`workflow_dispatch` 在任意分支上做同一构建、门槛与打包的演练：版本取 workspace 版本，不检查 tag 与 changelog，资产作为 workflow artifact `release-assets-<sha>` 上传，不创建 Release，也不推送 meshway-rules 转换器。
 
 ## 验收记录
 
@@ -236,6 +401,29 @@ lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 
 | 随后 `start` | 1.1 秒后 Mesh 名称解析恢复，`running`／`ready`，无需 `up` |
 | `SIGKILL` 后改写 `daemon.json`／`underlay-bootstrap.json` 记录的 socket device | systemd 5 秒后重启，两个 stale socket 按 inode 回收并重新绑定（新 inode），`running`／`ready`，记录更新为当前 device |
 | 单向 NAT 后的第二个 Node 经 Native UDP 拨入（machine 内 namespace，dialers 关闭的监听端） | `meshway ping -c 100` 与 OS ping 各 100/100；100 个样本同一 link ID 与源端口；拨号侧 102 秒内无通道转移 |
+
+### Server（MIG-2） {#server-validation}
+
+2026-10-22，常驻 `meshway-vm`（Ubuntu 24.04 aarch64，systemd 255）上另起的独立实例（`127.0.0.1:18420`，与 8420 的 dev Server 及现场节点无关），一个同机 control-only Node（独立 data-dir，以 Tag 接入密钥接入该实例）。产物为本分支 `v0.1.0-alpha.21-15-g3f7df74e` 的 aarch64 musl release 构建，按 Release 的打包方式做成 `meshway-server-<target>.tar.gz`＋`SHA256SUMS`，经 `install.sh --component server --artifact` 安装；alpha.20／alpha.21 没有发布 Server，用其 tag 源码构建的程序同样打包模拟。这两个版本不发 `READY=1`，在它们运行期间以 drop-in `Type=exec` 模拟。OrbStack 注入的关闭沙箱 drop-in 与 Node 相同，以更高优先级 drop-in 恢复。
+
+| 场景 | 结果 |
+| --- | --- |
+| 首次安装（alpha.21）、建库与接入 | 3.1 s；创建 `meshway-server` 用户（无登录 shell），data-dir 0700、文件 0600，属主 `meshway-server` |
+| 升级 alpha.21 → 本构建（schema 9 → 9） | 5.9 s：预检、停止、`migrate`（`nothing migrated`）、保留 `.previous`、`READY=1` 与健康检查；同一密码登录、revision、配置原文摘要、活动数与节点不变；Node 不重新接入，3 s 内接受新进程签发的租约（journal 有 `First Node sync answered by this Server process`） |
+| 沙箱（`systemctl show` 与 `/proc/<pid>/status`） | `Type=notify`、`NotifyAccess=main`、`RestartPreventExitStatus=78`、`TimeoutStartUSec=2min`、`ProtectSystem=strict`、`ProtectHome`、`PrivateTmp`、`PrivateDevices`、`NoNewPrivileges`、`MemoryDenyWriteExecute` 等全部生效；`CapEff`／`CapBnd`／`CapAmb` 全 0，`Seccomp: 2`，UID 999；进程视角 `/usr/local/bin` 与 `/etc` 只读，只有 data-dir 可写，`/root`、`/home` 不可见，`/dev` 只有伪设备 |
+| 同版本重装 | 不替换、不重启（MainPID 不变） |
+| 持久阻断 | `user_version` 改为 99 后启动：`status=78`，12 s 后 `NRestarts=0`、`failed`，库哈希不变；改回后正常启动 |
+| 迁移失败 | 新程序 `migrate` 退出 1：脚本删除新程序、重新启动原服务（新 MainPID），库与程序不变 |
+| `READY=1` 超时（drop-in `TimeoutStartSec=20s`，新程序不发 READY） | 21 s 后自动回退：`.previous` 放回、原服务启动并健康，Node 照常 sync |
+| 迁移后启动失败（alpha.20 → 新程序，迁移 8 → 9 成功、服务进程立即退出） | 2.0 s 内回退：迁移后的库改名为 `controller.sqlite.failed-<秒>`，v8 备份放回，alpha.20 启动；登录与配置不变 |
+| 回退被拒 | 新程序的 `READY=1` 不来自主进程（超时），但其间已应答 Node sync：脚本不回退、报告 fix forward；随后以修正产物前进升级（服务处于 `activating` 时同样先停止） |
+| 升级 alpha.20 → 本构建（schema 8 → 9） | 0.96 s；`Database migrated from schema 8 to 9`，备份 `controller.sqlite.v8-<ms>`，`schema_migrations` 一行；登录、配置、Node 不变 |
+| 迁移延长启动超时 | 1.3 GiB 的 v8 库，drop-in `TimeoutStartSec=3s`，由 `systemctl start` 自动迁移：迁移 62.1 s，启动 68.5 s 后 `active`，`NRestarts=0`；迁移期间 `StatusText` 依次为 `… checking the database`、`… copying rule_set_artifacts` 等 |
+| `backup` 与恢复 | 停服务后 0.03 s；输出目录 0700、三个文件 0600，主密钥与原文件相同；输出已存在或服务在运行时以 1 拒绝；复制到新 data-dir 后另起实例，原密码登录、网络与 revision 一致 |
+| 卸载 | 保留数据：程序与 unit 删除，data-dir／设置／用户保留，重新安装后同一 Server、Node 照常 sync；`--purge`：data-dir、设置、drop-in 与用户均删除 |
+| `scripts/ci/server-upgrade.py`（同一 VM，普通用户） | alpha.21 → 本构建、alpha.20 → 本构建（含旧版本拒绝新库）全部检查通过 |
+
+恢复一个较旧的库（迁移延长测试之后放回之前的 v9 库）后，该 Node 的 Node session 不在库中，`sync` 先报 `reconnecting (credentials)`，约 30 s 内重新认证并恢复，未重新接入。证据 `.meshway/validation/mig2/vm/`。
 
 ### OrbStack 与 WARP 出网的路由 MTU {#orbstack-warp}
 

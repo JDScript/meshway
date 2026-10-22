@@ -30,6 +30,7 @@ crates/
   meshway-tun/
   meshway-dns/
   meshway-logging/
+  meshway-service/          # systemd sd_notify（Server 与 meshwayd 共用）
   meshway-transport/        # 含 spec、tcp、udp
   meshway-transport-stream/ # 含 tls、vless、trojan
   meshway-rules/            # MWRS 规则集格式、校验 loader、matcher、转换器、签名目录
@@ -77,6 +78,7 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 | `meshway-transport` | 配置库、Server 目录（`spec`）；connectivity、dataplane、underlay、stream providers | `spec`：协议参数、默认规则、结构校验和能力类型；承载会话、batch／buffer 与背压接口；`tcp`／`udp`：Native TCP／UDP provider |
 | `meshway-private-storage` | Server、Node 运行时／control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
 | `meshway-logging` | Server、daemon、CLI、Apple bridge 程序入口 | 统一 tracing subscriber、日志参数与格式；默认 stderr，Apple bridge 经平台 writer 回调送 os_log；见[运行日志](/v2/logging) |
+| `meshway-service` | Server、daemon 程序入口 | 服务管理器就绪通知（systemd `sd_notify`：`READY=1`、`STOPPING=1`、`EXTEND_TIMEOUT_USEC`／`STATUS`）；无 `NOTIFY_SOCKET` 时为空操作，失败只记 warn |
 | `meshway-transport-stream` | Server 材料验证（`tls`）、HTTP client 装配、connectivity | `tls`：同一 ring provider、证书／密钥验证、精确叶证书信任、显式系统信任配置与既有流上的 TLS 握手；`vless`／`trojan`：既有流上的 TCP CONNECT 封装 |
 | `meshway-rules` | `tools/meshway-rules-cli`；规划中 Server `resources/`、Policy、Node control（R2a，尚未接线） | `MWRS` 规则集格式、确定性 builder、任意字节安全的校验 loader（只读入堆，无 `unsafe`）、域名／IP matcher、来源转换器与报告、签名规则目录；见[规则集引擎设计](/v2/rule-sets-design) |
 | `meshway-stun` | Server STUN 服务、Node connectivity | 有界 RFC 8489 Binding 编解码、映射观测与 UDP Service；见[连接获取](/v2/node/connectivity#stun-与-server-协调) |

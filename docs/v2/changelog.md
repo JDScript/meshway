@@ -2,6 +2,18 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+Server 部署形态（MIG-2，`mig2/server-deploy`）：wire、IPC、`compilerVersion`、Server schema 9 与 HTTP 契约均不变；Server 首次作为 Release 产物发布。
+
+- 新增（不变量：服务管理器看到的就绪只在存储已打开、迁移与启动重编译完成且监听已绑定之后，持续推进的迁移不被启动超时杀掉；owner：新 crate `meshway-service` 是唯一的 sd_notify 实现，`meshwayd` 只换调用路径，Server `main` 发 `READY=1`／`STOPPING=1`，`store::schema::migrate` 每步发 `EXTEND_TIMEOUT_USEC`）：`dist/systemd/meshway-server.service`——`Type=notify`、静态系统用户 `meshway-server`、零 capability、`ProtectSystem=strict`、`StateDirectory=meshway-server`、`RestartPreventExitStatus=78`。见[安装 · Server](/v2/install#server)。
+- 新增（不变量：下载、校验与架构识别只有一份实现；owner：`dist/install.sh`）：`install.sh --component server`——在停服务之前按新程序 `--version` 的 `schema: N (migrates from M)` 检查 data-dir，停止后以新程序 `migrate`，原程序保留为 `.previous`，等 `READY=1` 与健康检查；失败时只在新 Server 未应答任何 Node sync 时自动回退（依据新增的 info `First Node sync answered by this Server process`），否则报告前进修复。见 [Server 升级](/v2/install#server-upgrade)、[回退边界](/v2/install#server-rollback)。
+- 新增（不变量：库与主密钥一起才是备份，二者是全部秘密，含签名钥；owner：`meshway_server::backup`）：离线 `meshway-server backup --data-dir … --output DIR`，持锁、不写源库，`VACUUM INTO` 加主密钥复制到新的 0700 目录（文件 0600，本身就是 data-dir），复制后完整检查，失败时删除已写出的文件。见 [Server · 备份](/v2/server#备份)。
+- 修复（不变量：存储持久阻断的退出状态只有一个分类；owner：`AppError::exit_code`／`command::Failure`）：`reset-password` 与 `ip-datasets` 遇到持久阻断（含需要迁移的旧库）以 78 退出，此前为 1。
+- 发布：Release 新增 `meshway-server-<target>.tar.gz`（`meshway-server`、`ip-datasets`、`reset-password`、unit）与 Console 静态文件 `meshway-console.tar.gz`（由同源反向代理提供，Server 不出静态文件）；发布门槛 `scripts/ci/server-upgrade.py` 从上一 release 的 Server 经真实 API 建库并接入一个 control-only Node，再以本构建迁移、核对登录、配置、活动、Node 不重新接入与旧版本拒绝新库；Check 在存储路径变化时运行它（`mise run test:server-upgrade`）。`workflow_dispatch` 是不发布的演练。
+
+验证：`meshway-vm` 独立实例上的安装、沙箱、升级（9 → 9、8 → 9）、迁移失败／`READY` 超时／启动失败三种自动回退与 sync 之后拒绝回退、1.3 GiB 库在 3 s 启动超时下的迁移、备份与恢复、卸载，见[安装 · 验收记录](/v2/install#server-validation)；`release.yml` 在分支上的 `workflow_dispatch` 演练（run `39769183040`）产出六个资产与 `SHA256SUMS`，门槛以 alpha.21 tag 构建的 Server 升级到本构建的 x86_64 程序通过，aarch64 Server 资产在 VM 上经 `install.sh` 安装；Planck 25 行矩阵 `20261022T111544Z-81951f2c`（`126a4a5b`）全部通过；私有证据 `.meshway/validation/mig2/`。
+
 ## v0.1.0-alpha.21
 
 范围：MIG-1 Server schema 9 与单向存储迁移（从 alpha.20 的 schema 8 自动迁移，不 reset、不重新接入；迁移承诺自本版本起）；S5 换 `compilerVersion` 后旧编译器 delta 基准视为没有基准；X16 同一 netlink socket 的 rtnetlink dump 串行＋有界重读。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6 与 HTTP 契约均不变；Server schema 8 → 9 只涉及 Server，Node 无感，按先 Node 后 Server 普通升级（无断网窗口；Server 停机含一次迁移）。

@@ -32,6 +32,19 @@ use crate::settings::Migration;
 
 mod v9;
 
+/// How long one migration step may take before the service manager's start
+/// timeout applies again; every step renews it.
+const STEP_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Startup is progressing: a service manager waiting for readiness extends
+/// its start timeout by [`STEP_BUDGET`] (nothing outside a service).
+fn progress(from: i64, to: i64, step: &str) {
+    meshway_service::extend_startup(
+        STEP_BUDGET,
+        &format!("Migrating the database from schema {from} to {to}: {step}"),
+    );
+}
+
 /// What a level does besides copying every table its input and output
 /// versions share with the same columns. Anything else is declared here, so
 /// a table that appears, disappears or changes columns without a declaration
@@ -122,6 +135,7 @@ fn migrate(
     let started = Instant::now();
     let started_at = crate::store::execution::now().map_err(|_| AppError::Database)?;
     tracing::info!(from, to = target, "Database migration started");
+    progress(from, target, "checking the database");
 
     // Only a database that is exactly what version `from` writes is migrated.
     old.pragma_update(None, "query_only", true)
@@ -196,7 +210,8 @@ fn migrate(
             backup: &backup,
         });
         let sql = (schema.history)(to).ok_or(AppError::UnsupportedSchema)?;
-        match build(level, sql, &staging_path, &source_path, record) {
+        let step = |detail: &str| progress(from, target, &format!("schema {to}: {detail}"));
+        match build(level, sql, &staging_path, &source_path, record, &step) {
             Ok(copied) => (tables, rows) = copied,
             Err(error) => {
                 if let Err(cleanup) = directory.remove_staging(&staging) {
@@ -248,6 +263,7 @@ fn build(
     staging: &Path,
     source: &Path,
     record: Option<Record<'_>>,
+    progress: &dyn Fn(&str),
 ) -> Result<(usize, u64), AppError> {
     let mut db = Connection::open_with_flags(
         staging,
@@ -278,7 +294,7 @@ fn build(
         .map_err(sqlite)?;
     #[cfg(test)]
     tests::before_copy(&transaction);
-    let copied = copy(&transaction, level)?;
+    let copied = copy(&transaction, level, progress)?;
     if let Some(record) = record {
         let finished_at = crate::store::execution::now().map_err(|_| AppError::Database)?;
         let mut build = meshway_build::identity();
@@ -295,6 +311,7 @@ fn build(
     }
     #[cfg(test)]
     tests::before_validate(&transaction);
+    progress("checking the result");
     validate_as(&transaction, level.to, sql)?;
     transaction.commit().map_err(sqlite)?;
     db.execute("DETACH DATABASE old", []).map_err(sqlite)?;
@@ -307,7 +324,7 @@ fn build(
 /// Copies every table of `main` from `old`, parents before children (the
 /// foreign keys of the target schema), each in primary-key order so that
 /// ordering triggers (such as increasing netmap serials) accept the rows.
-fn copy(db: &Connection, level: &Level) -> Result<(usize, u64), AppError> {
+fn copy(db: &Connection, level: &Level, progress: &dyn Fn(&str)) -> Result<(usize, u64), AppError> {
     let targets = tables(db, "main")?;
     let sources = tables(db, "old")?;
     for source in &sources {
@@ -321,6 +338,7 @@ fn copy(db: &Connection, level: &Level) -> Result<(usize, u64), AppError> {
     }
     let (mut tables, mut rows) = (0, 0u64);
     for table in order(db, &targets)? {
+        progress(&format!("copying {table}"));
         if level.new_tables.contains(&table.as_str()) {
             if sources.contains(&table) {
                 return Err(undeclared(format!("new table {table} already exists")));

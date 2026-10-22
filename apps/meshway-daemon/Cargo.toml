@@ -17,6 +17,7 @@ meshway-dns = { path = "../../crates/meshway-dns" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-private-storage = { path = "../../crates/meshway-private-storage" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
+meshway-service = { path = "../../crates/meshway-service" }
 rustix.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

@@ -22,6 +22,7 @@ jobs:
       protocol: ${{ steps.filter.outputs.protocol }}
       web: ${{ steps.filter.outputs.web }}
       workflows: ${{ steps.filter.outputs.workflows }}
+      storage: ${{ steps.filter.outputs.storage }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -56,6 +57,14 @@ jobs:
               - "dev/**"
             workflows:
               - ".github/**"
+            storage:
+              - "Cargo.lock"
+              - "apps/meshway-server/src/store/**"
+              - "apps/meshway-server/src/secrets/**"
+              - "apps/meshway-server/src/directory.rs"
+              - "apps/meshway-server/src/app/mod.rs"
+              - "crates/meshway-private-storage/**"
+              - "scripts/ci/server-upgrade.py"
 
   cargo:
     # Rust checks, tests, codegen, contract drift and SDK consumers. Protocol
@@ -93,3 +102,25 @@ jobs:
           install_args: --locked
       - run: mise run setup
       - run: mise run check:web
+
+  server-upgrade:
+    # Schema or storage changes: the previous release's Server is upgraded to
+    # this build through the real API with a control-only Node; see
+    # scripts/ci/server-upgrade.py (also a release gate).
+    needs: changes
+    if: needs.changes.outputs.storage == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The previous release is found by its tag.
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run test:server-upgrade

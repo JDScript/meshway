@@ -1,8 +1,14 @@
-//! Service manager readiness: the systemd `sd_notify` datagram protocol.
-//! Without `NOTIFY_SOCKET` (foreground, containers, other platforms) this is a
-//! no-op; a failed notification is logged and never changes Node behavior.
+//! Service manager readiness: the systemd `sd_notify` datagram protocol, the
+//! one implementation the Node daemon and the Server share. Without
+//! `NOTIFY_SOCKET` (foreground, containers, other platforms) this is a no-op;
+//! a failed notification is logged and never changes the caller's behavior.
+#![forbid(unsafe_code)]
 
-pub(crate) fn notify(state: &str) {
+use std::time::Duration;
+
+/// Sends one newline-separated list of `KEY=VALUE` assignments, such as
+/// `READY=1` or `STOPPING=1`.
+pub fn notify(state: &str) {
     #[cfg(target_os = "linux")]
     if let Some(target) = std::env::var_os("NOTIFY_SOCKET")
         && let Err(error) = send(&target, state)
@@ -11,6 +17,23 @@ pub(crate) fn notify(state: &str) {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = state;
+}
+
+/// Startup is still progressing: the service manager's start timeout runs
+/// again from now for `budget`, and `status` is shown as the unit's status.
+pub fn extend_startup(budget: Duration, status: &str) {
+    notify(&extension(budget, status));
+}
+
+fn extension(budget: Duration, status: &str) -> String {
+    let status: String = status
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    format!(
+        "EXTEND_TIMEOUT_USEC={}\nSTATUS={status}",
+        budget.as_micros()
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -38,15 +61,24 @@ fn send(target: &std::ffi::OsStr, state: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
-    use super::send;
-    use std::os::unix::net::UnixDatagram;
+    use super::*;
 
+    #[test]
+    fn an_extension_names_the_budget_and_a_one_line_status() {
+        assert_eq!(
+            extension(Duration::from_secs(60), "migrating\nschema 8"),
+            "EXTEND_TIMEOUT_USEC=60000000\nSTATUS=migrating schema 8"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn delivers_state_to_path_and_abstract_sockets() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("notify");
+        use std::os::unix::net::UnixDatagram;
         let receiver = UnixDatagram::bind(&path).unwrap();
         send(path.as_os_str(), "READY=1").unwrap();
         let mut buffer = [0; 64];
