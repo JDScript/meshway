@@ -1,6 +1,6 @@
 # 恢复状态机收敛设计
 
-> **设计稿（RC-D），尚未实现。** 本页盘点 Node 侧所有可能 fail closed 的 owner 当前的失败分类、重证、恢复与 Status 投影，给出把它们收敛为一个共享框架的方案与迁移顺序，对应 [v0.1.0 交付门槛](/v2/process#v0-1-gate)里程碑 A 的“恢复状态机收敛为一个共享框架”。现行行为的唯一定义仍是[宿主内核归属的结束与重证](/v2/node/runtime#ownership-end)、[内核变更失败](/v2/node/runtime#kernel-change)、[DNS 健康检查与恢复](/v2/node/dataplane#dns-health)、[出口审计与清理重试](/v2/node/exit-design#exit-audit)与 [listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。盘点基于 main `3077913a`。
+> **已实现（RC-1，`rc1/recovery`）。** 现行行为的唯一定义是[本机运行 · 恢复语义](/v2/node/runtime#recovery)及其引用的各 owner 小节；验收状态只以[验收范围](/v2/node/validation)为准。本页保留 RC-D 的盘点（基于 main `3077913a`）、偏差 G1–G13、方案比较与已拍板的决定 Q1–Q9，作为追溯；下文的“现状”描述实现前的代码。本页不加入文档导航。
 
 ## 不变量 {#invariant}
 

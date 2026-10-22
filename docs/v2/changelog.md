@@ -2,6 +2,17 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+RC-1 恢复状态机收敛（`rc1/recovery`，设计 RC-D）：Node 上所有 fail-closed owner 共用 `meshway_model::recovery::Recovery`，分类、节奏与 Status 投影只有一份定义，见[本机运行 · 恢复语义](/v2/node/runtime#recovery)。IPC 13、wire 6、HTTP 契约与 `compilerVersion` 不变。
+
+- 分类（不变量：只有读成功而不符才是已证实的阻断，一次失败的读取或变更不证明归属已变；owner：`meshway_underlay::Error::judgement`、`SystemDnsFailure::proven`）：五处各写一份的内核分类合为一份，内部失败与被取消的安装改为暂态（G5、G6）；未完成的 ctnetlink dump（`NLM_F_DUMP_INTR`）与 rtnetlink 同一规则有界重读，不再直接报 `conntrackUnavailable`；DNS 的外来链路设置、中断的记录、另一 owner 的预约等为已证实、每 60 秒重证，其余每秒重证（G3）；锚点因宿主归属暂态结束时为未知（G4）。
+- 持久阻断（不变量：每次 `blocked` 都有已证实的原因，不需要重启；owner：各 owner 的 60 秒只读重证）：宿主内核归属的冲突、启动时读到的外来对象（G9）、控制中继路径上的外来 socket／`EACCES` 与 listener `EACCES`（G10）均为 `blocked`，每 60 秒只读重读，证据消失即以同一 netmap 恢复，从不覆盖外来对象；出口读到已证实的外来改动后角色保持撤回、能力 `ownershipConflict`，重读证据消失才重装（G7）。
+- 暂态阻断（不变量：每个暂态都有命名 owner 与无总期限的有界重证；owner：worker 安装重试、DNS owner、repair）：worker 的安装重试 5 秒起翻倍、上限 60 秒不再在第 3 次后停止（G1）；DNS 的 hold／install 失败由 DNS owner 自己重证（G2）；被拥有的 repair 读取失败按 30 秒时长而非 5 次；启动时 resolver 未打开、读取失败、锁被持有为 `retrying`（G9）。
+- 汇合与 Status（不变量：事件循环无电平分支，Status 只读 owner 现值；owner：`worker::lifecycle`、`status::owners`）：worker 以边沿消费宿主归属与 DNS 的 `Health`，由纯函数 `decide` 按当前快照决定动作，取代三个布尔标志与 `std::future::ready` 分支；宿主归属从暂态升级为冲突也是一个边沿（G8）；`Report.persistent`／`recovering` 删除，`phase` 与 `lastError` 由各 owner 现值求出，多原因时宿主归属优先、否则最早（G12、Q7）；MSS clamp 重试可见于日志（G13）。
+- 恢复后的包流（不变量：相邻端换 boot 时经它的 circuit 立即可重建；owner：SecureNode）：中继上仍在握手、尚无逐跳密钥的 circuit 在下一跳换 boot 时被遗忘而不留死 CID，源端每 250 ms 的 INIT 重试即刻穿过（G14，F7 `fault/throttle` 限额解除后包流 5–9.5 秒 → 0.1 秒）；成功的 DNS install 清除此前的故障，限额解除时不再多撤回一次（G15，`withdrawalsAtRestore` 1 → 0）。
+- Control：路径变化后以网络错误失败的工作每条路径立即重试一次（`roam/exit` soft 格）。本机记录写入结果不确定仍为 `blocked`，作为 v0.1.0 唯一显式例外写入 `AGENTS.md`（G11、Q6）。
+
 ## v0.1.0-alpha.21
 
 范围：MIG-1 Server schema 9 与单向存储迁移（从 alpha.20 的 schema 8 自动迁移，不 reset、不重新接入；迁移承诺自本版本起）；S5 换 `compilerVersion` 后旧编译器 delta 基准视为没有基准；X16 同一 netlink socket 的 rtnetlink dump 串行＋有界重读。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6 与 HTTP 契约均不变；Server schema 8 → 9 只涉及 Server，Node 无感，按先 Node 后 Server 普通升级（无断网窗口；Server 停机含一次迁移）。

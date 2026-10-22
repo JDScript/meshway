@@ -323,13 +323,15 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 ### 健康检查与恢复 {#dns-health}
 
-DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒。任一检查失败或超出期限都立即撤回查询许可，网络 worker 随即撤回整个包平面（`Required DNS component failed; suspending packet plane`），Status 为 `lastError: dns`（撤回清理完成之前即如此，见[撤回期间的原因](/v2/node/runtime#ownership-end)）。此后 owner 每秒按后端当前状态完整重证一次（recover：namespace、预约、锚点、resolve1 owner、链路设置与记录）。重证成功即以同一 netmap 重装（安装完成时记 `Required DNS component recovered; netmap reinstalled`，无论重装经由 DNS 恢复、Control 的 offer 还是重试），无需 `up` 或重启进程；失败则保持阻断，直到某次重证成功。失败与恢复都由 worker 确认后才算处理过：故障在 worker 看到之前就已重证（例如进程停顿数秒，观察超时后 7 ms 内重证成功）时，worker 仍先撤回再重装，查询许可随重装的 hold 恢复，故障随之清除。
+DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒。任一检查失败或超出期限都立即撤回查询许可，网络 worker 随即撤回整个包平面（`Required DNS component failed; suspending packet plane`），Status 为 `lastError: dns`（撤回清理完成之前即如此，见[撤回期间的原因](/v2/node/runtime#ownership-end)）。此后 owner 按后端当前状态完整重证（recover：namespace、预约、锚点、resolve1 owner、链路设置与记录）：未知的故障每秒一次，已证实的每 60 秒一次（重证拒绝而从不覆盖外来设置）。重证成功即以同一 netmap 重装（安装完成时记 `Required DNS component recovered; netmap reinstalled`，无论重装经由 DNS 恢复、Control 的 offer 还是重试），无需 `up` 或重启进程；失败则保持阻断，直到某次重证成功。失败与恢复都由 worker 确认后才算处理过：故障在 worker 看到之前就已重证（例如进程停顿数秒，观察超时后 7 ms 内重证成功）时，worker 仍先撤回再重装，查询许可随重装的 hold 恢复，故障随之清除。
 
-| 可自动恢复 | 不可自动恢复（保持阻断） |
+分类与节奏的唯一定义见[本机运行 · 恢复语义](/v2/node/runtime#recovery)；下表是 DNS owner 的判定（`SystemDnsFailure::proven`）。
+
+| 未知：每秒重证，自动恢复（Status `retrying`） | 已证实：保持阻断（Status `blocked`），每 60 秒只读重证，证据消失即恢复 |
 | --- | --- |
-| resolved 重启（新 bus owner 保留了标记设置；或丢失设置后链路回到原始值，此时重新安装）；`/etc/resolv.conf` 被改写后又恢复为动态 stub；系统停顿使一次检查超时或 netlink 读取失败（宿主范围的 RTNL 占用、CPU 停顿）；外部同名域路由出现后又消失 | 锚点被删除或改动（Underlay monitor 判为冲突，宿主内核归属以持久冲突结束）；链路设置被外部写成既非已安装值、也非原始值的内容；记录处于中断的设置变更（`record_pending`）；预约属于另一个 owner；namespace 改变 |
+| resolved 重启（新 bus owner 保留了标记设置；或丢失设置后链路回到原始值，此时重新安装）；`/etc/resolv.conf` 被改写后又恢复为动态 stub；系统停顿使一次检查超时或 netlink 读取失败（宿主范围的 RTNL 占用、CPU 停顿）；外部同名域路由出现后又消失；宿主内核归属的暂态结束（`anchor_ended` 为 `Backend`，由 Host 重证）；系统一侧的 hold／install 失败 | 锚点被删除或改动（Underlay monitor 判为冲突，宿主内核归属以持久冲突结束，`anchor_ended` 为 `Conflict`）；链路设置被外部写成既非已安装值、也非原始值的内容；记录处于中断的设置变更（`record_pending`）或与计划不符（`record_*`，读写失败除外）；预约属于另一个 owner；namespace 改变 |
 
-一次读取被中断或失败，不证明锚点归属有任何变化：锚点读取 socket 随之关闭，下一次读取另开新 socket，锚点本身只在 owner 删除它或宿主内核归属结束时结束。归属以暂态阻断结束（读不到满 30 秒，见[宿主内核归属的结束与重证](/v2/node/runtime#ownership-end)）时，Host 重证成功后网络 worker 停止 DNS owner，DNS 在新一期上重新准备并校验同一锚点，随同一 netmap 重装；持久冲突则保持阻断至重启。
+一次读取被中断或失败，不证明锚点归属有任何变化：锚点读取 socket 随之关闭，下一次读取另开新 socket，锚点本身只在 owner 删除它或宿主内核归属结束时结束。归属结束（见[宿主内核归属的结束与重证](/v2/node/runtime#ownership-end)）后 Host 重证成功时，网络 worker 停止 DNS owner，DNS 在新一期上重新准备并校验同一锚点，随同一 netmap 重装；持久冲突保持阻断，直到 Host 的 60 秒重证读到证据消失。成功的 hold 或 install 清除此前的故障（install 以一次自己的观察结束）。
 
 每次失败记录唯一一项检查，WARN 日志带 `operation`（`observe`／`recover`／`hold`／`install`／`prepare`）、`error`、`check`、`expected`、`actual`、`source` 字段，Status 的 `lastErrorDetail`（[本机运行](/v2/node/runtime)）给出同一内容的一行文本。同一失败（四个字段都相同）只记录一次，重证持续失败时不会每秒重复。`check` 取值：
 
