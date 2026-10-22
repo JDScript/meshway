@@ -7,14 +7,14 @@ enum IslandState: Equatable {
 
     var title: String {
         switch self {
-        case .connected: "已连接"
-        case .connecting: "连接中"
-        case .approval: "需要批准"
-        case .disconnected: "已断开"
-        case .stopping: "正在断开"
-        case .leaving: "正在注销"
-        case .unknown: "状态未知"
-        case .error: "出错"
+        case .connected: String(localized: "Connected")
+        case .connecting: String(localized: "Connecting…")
+        case .approval: String(localized: "Needs approval")
+        case .disconnected: String(localized: "Off")
+        case .stopping: String(localized: "Disconnecting…")
+        case .leaving: String(localized: "Signing out…")
+        case .unknown: String(localized: "Status unknown")
+        case .error: String(localized: "Error")
         }
     }
     var color: Color {
@@ -55,15 +55,47 @@ enum IslandState: Equatable {
 @MainActor
 struct ConnectionPresentation {
     let model: AppModel
-    var errors: [String] {
+    var errors: [AppIssue] {
         var values = [model.issue, model.ipcIssue].compactMap { $0 }
-        if let error = model.status?.lastError { values.append("Node · \(human(error)): \(model.status?.lastErrorDetail ?? "未报告详细原因")") }
-        if let error = model.status?.networkError { values.append("Network · \(human(error.problem)): \(error.detail ?? "未报告详细原因")") }
+        if let error = model.status?.lastError { values.append(AppIssue(.problem(error), detail: model.status?.lastErrorDetail)) }
+        if let error = model.status?.networkError { values.append(AppIssue(.problem(error.problem), detail: error.detail)) }
         if !model.sampleMode {
-            if let error = model.tunnel.preferencesError { values.append(error) }
-            if model.tunnel.extensionState == "Activation failed" { values.append(model.tunnel.message) }
+            if let error = model.tunnel.preferencesError { values.append(AppIssue(.vpnPreferences, detail: error)) }
+            if model.tunnel.extensionState == "Activation failed" { values.append(AppIssue(.extensionActivationFailed, detail: model.tunnel.message)) }
+        }
+        // A blocked or failed state always names a code, even without a reported cause.
+        if values.isEmpty, let status = model.status {
+            if status.phase == .blocked { values.append(AppIssue(.deviceBlocked)) }
+            else if status.phase == .retrying { values.append(AppIssue(.connectionRetrying)) }
+            else if status.phase == .running && status.dataPlane == .failed { values.append(AppIssue(.networkSetupFailed)) }
+            else if status.phase == .running && status.dataPlane == .suspended { values.append(AppIssue(.networkSuspended)) }
         }
         return values
+    }
+    /// Facts that leave the connection state unchanged but deserve attention.
+    var warnings: [AppIssue] {
+        var values: [AppIssue] = []
+        if let status = model.status, status.desiredUp {
+            if status.sync != .connected, let error = status.syncError { values.append(AppIssue(.sync(error))) }
+            if let netmap = status.netmap, !netmap.missingArtifacts.isEmpty || netmap.artifactProblem != nil {
+                values.append(AppIssue(.artifact(netmap.artifactProblem), detail: netmap.missingArtifacts.joined(separator: ", ")))
+            }
+            if let unavailable = status.netmap?.routing?.requestedUnavailable { values.append(AppIssue(.selection(unavailable))) }
+            if status.phase == .awaitingApproval && status.enrollmentUrl.flatMap(model.approvalURL) == nil { values.append(AppIssue(.approvalLinkMissing)) }
+        }
+        if !model.sampleMode {
+            let state = model.tunnel.extensionState
+            if state == "Approval required" { values.append(AppIssue(.extensionApprovalRequired)) }
+            else if state == "Extension request requires reboot" { values.append(AppIssue(.extensionRebootRequired)) }
+            else if state.hasPrefix("Unable to inspect extension") { values.append(AppIssue(.extensionStatusUnavailable, detail: state)) }
+        }
+        return values
+    }
+    /// Offline use stays possible until the installed configuration's expiry.
+    var offlineUntil: Date? {
+        guard warnings.contains(where: { $0.code == .syncServerUnreachable || $0.code == .syncServerBusy }),
+              model.netmapApplied, let expiry = model.status?.netmap?.expiresAt, expiry > .now else { return nil }
+        return expiry
     }
     var state: IslandState {
         IslandState.resolve(phase: model.status?.phase,
@@ -72,36 +104,12 @@ struct ConnectionPresentation {
                             approvalRequired: !model.sampleMode && model.tunnel.extensionState == "Approval required", plane: model.status?.dataPlane)
     }
     var step: ConnectionStep? { ConnectionStep.resolve(phase: model.status?.phase, plane: model.status?.dataPlane) }
-    var reason: String? {
-        if let issue = model.issue ?? model.ipcIssue { return issue }
-        if let error = model.status?.lastError { return problemTitle(error) }
-        if let error = model.status?.networkError { return problemTitle(error.problem) }
-        if model.status?.dataPlane == .failed { return "数据面失败" }
-        if model.status?.dataPlane == .suspended { return "数据面已暂停" }
-        return errors.first ?? (state == .error ? model.phase : nil)
-    }
+    var reason: AppIssue? { state == .error ? errors.first : nil }
+    var showsWarning: Bool { state != .error && !warnings.isEmpty }
 }
 
-private func problemTitle(_ problem: ClientProblem) -> String {
-    switch problem {
-    case .network: "网络连接问题"
-    case .serverBusy: "Server 繁忙"
-    case .credentials: "凭据问题"
-    case .enrollmentExpired: "接入申请已过期"
-    case .enrollmentWithdrawn: "接入申请已撤回"
-    case .enrollmentCancelled: "接入申请已取消"
-    case .storage: "本地存储问题"
-    case .contract: "协议契约不一致"
-    case .configuration: "配置问题"
-    case .clock: "系统时间问题"
-    case .worker: "Node 任务问题"
-    case .unsupportedMode: "运行模式不受支持"
-    case .underlay: "底层网络问题"
-    case .tun: "TUN 问题"
-    case .dns: "DNS 问题"
-    case .transport: "承载问题"
-    case .apply: "配置应用问题"
-    }
+func offlineText(_ date: Date) -> String {
+    String(localized: "Works offline until \(date.formatted(.dateTime.month().day().hour().minute()))")
 }
 
 struct StatusIsland: View {
@@ -127,39 +135,53 @@ struct StatusIsland: View {
                     else { address }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            Toggle("连接 Meshway", isOn: Binding(get: { model.status?.desiredUp ?? false }, set: { value in Task { await model.connect(value) } }))
+            Toggle(isOn: Binding(get: { model.status?.desiredUp ?? false }, set: { value in Task { await model.connect(value) } })) { Text("Connect Meshway") }
                 .labelsHidden().toggleStyle(ConnectionSwitchStyle()).tint(.teal).controlSize(.small)
                 .disabled(model.busy || model.sampleMode || (model.status == nil && model.server.isEmpty))
-                .help(unavailableHelp(model, fallback: model.status == nil && model.server.isEmpty ? "打开 Meshway 输入 Server URL" : "连接或断开 Meshway"))
+                .help(unavailableHelp(model, fallback: model.status == nil && model.server.isEmpty ? String(localized: "Open Meshway to enter a server address") : String(localized: "Connect or disconnect")))
         }
         .font(.system(size: 12)).padding(.horizontal, 12).frame(height: toolbar ? 36 : 60)
         .background(presentation.state == .error ? Color.orange.opacity(0.12) : .clear, in: .rect(cornerRadius: toolbar ? 14 : 18))
         .glassEffect(.regular.tint(presentation.state == .error ? .orange.opacity(0.25) : .clear), in: .rect(cornerRadius: toolbar ? 14 : 18))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: presentation.state)
-        .popover(isPresented: $expanded) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(presentation.state.title).font(.headline)
-                    ForEach(Array(presentation.errors.enumerated()), id: \.offset) { _, error in Text(error).textSelection(.enabled) }
-                    if let notice = model.notice { Text(notice).textSelection(.enabled) }
-                    LabeledContent("Node", value: model.phase)
-                    LabeledContent("macOS VPN", value: model.vpnLabel)
-                    if !model.sampleMode { Text(model.tunnel.message).foregroundStyle(.secondary) }
-                }.padding(20)
-            }.frame(width: 360, height: 250)
-        }
+        .popover(isPresented: $expanded) { IssuePopover(model: model) }
     }
     private var statusText: some View {
         Button { expanded = true } label: {
-            Text(presentation.reason.map { "出错 · " + $0 } ?? (presentation.state == .connecting ? presentation.step?.title ?? "连接中" : presentation.state.title))
-                .fontWeight(.semibold).lineLimit(1).truncationMode(.tail)
-                .contentTransition(reduceMotion ? .identity : .numericText())
-                .frame(maxWidth: toolbar ? nil : .infinity, alignment: .leading)
-        }.buttonStyle(.plain).help(presentation.reason ?? "查看连接详情")
+            HStack(spacing: 5) {
+                Text(presentation.reason?.message ?? (presentation.state == .connecting ? presentation.step?.title ?? presentation.state.title : presentation.state.title))
+                    .fontWeight(.semibold).lineLimit(1).truncationMode(.tail)
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                if presentation.showsWarning {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Color.issueAmber)
+                        .transition(.opacity).accessibilityLabel(Text("Warning"))
+                }
+            }.frame(maxWidth: toolbar ? nil : .infinity, alignment: .leading)
+        }.buttonStyle(.plain)
+            .help(presentation.reason?.code.rawValue ?? presentation.warnings.first.map { $0.message + " " + $0.code.rawValue } ?? String(localized: "Connection details"))
     }
     @ViewBuilder private var address: some View {
         if let address = model.status?.node?.ipv4 { CopyText(value: address) }
-        else { Text(model.status?.node == nil ? "暂无 IPv4" : "未分配 IPv4").font(.system(size: 11)).foregroundStyle(.secondary) }
+        else { Text("No IPv4 address").font(.system(size: 11)).foregroundStyle(.secondary) }
+    }
+}
+
+struct IssuePopover: View {
+    let model: AppModel
+    private var presentation: ConnectionPresentation { ConnectionPresentation(model: model) }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(presentation.state.title).font(.headline)
+                ForEach(presentation.errors) { IssueRow(issue: $0) }
+                ForEach(presentation.warnings) { IssueRow(issue: $0) }
+                if let until = presentation.offlineUntil { Text(offlineText(until)).font(.system(size: 12)).foregroundStyle(.secondary) }
+                if let notice = model.notice { Text(notice).font(.system(size: 12)) }
+                Divider()
+                LabeledContent { Text(model.phase) } label: { Text(verbatim: "Meshway") }.font(.system(size: 12))
+                LabeledContent { Text(model.vpnLabel) } label: { Text("macOS VPN") }.font(.system(size: 12))
+            }.padding(20)
+        }.frame(width: 340).frame(minHeight: 140, maxHeight: 300)
     }
 }
 
@@ -176,8 +198,8 @@ struct CopyText: View {
                     Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.teal).offset(x: 12).opacity(copied ? 1 : 0)
                 }
-        }.buttonStyle(.plain).help(copied ? "已复制" : "点按复制 \(value)")
-            .accessibilityLabel(copied ? "已复制 \(value)" : "复制 \(value)")
+        }.buttonStyle(.plain).help(copied ? String(localized: "Copied") : String(localized: "Click to copy"))
+            .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy \(value)"))
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: copied)
             .task(id: copyID) {
                 guard copied else { return }

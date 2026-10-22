@@ -5,9 +5,9 @@ enum AppPage: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .peers: "设备"
-        case .exit: "出口"
-        case .diagnostics: "诊断"
+        case .peers: String(localized: "Devices")
+        case .exit: String(localized: "Exit")
+        case .diagnostics: String(localized: "Diagnostics")
         }
     }
 }
@@ -91,38 +91,39 @@ struct EnrollmentView: View {
             Image(systemName: approval ? "person.badge.key" : "network")
                 .font(.system(size: 30, weight: .light)).foregroundStyle(.teal)
                 .frame(width: 64, height: 64).glassEffect(.regular, in: .rect(cornerRadius: 18))
-            Text(approval ? "批准这台 Mac" : "接入你的 Meshway 网络").font(.title3.weight(.semibold))
-            Text(approval ? "在浏览器中完成批准，Meshway 会自动继续。" : "输入管理员提供的 Server URL。")
+            Text(approval ? "Approve this Mac" : "Join your Meshway network").font(.title3.weight(.semibold))
+            Text(approval ? "Approve it in your browser. Meshway continues on its own." : "Enter the server address from your admin.")
                 .font(.callout).foregroundStyle(.secondary)
             ZStack(alignment: .top) {
                 if approval, let status = model.status {
                     VStack(spacing: 18) {
-                        HStack(spacing: 8) { ProgressView().controlSize(.small); Text("等待浏览器批准").foregroundStyle(.secondary) }
+                        MeshLoader(label: String(localized: "Waiting for approval…"), labelVisible: true)
                         if let link = status.enrollmentUrl, let url = model.approvalURL(link) {
-                            Button("打开批准页面", systemImage: "arrow.up.right.square") { NSWorkspace.shared.open(url) }
+                            Button("Open approval page", systemImage: "arrow.up.right.square") { NSWorkspace.shared.open(url) }
                                 .buttonStyle(.glassProminent).disabled(model.sampleMode)
-                                .help(unavailableHelp(model, fallback: "重新打开浏览器批准页面"))
-                        } else { Text("Server 未提供批准链接，请联系管理员配置 Console 地址。").font(.caption).foregroundStyle(.secondary) }
-                        Button("取消连接") { Task { await model.connect(false) } }.disabled(model.busy || model.sampleMode)
-                            .help(unavailableHelp(model, fallback: "请求 Node Down"))
+                                .help(unavailableHelp(model, fallback: String(localized: "Open the approval page again")))
+                        } else { IssueRow(issue: AppIssue(.approvalLinkMissing), compact: true) }
+                        Button("Cancel") { Task { await model.connect(false) } }.disabled(model.busy || model.sampleMode)
+                            .help(unavailableHelp(model, fallback: String(localized: "Stop connecting")))
                     }.padding(.top, 16)
                 } else {
                     VStack(alignment: .leading, spacing: 12) {
-                        TextField("https://mesh.example", text: $model.server).textFieldStyle(.roundedBorder).controlSize(.large)
-                            .accessibilityLabel("Server URL")
+                        TextField(text: $model.server) { Text(verbatim: "https://mesh.example") }.textFieldStyle(.roundedBorder).controlSize(.large)
+                            .accessibilityLabel(Text("Server address"))
                             .disabled(model.tunnel.hasConfiguration || model.status != nil)
                             .onSubmit { if !disabled { Task { await model.connect(true) } } }
-                            .help("使用管理员提供的 Server 地址；现有网络不支持在此切换")
-                        DisclosureGroup("高级 · Enrollment key", isExpanded: $advanced) {
-                            SecureField("Enrollment key（可选）", text: $model.enrollmentKey).textFieldStyle(.roundedBorder).padding(.top, 6)
-                        }.font(.caption).frame(height: 54, alignment: .top)
+                            .help("Server address from your admin")
+                        DisclosureGroup(isExpanded: $advanced) {
+                            SecureField("Enrollment key (optional)", text: $model.enrollmentKey).textFieldStyle(.roundedBorder).padding(.top, 6)
+                        } label: { Text("Advanced") }.font(.caption).frame(height: 54, alignment: .top)
                             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: advanced)
                         Button { Task { await model.connect(true) } } label: {
-                            Text(model.busy ? "正在连接…" : "连接 Meshway").frame(maxWidth: .infinity)
+                            Text(model.busy ? "Connecting…" : "Connect").frame(maxWidth: .infinity)
                         }.buttonStyle(.glassProminent).controlSize(.large).disabled(disabled)
-                            .help(unavailableHelp(model, fallback: model.server.isEmpty ? "请先输入 Server URL" : "连接并打开浏览器批准页面"))
-                        Button("启用 Network Extension…") { model.tunnel.activate() }.buttonStyle(.link).disabled(model.sampleMode)
-                            .help(unavailableHelp(model, fallback: "在系统设置中批准 Meshway 的网络扩展"))
+                            .help(unavailableHelp(model, fallback: model.server.isEmpty ? String(localized: "Enter a server address first") : String(localized: "Connect and approve in your browser")))
+                        if let issue = model.issue { IssueRow(issue: issue, compact: true) }
+                        Button("Enable network extension…") { model.tunnel.activate() }.buttonStyle(.link).disabled(model.sampleMode)
+                            .help(unavailableHelp(model, fallback: String(localized: "Allow Meshway in System Settings")))
                     }
                 }
             }.frame(width: 320, height: 178, alignment: .top)

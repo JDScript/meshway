@@ -14,24 +14,24 @@ enum ModelTests {
                 model.search = "100.64.0.4"
                 precondition(model.peers.count == 1)
                 precondition(model.peers.first?.rtt == nil, "Unmeasured RTT must remain nil")
-                precondition(model.path(model.peers[0]) == "via meshway-tokyo")
+                precondition(model.path(model.peers[0]) == model.via([model.peers[0].via[0]]) && model.path(model.peers[0]).contains("meshway-tokyo"))
                 model.search = "HOME"
-                precondition(model.path(model.peers[0]) == "Direct · idle")
-                precondition(model.peerStateLabel(model.peers[0]) == "Direct · idle")
-                precondition(model.peerPathDetail(model.peers[0]) == nil)
+                precondition(model.path(model.peers[0]) == String(localized: "Direct · idle"))
+                precondition(model.peerStateLabel(model.peers[0]) == String(localized: "Direct · idle"))
                 precondition(model.canRequestSelection && model.canRotateKey && model.canLogout)
                 precondition(model.selection?.requestedProfile == "work")
                 precondition(model.selection?.appliedProfile == "work")
                 precondition(model.netmapApplied)
                 precondition(ConnectionPresentation(model: model).state == .connected)
                 let pending = try await PreviewMode.model(.awaitingApproval)
-                precondition(pending.phase == "Awaiting approval")
+                precondition(pending.phase == label(.awaitingApproval))
                 precondition(ConnectionPresentation(model: pending).state == .approval)
                 precondition(pending.status?.enrollmentUrl != nil)
                 precondition(pending.sampleMode, "Sample approval must never open the browser")
                 precondition(pending.approvalURL("file:///etc/passwd") == nil)
                 let failed = try await PreviewMode.model(.error)
                 precondition(failed.status?.lastError == .credentials)
+                precondition(ConnectionPresentation(model: failed).errors.map(\.code) == [.credentialRejected, .dnsSetup])
                 precondition(ConnectionPresentation(model: failed).state == .error)
                 precondition(ConnectionPresentation(model: failed).errors.count == 2, "Control and network errors remain independent")
                 precondition(failed.status?.networkError?.problem == .dns)
@@ -59,6 +59,8 @@ enum ModelTests {
                 precondition(IslandState.resolve(phase: .leaving, vpn: .connected, hasError: false, approvalRequired: false) == .leaving)
                 try await sampleStateTests()
                 presentationTests()
+                registryTests()
+                motionTests()
                 print("PASS Swift model: codec fixtures, search, idle/relay paths, missing RTT, selection, approval, independent errors")
                 exit(0)
             } catch { print("FAIL Swift model: \(error)"); exit(1) }
@@ -81,6 +83,11 @@ enum ModelTests {
         let cached = try await PreviewMode.model(.serverUnavailable)
         precondition(ConnectionPresentation(model: cached).state == .connected, "A failed sync inside the lease is not an error")
         guard case .serverCached = serverEmptyState(cached) else { preconditionFailure("Lease-backed netmap remains usable") }
+        let cachedPresentation = ConnectionPresentation(model: cached)
+        precondition(cachedPresentation.showsWarning && cachedPresentation.warnings.map(\.code) == [.syncServerUnreachable])
+        precondition(cachedPresentation.errors.isEmpty && cachedPresentation.offlineUntil != nil)
+        let quiet = try await PreviewMode.model(.running)
+        precondition(!ConnectionPresentation(model: quiet).showsWarning)
         precondition(EmptyStateKind.devices(query: "", count: cached.peers.count, server: serverEmptyState(cached)) == nil)
         let expired = try await PreviewMode.model(.leaseUnavailable)
         precondition(serverEmptyState(expired) == .serverUnavailable)
@@ -98,12 +105,13 @@ enum ModelTests {
         precondition(echoes.readings.first?.setup == true && echoes.durations.count == 2, "Setup sample stays out of RTT summary")
         let denied = try await PreviewMode.model(.running)
         try await PreviewMode.load("ping-denied", into: denied)
-        precondition(PingPresentation(events: denied.pingEvents).failure == "策略拒绝：未获业务授权")
+        precondition(PingPresentation(events: denied.pingEvents).failure?.code == .routeNotAllowed)
         try await PreviewMode.load("netcheck", into: running)
         guard let report = running.netcheck else { preconditionFailure("Netcheck sample decodes") }
         let facts = NetcheckPresentation(report: report).facts
-        precondition(facts.first(where: { $0.id == "IPv6" })?.value == "未检测到")
-        precondition(facts.first(where: { $0.id == "nat:0" })?.value == "随目的地变化 · 难以直连")
+        precondition(facts.first(where: { $0.id == "IPv6" })?.value == String(localized: "Not detected"))
+        precondition(facts.first(where: { $0.id == "nat:0" })?.value == String(localized: "Varies by destination · direct links are harder"))
+        precondition(facts.first(where: { $0.id == "nat:0" })?.title == String(localized: "NAT mapping"), "The local socket is help text, not the title")
         print("PASS codec samples: connecting steps, empty/cached/expired states, ping decision/loss/setup and netcheck")
     }
     private static func presentationTests() {
@@ -134,12 +142,62 @@ enum ModelTests {
         precondition(measurements.counts?.timeout == 1 && measurements.counts?.success == 3)
         precondition(PingPresentation(events: []).median == nil && PingPresentation(events: []).counts == nil)
         precondition(PingPresentation(events: [echo(1, .reply, 1000), echo(1, .reply, 2000)]).readings.count == 1)
-        precondition(PingPresentation(events: [.failed(code: .unsupported)]).failure == "macOS 版暂不支持直连外部目标的 ping")
+        precondition(PingPresentation(events: [.failed(code: .unsupported)]).failure?.code == .pingUnsupported)
         let decision = ClientDecision(destination: nil, node: nil, resolution: nil, profile: nil, rule: nil, action: .denied(reason: .noPath), path: [])
-        precondition(PingPresentation(events: [.decision(decision: decision), .failed(code: .permissionDenied)]).failure == "策略拒绝：没有可用路径")
+        precondition(PingPresentation(events: [.decision(decision: decision), .failed(code: .permissionDenied)]).failure?.code == .routeNoPath)
         let unavailable = ClientNetcheck(observedAt: now, server: "https://mesh.example", serverReachable: nil, serverRttUs: nil, unavailable: .notRunning, ipv4: false, ipv6: false, udp: false, sockets: [], observers: [])
-        precondition(NetcheckPresentation(report: unavailable).facts.first(where: { $0.id == "UDP" })?.value == "未测")
+        precondition(NetcheckPresentation(report: unavailable).facts.first(where: { $0.id == "UDP" })?.value == String(localized: "Not tested"))
+        precondition(NetcheckPresentation(report: unavailable).issue?.code == .netcheckNotConnected)
         print("PASS presentation: connection steps, cache lease boundaries, empty states, RTT/setup/loss and missing netcheck")
+    }
+    private static func registryTests() {
+        func table(_ language: String) -> [String: String] {
+            guard let url = Bundle.main.url(forResource: "Localizable", withExtension: "strings", subdirectory: nil, localization: language),
+                  let values = NSDictionary(contentsOf: url) as? [String: String] else { preconditionFailure("Missing \(language) strings") }
+            return values
+        }
+        let english = table("en"), chinese = table("zh-Hans")
+        precondition(Set(IssueCode.allCases.map(\.slug)).count == IssueCode.allCases.count, "Slugs are unique")
+        for code in IssueCode.allCases {
+            precondition(code.rawValue.range(of: "^(ERROR|WARN)_[A-Z0-9_]+$", options: .regularExpression) != nil, code.rawValue)
+            guard let en = english[code.rawValue], let zh = chinese[code.rawValue], !en.isEmpty, !zh.isEmpty, en != zh, en != code.rawValue
+            else { preconditionFailure("\(code.rawValue) needs English and Chinese text") }
+        }
+        let sources = IssueSources.all
+        precondition(Set(IssueCode.allCases).isSubset(of: Set(sources.map(\.code))), "Every code has a source")
+        precondition(IssueSources.problems.count == 17 && IssueSources.syncErrors.count == 9 && IssueSources.ipcCodes.count == 17)
+        precondition(IssueSources.routes.count == 9 && IssueSources.pings.count == 9 && IssueSources.artifacts.count == 5)
+        precondition(IssueCode.sync(.network) == .syncServerUnreachable && IssueCode.syncServerUnreachable.isWarning)
+        precondition(IssueCode.ping(.unsupported).rawValue == "ERROR_PING_UNSUPPORTED")
+        precondition(IssueCode.problem(.credentials).rawValue == "ERROR_CREDENTIAL_REJECTED")
+        print("PASS issue registry: \(IssueCode.allCases.count) unique codes, \(sources.count) mapped sources, en and zh-Hans text")
+    }
+    @MainActor private static func motionTests() {
+        precondition(SkeletonRows.opacity(row: 0, time: nil) == SkeletonRows.opacity(row: 3, time: nil), "Reduce Motion is static")
+        precondition(MeshLoader.level(node: 0, time: nil) == 1 && MeshLoader.level(node: 2, time: nil) == 1)
+        let samples = stride(from: 0.0, to: Breath.period, by: 0.05)
+        let bars = samples.map { SkeletonRows.opacity(row: 0, time: $0) }
+        precondition(bars.min()! >= 0.45 && bars.max()! <= 0.8 && bars.max()! - bars.min()! > 0.3, "Each bar breathes between 0.45 and 0.8")
+        precondition(SkeletonRows.opacity(row: 0, time: 0.4) != SkeletonRows.opacity(row: 1, time: 0.4), "Rows are staggered")
+        precondition(Set([0, 1, 2].map { MeshLoader.level(node: $0, time: 0.3) }).count == 3, "Nodes light in turn")
+        print("PASS motion: breathing skeleton, staggered rows, three-node loader and static Reduce Motion branches")
+    }
+    /// `--issue-codes`: the registry as JSON for documentation; no UI or IPC.
+    static func exportCodes() {
+        func table(_ language: String) -> [String: String] {
+            Bundle.main.url(forResource: "Localizable", withExtension: "strings", subdirectory: nil, localization: language)
+                .flatMap { NSDictionary(contentsOf: $0) as? [String: String] } ?? [:]
+        }
+        let english = table("en"), chinese = table("zh-Hans")
+        let sources = IssueSources.all
+        let values: [[String: Any]] = IssueCode.allCases.map { code in
+            ["code": code.rawValue, "level": code.isWarning ? "warning" : "error", "slug": code.slug,
+             "en": english[code.rawValue] ?? "", "zh-Hans": chinese[code.rawValue] ?? "",
+             "sources": sources.filter { $0.code == code }.map(\.source)]
+        }
+        let data = try! JSONSerialization.data(withJSONObject: values, options: [.prettyPrinted, .sortedKeys])
+        print(String(decoding: data, as: UTF8.self))
+        exit(0)
     }
 }
 #endif

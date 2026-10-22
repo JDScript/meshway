@@ -53,7 +53,7 @@ struct IconPicker: View {
                             Image(choice.assetName).resizable().interpolation(.high)
                                 .scaledToFit().frame(width: 76, height: 76)
                                 .scaleEffect(selected ? 1 : 0.94)
-                            Text(choice.title).font(.callout.weight(selected ? .semibold : .regular))
+                            Text(verbatim: choice.title).font(.callout.weight(selected ? .semibold : .regular))
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.caption).foregroundStyle(.tint)
                                 .opacity(selected ? 1 : 0).accessibilityHidden(true)
@@ -64,13 +64,13 @@ struct IconPicker: View {
                         .contentShape(.rect(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(choice.title + (choice == .light ? ", default icon" : ""))
+                    .accessibilityLabel(choice == .light ? Text("\(choice.title), default") : Text(verbatim: choice.title))
                     .accessibilityAddTraits(selected ? .isSelected : [])
-                    .help(choice == .light ? "Frost · default application icon" : "Use \(choice.title) in the Dock")
+                    .help(choice == .light ? Text("Frost · default") : Text("Use \(choice.title) in the Dock"))
                 }
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: preferences.choice)
-            Text("Custom icons appear in the Dock while Meshway is running. Finder keeps the default Frost icon.")
+            Text("Shown in the Dock while Meshway runs.")
                 .font(.caption).foregroundStyle(.secondary).lineLimit(nil).fixedSize(horizontal: false, vertical: true)
         }.padding(.vertical, 4)
     }

@@ -77,25 +77,31 @@ enum PreviewMode {
                     guard AppPage(rawValue: args[index + 1]) != nil else { throw IPCFailure.result }
                     model.previewSection = args[index + 1]
                 }
-                let main = window(MainView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 820, height: 520), title: "Meshway")
-                let panel = window(MenuPanel(model: model), size: NSSize(width: 316, height: 512), title: "Meshway menu panel", panel: true)
-                let settings = window(SettingsView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 580, height: 510), title: "Meshway 设置")
-                windows = [main, panel, settings]
+                let locale = Locale(identifier: Bundle.main.preferredLocalizations.first ?? "en")
+                let main = window(MainView(model: model).environment(IconPreferences(defaults: nil)).environment(\.locale, locale), size: NSSize(width: 820, height: 520), title: "Meshway")
+                let panel = window(MenuPanel(model: model).environment(\.locale, locale), size: NSSize(width: 316, height: 512), title: "Meshway menu panel", panel: true)
+                let settings = window(SettingsView(model: model).environment(IconPreferences(defaults: nil)).environment(\.locale, locale), size: NSSize(width: 580, height: 510), title: "Meshway Settings")
+                let popover = args.contains("--preview-popover")
+                    ? window(IssuePopover(model: model).environment(\.locale, locale).background(.regularMaterial), size: NSSize(width: 340, height: 300), title: "Meshway details", panel: false)
+                    : nil
+                windows = [main, panel, settings] + (popover.map { [$0] } ?? [])
+                popover?.setFrameOrigin(NSPoint(x: 400, y: 600))
                 main.setFrameOrigin(NSPoint(x: 60, y: 80)); panel.setFrameOrigin(NSPoint(x: 950, y: 160))
                 main.makeKeyAndOrderFront(nil); panel.orderFront(nil); NSApp.activate()
                 if let index = args.firstIndex(of: "--snapshot-dir"), args.count > index + 1 {
                     try await Task.sleep(for: .seconds(2))
                     let directory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (args.contains("--preview-search") ? "-search" : "") + (diagnostics.isEmpty ? "" : "-" + diagnostics.joined(separator: "+")) + (dark ? "-dark" : "-light")
+                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (args.contains("--preview-search") ? "-search" : "") + (diagnostics.isEmpty ? "" : "-" + diagnostics.joined(separator: "+")) + (args.contains("--preview-locale") ? "-" + (Bundle.main.preferredLocalizations.first ?? "en") : "") + (dark ? "-dark" : "-light")
                     try await snapshot(main, to: directory.appendingPathComponent("\(stem)-main.png"))
                     try await snapshot(panel, to: directory.appendingPathComponent("\(stem)-panel.png"))
                     let settingsPage: String
                     if let index = args.firstIndex(of: "--preview-settings"), args.count > index + 1 { settingsPage = "-" + args[index + 1] }
                     else { settingsPage = "" }
                     try await snapshot(settings, to: directory.appendingPathComponent("\(stem)-settings\(settingsPage).png"))
+                    if let popover { try await snapshot(popover, to: directory.appendingPathComponent("\(stem)-popover.png")) }
                     print("Preview screenshots saved to \(directory.path)")
-                    main.close(); panel.close(); settings.close(); exit(0)
+                    main.close(); panel.close(); settings.close(); popover?.close(); exit(0)
                 }
             } catch { print("Preview failed: \(error)"); exit(1) }
         }
@@ -124,9 +130,11 @@ enum PreviewMode {
         capture.arguments = ["-x", "-o", "-l\(window.windowNumber)", url.path]
         try capture.run()
         capture.waitUntilExit()
-        guard capture.terminationStatus == 0 else { throw IPCFailure.remote("Window capture failed; allow screen recording for the preview launcher.") }
+        guard capture.terminationStatus == 0 else { throw PreviewFailure.capture }
     }
 }
+
+private enum PreviewFailure: Error { case capture }
 
 private final class PreviewWindow: NSWindow {
     override var canBecomeKey: Bool { true }

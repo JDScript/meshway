@@ -5,10 +5,10 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .general: "通用"
-        case .account: "账户与本机"
-        case .details: "详细信息"
-        case .diagnostics: "诊断"
+        case .general: String(localized: "General")
+        case .account: String(localized: "Account")
+        case .details: String(localized: "Details")
+        case .diagnostics: String(localized: "Diagnostics")
         }
     }
     var symbol: String {
@@ -34,10 +34,10 @@ struct SettingsView: View {
                 .tabItem { Label(SettingsPage.diagnostics.title, systemImage: SettingsPage.diagnostics.symbol) }.tag(SettingsPage.diagnostics)
         }.frame(width: 580, height: 510)
             .overlay(alignment: .bottomTrailing) { if model.sampleMode { SampleBanner().padding(6) } }
-            .confirmationDialog("永久注销此节点？", isPresented: $showLogout, titleVisibility: .visible) {
-                Button("注销", role: .destructive) { Task { await model.identityOperation(logout: true) } }
-                Button("取消", role: .cancel) {}
-            } message: { Text("Server 将删除此节点，确认后清除本地身份。离线请求会保持待处理状态。") }
+            .confirmationDialog("Sign this Mac out of the network?", isPresented: $showLogout, titleVisibility: .visible) {
+                Button("Sign out", role: .destructive) { Task { await model.identityOperation(logout: true) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("This Mac is removed from the network. You’ll need approval to join again.") }
             .task {
                 #if DEBUG
                 if model.sampleMode, let index = CommandLine.arguments.firstIndex(of: "--preview-settings"), CommandLine.arguments.count > index + 1 {
@@ -47,68 +47,88 @@ struct SettingsView: View {
             }
     }
     private var general: some View {
-        Form { Section("应用图标") { IconPicker() } }.formStyle(.grouped)
+        Form { Section("App icon") { IconPicker() } }.formStyle(.grouped)
     }
     private var account: some View {
         Form {
-            Section("本机") {
-                LabeledContent("名称", value: model.status?.node?.hostname ?? "尚未安装")
-                AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4, missing: model.status?.node == nil ? "尚未安装" : "未分配")
-                AddressRow(title: "Mesh IPv6", value: model.status?.node?.ipv6, missing: model.status?.node == nil ? "尚未安装" : "未分配")
-                LabeledContent("Server", value: model.status?.server ?? (model.server.isEmpty ? "未配置" : model.server))
+            Section("This Mac") {
+                LabeledContent { Text(verbatim: model.status?.node?.hostname ?? "—") } label: { Text("Name") }
+                AddressRow(title: "IPv4", value: model.status?.node?.ipv4, missing: "—")
+                AddressRow(title: "IPv6", value: model.status?.node?.ipv6, missing: "—")
+                LabeledContent { Text(verbatim: model.status?.server ?? (model.server.isEmpty ? "—" : model.server)) } label: { Text("Server") }
             }
-            Section("身份") {
-                Button("轮换密钥", systemImage: "key.horizontal") { Task { await model.identityOperation(logout: false) } }
+            Section("Security") {
+                Button("Rotate key", systemImage: "key.horizontal") { Task { await model.identityOperation(logout: false) } }
                     .disabled(!model.canRotateKey || model.busy || model.sampleMode)
-                    .help(unavailableHelp(model, fallback: model.canRotateKey ? "轮换此节点的密钥" : "需要已接入且不处于注销中的身份"))
-                Button("注销网络…", role: .destructive) { showLogout = true }
+                    .help(unavailableHelp(model, fallback: model.canRotateKey ? String(localized: "Replace this Mac’s key") : String(localized: "Available after joining")))
+                Button("Sign out…", role: .destructive) { showLogout = true }
                     .disabled(!model.canLogout || model.busy || model.sampleMode)
-                    .help(unavailableHelp(model, fallback: model.canLogout ? "永久删除此节点" : "尚无已接入身份"))
+                    .help(unavailableHelp(model, fallback: model.canLogout ? String(localized: "Remove this Mac from the network") : String(localized: "Available after joining")))
             }
             if let notice = model.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+            if let issue = model.issue { IssueRow(issue: issue) }
         }.formStyle(.grouped)
+    }
+    private var extensionLabel: String {
+        if model.sampleMode { return String(localized: "Preview") }
+        switch model.tunnel.extensionState {
+        case "Enabled", "Extension request completed": return String(localized: "Enabled")
+        case "Approval required": return String(localized: "Needs approval")
+        case "Not installed": return String(localized: "Not installed")
+        case "Installed, not enabled": return String(localized: "Not enabled")
+        case "Activation failed": return String(localized: "Failed")
+        case "Extension request requires reboot": return String(localized: "Restart required")
+        case "Not checked": return String(localized: "Not checked")
+        default: return String(localized: "Unavailable")
+        }
+    }
+    private func row(_ title: LocalizedStringKey, _ value: String) -> some View {
+        LabeledContent { Text(verbatim: value) } label: { Text(title) }
+    }
+    private func time(_ title: LocalizedStringKey, _ date: Date?) -> some View {
+        LabeledContent { OptionalTime(date: date) } label: { Text(title) }
     }
     private var details: some View {
         Form {
-            Section("连接") {
-                LabeledContent("Node", value: model.phase)
-                LabeledContent("macOS VPN", value: model.vpnLabel)
-                LabeledContent("Network Extension", value: model.sampleMode ? "预览不检查" : model.tunnel.extensionState)
-                Button("启用 Network Extension…") { model.tunnel.activate() }.disabled(model.sampleMode)
-                    .help(unavailableHelp(model, fallback: "请求 macOS 启用网络扩展"))
-                if !model.sampleMode { Text(model.tunnel.message).font(.caption).foregroundStyle(.secondary) }
+            Section("Connection") {
+                row("Meshway", model.phase)
+                row("macOS VPN", model.vpnLabel)
+                row("Network extension", extensionLabel)
+                Button("Enable network extension…") { model.tunnel.activate() }.disabled(model.sampleMode)
+                    .help(unavailableHelp(model, fallback: String(localized: "Allow Meshway in System Settings")))
             }
-            Section("状态") {
-                LabeledContent("租约截止") { OptionalTime(date: model.status?.netmap?.expiresAt) }
-                LabeledContent("Control sync", value: model.status.map { human($0.sync) } ?? "不可用")
-                LabeledContent("上次同步") { OptionalTime(date: model.status?.lastSyncAt) }
-                LabeledContent("数据面", value: model.status.map { human($0.dataPlane) } ?? "不可用")
-                LabeledContent("数据面观测") { OptionalTime(date: model.status?.observedAt) }
-                LabeledContent("网络变化") { OptionalTime(date: model.status?.lastNetworkChange) }
-                LabeledContent("Key generation", value: model.status?.identity.map { String($0.keyGeneration) } ?? "尚无身份")
+            Section("Status") {
+                time("Works offline until", model.status?.netmap?.expiresAt)
+                row("Server", model.status.map { syncName($0.sync) } ?? "—")
+                time("Last update", model.status?.lastSyncAt)
+                row("Network", model.status.map { planeName($0.dataPlane) } ?? "—")
+                time("Last network change", model.status?.lastNetworkChange)
+                time("Next retry", model.status?.retryAt)
+                row("Key version", model.status?.identity.map { String($0.keyGeneration) } ?? "—")
             }
-            Section("已安装配置") {
-                LabeledContent("Netmap", value: model.status?.netmap.map { "Revision \($0.reference.revision) · serial \($0.reference.serial)" } ?? "尚无有效租约")
-                LabeledContent("安装", value: model.status?.netmap == nil ? "尚未安装" : (model.netmapApplied ? "已应用" : "等待应用"))
-                LabeledContent("缺失规则集", value: model.status?.netmap.map { String($0.missingArtifacts.count) } ?? "不适用")
-                LabeledContent("同步问题", value: model.status?.syncError.map(human) ?? "未报告")
-                LabeledContent("下次重试") { OptionalTime(date: model.status?.retryAt) }
+            Section("Network settings") {
+                row("Version", model.status?.netmap.map { "\($0.reference.revision).\($0.reference.serial)" } ?? "—")
+                row("Applied", model.status?.netmap == nil ? "—" : (model.netmapApplied ? String(localized: "Yes") : String(localized: "Applying…")))
+                row("Missing rule sets", model.status?.netmap.map { String($0.missingArtifacts.count) } ?? "—")
             }
             if let selection = model.selection {
-                Section("出口选择") {
-                    LabeledContent("Netmap 方案", value: selection.appliedProfile)
-                    LabeledContent("请求", value: selection.requestedProfile ?? "跟随默认方案")
-                    LabeledContent("默认", value: selection.defaultProfile)
-                    LabeledContent("锁定", value: selection.locked ? "管理员已锁定" : "未锁定")
-                    LabeledContent("请求可用性", value: selection.requestedUnavailable.map(human) ?? "未报告问题")
-                    LabeledContent("自动方案", value: selection.auto?.profile ?? "不适用")
-                    LabeledContent("自动依据", value: selection.auto.map { human($0.basis) } ?? "不适用")
-                    LabeledContent("声明区域", value: selection.auto?.region ?? (selection.auto == nil ? "不适用" : "未声明"))
+                Section("Exit profile") {
+                    row("In use", selection.appliedProfile)
+                    row("Chosen", selection.requestedProfile ?? String(localized: "Default"))
+                    row("Default", selection.defaultProfile)
+                    row("Locked", selection.locked ? String(localized: "Yes") : String(localized: "No"))
+                    if let auto = selection.auto {
+                        row("Automatic", auto.profile)
+                        row("Based on", basisName(auto.basis))
+                        row("Region", auto.region ?? "—")
+                    }
                 }
             }
-            if !ConnectionPresentation(model: model).errors.isEmpty {
-                Section("问题") {
-                    ForEach(Array(ConnectionPresentation(model: model).errors.enumerated()), id: \.offset) { _, error in Text(error).textSelection(.enabled) }
+            let presentation = ConnectionPresentation(model: model)
+            if !presentation.errors.isEmpty || !presentation.warnings.isEmpty {
+                Section("Issues") {
+                    ForEach(presentation.errors) { IssueRow(issue: $0) }
+                    ForEach(presentation.warnings) { IssueRow(issue: $0) }
                 }
             }
         }.formStyle(.grouped)

@@ -4,11 +4,11 @@ enum EmptyStateKind: Equatable {
     case devices, search(String), mesh, profiles, serverUnavailable, serverCached(Date)
     var title: String {
         switch self {
-        case .devices: "还没有其他设备"
-        case .search(let query): "没有匹配“\(query)”的设备"
-        case .mesh: "只有 Mesh 方案"
-        case .profiles: "尚无出口方案"
-        case .serverUnavailable, .serverCached: "暂时连不上 Server"
+        case .devices: String(localized: "No other devices yet")
+        case .search(let query): String(localized: "No devices match “\(query)”")
+        case .mesh: String(localized: "Mesh only")
+        case .profiles: String(localized: "No exit profiles")
+        case .serverUnavailable, .serverCached: String(localized: "Can’t reach the server")
         }
     }
     var symbol: String {
@@ -21,12 +21,12 @@ enum EmptyStateKind: Equatable {
     }
     var explanation: String {
         switch self {
-        case .devices: "在其他设备上安装 Meshway 并加入这个网络后，会出现在这里。"
-        case .search: "试试名称或 Mesh IP 的一部分。"
-        case .mesh: "管理员可以在 Console 为你分配其他出口方案。"
-        case .profiles: "安装网络配置后，可用方案会出现在这里。"
-        case .serverUnavailable: "尚不能确认缓存网络可用。等待有效租约与数据面就绪。"
-        case .serverCached: "已在用缓存的网络继续工作。"
+        case .devices: String(localized: "Devices that join this network appear here.")
+        case .search: String(localized: "Try part of a name or IP address.")
+        case .mesh: String(localized: "Your admin can add more profiles.")
+        case .profiles: String(localized: "Profiles appear once you’re connected.")
+        case .serverUnavailable: String(localized: "Retrying…")
+        case .serverCached: String(localized: "Working offline. Retrying…")
         }
     }
     static func server(sync: ClientSync?, issue: ClientSyncError?, ready: Bool, applied: Bool, expires: Date?, now: Date) -> Self? {
@@ -85,8 +85,7 @@ struct EmptyStateView: View {
     }
     private func explanation(now: Date) -> String {
         guard case .serverCached(let expiry) = kind else { return kind.explanation }
-        guard expiry > now else { return "缓存租约已到期，等待重新同步；不能继续使用过期授权。" }
-        let remaining = expiry.formatted(.relative(presentation: .numeric))
-        return "已在用缓存的网络继续工作，\(remaining)到期。正在重试…"
+        guard expiry > now else { return String(localized: "Offline access has ended. Retrying…") }
+        return offlineText(expiry)
     }
 }

@@ -12,14 +12,14 @@ struct MenuPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             StatusIsland(model: model).padding(.bottom, 6)
-            sectionLabel("出口")
+            sectionLabel(String(localized: "Exit"))
             ScrollView {
             if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: min(3, max(2, model.selection?.profiles.count ?? 2))) }
             else if let selection = model.selection { ProfileRows(model: model, selection: selection, compact: true) }
             else { EmptyStateView(kind: .profiles, compact: true, height: 96) }
             }.scrollIndicators(.hidden).frame(height: 96, alignment: .top)
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
-            sectionLabel("设备")
+            sectionLabel(String(localized: "Devices"))
             VStack(alignment: .leading, spacing: 0) {
             if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(3, min(peers.count, 5))) }
             else if peers.isEmpty {
@@ -33,17 +33,17 @@ struct MenuPanel: View {
                     }
                 }.scrollIndicators(.hidden)
                 if peers.count > 5 {
-                    Button(expandedPeers ? "收起设备" : "还有 \(peers.count - 5) 台…") { expandedPeers.toggle() }
+                    Button(expandedPeers ? String(localized: "Show less") : String(localized: "\(peers.count - 5) more…")) { expandedPeers.toggle() }
                         .buttonStyle(MenuRowStyle()).font(.system(size: 12))
                 }
             }
             }.frame(height: expandedPeers ? 330 : 180, alignment: .top)
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
-            Button("打开 Meshway") { openWindow(id: "main"); NSApp.activate() }.buttonStyle(MenuRowStyle())
+            Button("Open Meshway") { openWindow(id: "main"); NSApp.activate() }.buttonStyle(MenuRowStyle())
             Button { openSettings(); NSApp.activate() } label: {
-                HStack { Text("设置…"); Spacer(); Text("⌘,").opacity(0.5) }
+                HStack { Text("Settings…"); Spacer(); Text(verbatim: "⌘,").opacity(0.5) }
             }.buttonStyle(MenuRowStyle())
-            Button("退出") { NSApp.terminate(nil) }.buttonStyle(MenuRowStyle())
+            Button("Quit") { NSApp.terminate(nil) }.buttonStyle(MenuRowStyle())
         }.font(.system(size: 13)).padding(10).frame(width: 316)
             .background(colorScheme == .light ? Color.white.opacity(0.94) : Color(nsColor: .windowBackgroundColor).opacity(0.9), in: .rect(cornerRadius: 26))
             .glassEffect(.regular, in: .rect(cornerRadius: 26))
