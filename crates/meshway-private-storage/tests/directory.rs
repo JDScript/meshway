@@ -179,3 +179,52 @@ fn an_abandoned_staging_file_is_removed_in_either_publication_state() {
     assert!(path.join(&foreign).exists());
     assert!(directory.remove_staging("journal.json").is_err());
 }
+
+#[test]
+fn links_are_published_recognized_as_aliases_and_renamed_over() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("private");
+    let owner = Directory::open(&path, "owner.lock").unwrap();
+    let write = |name: &str, bytes: &[u8]| {
+        std::io::Write::write_all(&mut owner.file(name, true).unwrap().unwrap(), bytes).unwrap()
+    };
+    write("live", b"old");
+    write("separate", b"old");
+    owner.link("live", "backup").unwrap();
+    // Two names of one file are not checked files until one is removed.
+    assert!(matches!(
+        owner.file("live", false),
+        Err(Error::UnsafeStorage)
+    ));
+    assert!(matches!(
+        owner.link("live", "third"),
+        Err(Error::UnsafeStorage)
+    ));
+    assert!(!owner.remove_link("live", "absent").unwrap());
+    assert!(!owner.remove_link("live", "separate").unwrap());
+    assert!(owner.remove_link("live", "backup").unwrap());
+    assert!(!path.join("backup").exists());
+    owner.file("live", false).unwrap().unwrap();
+
+    // Publication: a second name keeps the old file, the new one is renamed
+    // over the first.
+    owner.link("live", "backup").unwrap();
+    write("staged", b"new");
+    owner.rename_over("staged", "live").unwrap();
+    assert_eq!(fs::read(path.join("live")).unwrap(), b"new");
+    assert_eq!(fs::read(path.join("backup")).unwrap(), b"old");
+    assert!(!path.join("staged").exists());
+    owner.file("live", false).unwrap().unwrap();
+    owner.file("backup", false).unwrap().unwrap();
+    assert!(!owner.remove_link("live", "backup").unwrap());
+    // Never over something that is not an owner-only file.
+    write("staged", b"newer");
+    fs::create_dir(path.join("directory")).unwrap();
+    assert!(owner.rename_over("staged", "directory").is_err());
+    fs::set_permissions(path.join("separate"), fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(
+        owner.rename_over("staged", "separate"),
+        Err(Error::UnsafeStorage)
+    ));
+    assert!(owner.available_bytes().unwrap() > 0);
+}

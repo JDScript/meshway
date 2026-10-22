@@ -218,3 +218,20 @@ CREATE INDEX activity_events_network_sequence ON activity_events(network_id, seq
 -- its activity row is the retry record.
 CREATE UNIQUE INDEX activity_events_routing_request ON activity_events(network_id, actor_user_id, request_id)
     WHERE action = 'routing.select' AND actor_kind = 'user';
+
+-- One row per completed storage migration (`store::schema::migrate`),
+-- committed in the migration's own transaction before the new file replaces
+-- the old one. `backup` names the old file kept in the data directory.
+CREATE TABLE schema_migrations (
+    sequence INTEGER NOT NULL PRIMARY KEY CHECK (sequence BETWEEN 1 AND 9007199254740991),
+    from_version INTEGER NOT NULL CHECK (from_version >= 1),
+    to_version INTEGER NOT NULL CHECK (to_version > from_version),
+    build TEXT NOT NULL CHECK (length(build) BETWEEN 1 AND 128),
+    started_at INTEGER NOT NULL CHECK (started_at >= 0),
+    finished_at INTEGER NOT NULL CHECK (finished_at >= started_at),
+    backup TEXT NOT NULL CHECK (length(backup) BETWEEN 1 AND 128)
+) STRICT;
+CREATE TRIGGER schema_migrations_no_update BEFORE UPDATE ON schema_migrations
+BEGIN SELECT RAISE(ABORT, 'immutable migration record'); END;
+CREATE TRIGGER schema_migrations_no_delete BEFORE DELETE ON schema_migrations
+BEGIN SELECT RAISE(ABORT, 'migration records are retained'); END;

@@ -259,6 +259,77 @@ impl Directory {
         }
     }
 
+    /// Durably give the checked owner-only file `existing` a second name
+    /// `new_name` (a hard link; `new_name` must not exist). Until one of the
+    /// names is removed or renamed over, neither is a checked [`Self::file`].
+    pub fn link(&self, existing: &str, new_name: &str) -> Result<(), Error> {
+        name(existing)?;
+        name(new_name)?;
+        if existing == new_name || existing == self.lock_name || new_name == self.lock_name {
+            return Err(Error::InvalidPath);
+        }
+        #[cfg(unix)]
+        {
+            unix::link(&self.directory, existing, new_name)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    /// Durably remove `alias` when it is the only other name of `name`'s
+    /// owner-only file `file_name` (what an interrupted [`Self::link`]
+    /// publication left);
+    /// `false` when `alias` is absent or a separate file, which is kept.
+    pub fn remove_link(&self, file_name: &str, alias: &str) -> Result<bool, Error> {
+        name(file_name)?;
+        name(alias)?;
+        if file_name == alias || file_name == self.lock_name || alias == self.lock_name {
+            return Err(Error::InvalidPath);
+        }
+        #[cfg(unix)]
+        {
+            unix::remove_link(&self.directory, file_name, alias)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    /// Durably rename the complete checked owner-only file `source` over
+    /// `final_name` (which, when present, must be a checked file too).
+    pub fn rename_over(&self, source: &str, final_name: &str) -> Result<(), Error> {
+        name(source)?;
+        name(final_name)?;
+        if source == final_name || source == self.lock_name || final_name == self.lock_name {
+            return Err(Error::InvalidPath);
+        }
+        #[cfg(unix)]
+        {
+            unix::rename_over(&self.directory, source, final_name)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    /// Bytes an unprivileged writer can still allocate on this directory's
+    /// filesystem.
+    pub fn available_bytes(&self) -> Result<u64, Error> {
+        #[cfg(unix)]
+        {
+            let stat = rustix::fs::fstatvfs(&self.directory).map_err(|_| Error::Io)?;
+            Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
     /// Names of the entries in this directory (bounded), the lock excluded.
     pub fn names(&self) -> Result<Vec<String>, Error> {
         #[cfg(unix)]

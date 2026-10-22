@@ -9,6 +9,7 @@ mod diagnostics;
 mod dns;
 mod exit;
 mod fallback;
+mod fault;
 mod peer;
 mod ping;
 mod ping_cli;
@@ -16,6 +17,7 @@ mod ping_management;
 mod recovery;
 mod roam;
 mod signals;
+mod supervised;
 mod traversal;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -167,6 +169,8 @@ enum TraversalMode {
     Exit6,
     /// `roam/direct`: A changes uplinks under live traffic.
     Roam,
+    /// `fault/throttle`: A→R→B and B's exit E under external pressure.
+    Fault,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -231,6 +235,11 @@ enum Command {
         #[arg(long, value_enum)]
         role: roam::Role,
     },
+    /// Isolated fault-injection Server or real daemon.
+    FaultActor {
+        #[arg(long, value_enum)]
+        role: fault::Role,
+    },
     Prepare,
     Controller,
     Actor {
@@ -269,6 +278,17 @@ async fn main() -> std::process::ExitCode {
         eprintln!("--traversal roam requires roam-actor, native-udp and --dns-backend off");
         return std::process::ExitCode::FAILURE;
     }
+    if (cli.traversal == TraversalMode::Fault) != matches!(cli.command, Command::FaultActor { .. })
+        || (cli.traversal == TraversalMode::Fault
+            && (cli.dns_backend != DnsBackend::Off
+                || !matches!(cli.transport, CarrierMode::NativeUdp)
+                || cli.netmap_scenario.is_some()))
+    {
+        eprintln!(
+            "--traversal fault requires fault-actor, native-udp, --dns-backend off and no scenario"
+        );
+        return std::process::ExitCode::FAILURE;
+    }
     if cli.reported_endpoints
         && (cli.traversal != TraversalMode::Off
             || !matches!(cli.transport, CarrierMode::NativeUdp)
@@ -305,6 +325,7 @@ async fn main() -> std::process::ExitCode {
     let result = match cli.command {
         Command::ExitActor { role } => exit::run(&cli, role).await,
         Command::RoamActor { role } => roam::run(&cli, role).await,
+        Command::FaultActor { role } => fault::run(&cli, role).await,
         Command::Prepare => prepare(&cli).await,
         Command::Controller => controller::run(&cli).await,
         Command::Actor { role } => actor::run(&cli, role).await,

@@ -1,10 +1,13 @@
 //! The current private schema: accounts, networks, configuration, execution, state and netmaps.
-//! Only this exact schema is accepted; there is no historical migration chain.
+//! At run time only this exact schema is accepted. A database of an earlier
+//! version is converted once, before it is opened, by the one-way migration
+//! in [`migrate`], which reads that version only through its frozen snapshot
+//! in `history/`.
 
 use rusqlite::{Connection, TransactionBehavior};
 use thiserror::Error;
 
-const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application identity.
+pub(crate) const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application identity.
 // 2: netmap receipts replace execution publications, demands and receipts.
 // 3: rule-set artifacts are global `MWRS` content referenced by digest.
 // 4: accepted rule-set catalogs keep their verified document.
@@ -12,7 +15,23 @@ const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application iden
 // 6: routing selections are activities (Node actor, selection target).
 // 7: provider catalog checks; unreferenced rule-set artifacts are collected.
 // 8: `routing.autoResolve` activities (Server actor, selection target).
-const VERSION: i64 = 8;
+// 9: `schema_migrations`; first version migrated rather than reset.
+//
+// Every SQL change raises VERSION in the same commit, adds the snapshot
+// `history/v{VERSION}.sql` (equal to SQL, see `HISTORY`) and its migration
+// level in `migrate/`. A new NOT NULL column must be derivable from rows that
+// already exist; a fact that cannot be derived does not get a NOT NULL column.
+pub(crate) const VERSION: i64 = 9;
+/// The oldest version a database is migrated from. Raised only on a minor
+/// release boundary, and named in the changelog.
+pub(crate) const MIN_MIGRATABLE: i64 = 8;
+/// The canonical schema of every version from MIN_MIGRATABLE through VERSION.
+/// A snapshot is never modified once committed (its SHA-256 is pinned in the
+/// tests); the last one is the current schema.
+const HISTORY: &[(i64, &str)] = &[
+    (8, include_str!("history/v8.sql")),
+    (9, include_str!("history/v9.sql")),
+];
 const SQL: &str = concat!(
     include_str!("current.sql"),
     "\n",
@@ -98,19 +117,39 @@ pub(crate) fn check_with<T, E: From<SchemaError>>(
     Ok(result)
 }
 
+/// The canonical SQL of `version`, from its snapshot.
+pub(crate) fn history(version: i64) -> Option<&'static str> {
+    HISTORY
+        .iter()
+        .find(|(candidate, _)| *candidate == version)
+        .map(|(_, sql)| *sql)
+}
+
 fn validate(connection: &Connection) -> Result<(), SchemaError> {
-    if identity(connection)? != (APPLICATION_ID, VERSION) {
+    validate_as(connection, VERSION, SQL)
+}
+
+/// The full check of a database written by schema `version` with canonical
+/// SQL `sql`: the current schema, or a snapshot when a migration proves its
+/// input and output. The row invariants below hold for every version from
+/// MIN_MIGRATABLE on; a version that changes them selects them by `version`.
+pub(crate) fn validate_as(
+    connection: &Connection,
+    version: i64,
+    sql: &str,
+) -> Result<(), SchemaError> {
+    if identity(connection)? != (APPLICATION_ID, version) {
         return Err(SchemaError::Unsupported);
     }
     // Compare every table/index/trigger/view, including SQLite's implicit unique
     // indexes. Exact canonical SQL includes CHECK/FK/STRICT constraints; column
     // names and version numbers alone cannot attest those constraints.
     let expected = Connection::open_in_memory()?;
-    expected.execute_batch(SQL)?;
+    expected.execute_batch(sql)?;
     if let Some(difference) = structure_difference(&objects(connection)?, &objects(&expected)?) {
         return Err(SchemaError::Structure(difference));
     }
-    let mut integrity = connection.prepare("PRAGMA integrity_check")?;
+    let mut integrity = connection.prepare("PRAGMA main.integrity_check")?;
     let mut rows = integrity.query([])?;
     let mut count = 0;
     while let Some(row) = rows.next()? {
@@ -121,7 +160,7 @@ fn validate(connection: &Connection) -> Result<(), SchemaError> {
     }
     if count != 1
         || connection
-            .prepare("PRAGMA foreign_key_check")?
+            .prepare("PRAGMA main.foreign_key_check")?
             .query([])?
             .next()?
             .is_some()
@@ -158,7 +197,7 @@ fn validate(connection: &Connection) -> Result<(), SchemaError> {
     Ok(())
 }
 
-fn identity(connection: &Connection) -> Result<(i64, i64), SchemaError> {
+pub(crate) fn identity(connection: &Connection) -> Result<(i64, i64), SchemaError> {
     Ok((
         connection.pragma_query_value(None, "application_id", |r| r.get(0))?,
         connection.pragma_query_value(None, "user_version", |r| r.get(0))?,
@@ -213,6 +252,8 @@ fn objects(connection: &Connection) -> Result<Vec<SchemaObject>, SchemaError> {
         .collect::<Result<_, _>>()
         .map_err(Into::into)
 }
+
+pub(crate) mod migrate;
 
 #[cfg(test)]
 pub(crate) mod tests;

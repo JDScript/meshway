@@ -329,7 +329,7 @@ async fn links() -> Result<BTreeSet<String>> {
 
 /// One A query to resolved's own stub (no libc retry window): whether it
 /// answered NOERROR with at least one record.
-async fn stub_answers(name: &str) -> Result<bool> {
+pub(crate) async fn stub_answers(name: &str) -> Result<bool> {
     tokio::time::timeout(Duration::from_secs(1), async {
         let mut entropy = [0; 2];
         getrandom::fill(&mut entropy).map_err(|_| "DNS query entropy unavailable")?;

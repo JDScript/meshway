@@ -213,8 +213,9 @@ def main():
                         help="real libc DNS conformance in an owned private mount namespace")
     parser.add_argument("--dns-image-manifest", type=Path,
                         help="parent-built dev/dns-fixture/build.py immutable OS image manifest")
-    parser.add_argument("--traversal", choices=("off", "nat", "exit", "exit6", "roam"), default="off",
-                        help="real two-router IPv4 NAT acquisition with empty UDP endpoints")
+    parser.add_argument("--traversal", choices=("off", "nat", "exit", "exit6", "roam", "fault"), default="off",
+                        help="real two-router IPv4 NAT acquisition with empty UDP endpoints; exit, roam and "
+                             "fault select their own topologies")
     parser.add_argument("--traversal-fallback", action="store_true",
                          help="preauthorize TCP on R, then block only A-R UDP during the same 70-second flows")
     parser.add_argument("--reported-endpoints", action="store_true",
@@ -234,8 +235,10 @@ def main():
         parser.error("--netmap-scenario requires --traversal off --dns-backend off")
     if args.only and args.traversal in ("exit", "exit6"):
         parser.error("--only main is the A/R/B runtime flow, not the exit topology")
-    if args.traversal in ("exit", "exit6", "roam") and (args.dns_backend != "off" or args.transport != "native-udp"):
-        parser.error("--traversal exit/exit6/roam requires --transport native-udp --dns-backend off")
+    if args.traversal in ("exit", "exit6", "roam", "fault") and (args.dns_backend != "off" or args.transport != "native-udp"):
+        parser.error("--traversal exit/exit6/roam/fault requires --transport native-udp --dns-backend off")
+    if args.traversal == "fault" and (args.only or args.netmap_scenario or args.reported_endpoints):
+        parser.error("--traversal fault is its own topology: no --only, scenario or reported endpoints")
     if args.only and args.traversal == "roam":
         parser.error("--only main is the A/R/B runtime flow, not the roaming topology")
     if args.reported_endpoints and (args.transport != "native-udp" or args.traversal != "off" or args.dns_backend != "off"):
@@ -285,6 +288,14 @@ def main():
         spec.loader.exec_module(fixture)
         fixture.execute(report, artifacts, runtime_os, platform, args.short, load,
                         variant="ipv4" if args.traversal == "exit" else "ipv6")
+        return
+    if args.traversal == "fault":
+        spec = importlib.util.spec_from_file_location("meshway_fault_fixture", ROOT / "dev/fault-fixture/runtime.py")
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Fault fixture orchestrator unavailable")
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        fixture.execute(report, artifacts, runtime_os, platform, args.short, load)
         return
     dns_image = None
     dns_assets = None

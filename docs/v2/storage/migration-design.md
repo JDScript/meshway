@@ -1,6 +1,6 @@
 # Server 存储迁移与部署形态设计
 
-> **设计，未实现。** v0.1.0 里程碑 B（[交付门槛](/v2/process#v0-1-gate)）的设计包 MIG-D：Server schema 升级不 reset、不重新接入，以及 Server 的系统服务、发布产物、备份与远程升级。现行 schema 与字段的唯一定义仍是[持久数据库字段](/v2/storage/database)与 `apps/meshway-server/src/store/schema/`；运行参数见 [Server](/v2/server)。本页不加入文档导航；实现后现行语义迁入上述页面与[安装](/v2/install)，本页只保留决定与理由。
+> **MIG-1 已实现，MIG-2／MIG-3 未实现。** 迁移机制的现行语义见[持久数据库字段 · Schema 版本与迁移](/v2/storage/database#migration)与 [Server · 存储迁移](/v2/server#存储迁移)；下文“现状”一节是 MIG-1 之前的状态。实现与本设计的差异：旧库的第二个名字（硬链接）在 `Directory::open` 中按同一 inode 识别并移除，因为私有存储只接受单链接文件；`dev.py update server` 在停旧与启新之间显式运行 `migrate` 并打印备份路径，使迁移失败与启动失败分开报告。v0.1.0 里程碑 B（[交付门槛](/v2/process#v0-1-gate)）的设计包 MIG-D：Server schema 升级不 reset、不重新接入，以及 Server 的系统服务、发布产物、备份与远程升级。现行 schema 与字段的唯一定义仍是[持久数据库字段](/v2/storage/database)与 `apps/meshway-server/src/store/schema/`；运行参数见 [Server](/v2/server)。本页不加入文档导航；实现后现行语义迁入上述页面与[安装](/v2/install)，本页只保留决定与理由。
 
 ## 现状 {#current}
 

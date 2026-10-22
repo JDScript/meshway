@@ -37,6 +37,21 @@ pub struct Settings {
     /// Netmap lease validity (60 seconds through 24 hours) and nominal sync
     /// hold (1 through 54 seconds, jittered ±10%).
     pub netmap: crate::netmap::SyncTiming,
+    /// Whether opening converts a database of an earlier schema version
+    /// (see [`Migration`]).
+    pub migration: Migration,
+}
+
+/// What opening does with a database of an earlier, still supported schema
+/// version. Unsupported, damaged and newer databases are always refused.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Migration {
+    /// Refuse it: offline maintenance never migrates implicitly.
+    #[default]
+    Refuse,
+    /// Migrate it once, keeping the old file as a backup, before it is opened
+    /// (`meshway-server` and `meshway-server migrate`).
+    Automatic,
 }
 
 impl Settings {
@@ -53,6 +68,7 @@ impl Settings {
             stun_listen: Vec::new(),
             stun_servers: BTreeMap::new(),
             netmap: crate::netmap::SyncTiming::default(),
+            migration: Migration::Refuse,
         }
     }
 }

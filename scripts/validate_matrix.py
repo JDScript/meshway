@@ -40,6 +40,9 @@ ROWS = {
     "roam/relay": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-relay")),
     "roam/flap": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-flap")),
     "roam/exit": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-exit")),
+    # A→R→B and B's exit E, resolved on every Node, under external pressure
+    # (CPU limits, resolved restarts, Control dropped); one bridge.
+    "fault/throttle": ("runtime", ("--transport", "native-udp", "--traversal", "fault", "--dns-backend", "off")),
     "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "offline")),
     "netmap/revoke": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "revoke")),
     "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "expiry")),
@@ -261,6 +264,20 @@ def bridges(name):
     return 0 if name in ("tun", "packet") else 1
 
 
+# The two longest rows start first, so the matrix's wall clock is not their
+# start time plus their length: exit/off (about 13 minutes) and
+# fault/throttle (about 12; the others at most about 6, the roam rows one at
+# a time). With fault/throttle holding a slot, exit/off in its listed place
+# started after 15 minutes and the matrix took 1,541 s (20261022T072926Z-2cbf580a)
+# against 1,036 s with both first (20261022T065619Z-34e5d00e). Results keep
+# the selected order.
+FIRST = ("exit/off", "fault/throttle")
+
+
+def schedule(rows):
+    return sorted(rows, key=lambda name: (FIRST.index(name) if name in FIRST else len(FIRST)))
+
+
 def execute_row(name, directory, artifacts, images, args):
     need = min(bridges(name), NETWORK_BUDGET)
     with NETWORKS:
@@ -378,7 +395,8 @@ def main(argv=None):
         report["status"] = "running"
         write_json(directory / "matrix.json", report)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as executor:
-            futures = [executor.submit(execute_row, name, directory, artifacts, images, args) for name in args.rows]
+            futures = [executor.submit(execute_row, name, directory, artifacts, images, args)
+                       for name in schedule(args.rows)]
             for future in concurrent.futures.as_completed(futures):
                 row = future.result()
                 report["rows"].append(row)

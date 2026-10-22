@@ -112,15 +112,36 @@ class Services(unittest.TestCase):
         saved = self.record(launch=dev.command("server", self.root)[:-2])
         order = []
         pane = {"pane": "%8", "pid": 101, "processes": {101}}
-        with patch.object(dev, "LocalServices", return_value=self.local), patch.object(self.local, "pane", return_value=pane), patch.object(self.local, "port", return_value=True), patch.object(self.local, "build", side_effect=lambda: order.append("build")), patch.object(self.local, "stop", side_effect=lambda service: order.append(self.local.state(service)["launchCommand"])), patch.object(self.local, "start", side_effect=lambda service, log_filter=None: order.append(dev.command(service, self.root, log_filter))), patch.object(self.local, "reset") as reset, patch.object(dev, "snapshot_datasets") as snapshot, patch("builtins.print"):
+        with patch.object(dev, "LocalServices", return_value=self.local), patch.object(self.local, "pane", return_value=pane), patch.object(self.local, "port", return_value=True), patch.object(self.local, "build", side_effect=lambda: order.append("build")), patch.object(self.local, "stop", side_effect=lambda service: order.append(self.local.state(service)["launchCommand"])), patch.object(self.local, "migrate", side_effect=lambda: order.append("migrate")), patch.object(self.local, "start", side_effect=lambda service, log_filter=None: order.append(dev.command(service, self.root, log_filter))), patch.object(self.local, "reset") as reset, patch.object(dev, "snapshot_datasets") as snapshot, patch("builtins.print"):
             self.assertEqual(dev.main(["update", "server"]), 0)
             self.assertEqual(dev.main(["start", "server"]), 0)
             self.assertEqual(dev.main(["update", "server", "--log-filter", "info,meshway_server=debug"]), 0)
         filtered = dev.command("server", self.root) + ["--log-filter", "info,meshway_server=debug"]
         self.assertEqual(dev.command("server", self.root, "info,meshway_server=debug"), filtered)
-        self.assertEqual(order, ["build", saved["launchCommand"], dev.command("server", self.root), dev.command("server", self.root), "build", saved["launchCommand"], filtered])
+        self.assertEqual(order, ["build", saved["launchCommand"], "migrate", dev.command("server", self.root), dev.command("server", self.root), "build", saved["launchCommand"], "migrate", filtered])
         reset.assert_not_called()
         snapshot.assert_not_called()
+
+    def test_update_migrates_the_stopped_database_and_reports_its_backup(self):
+        data = self.root / ".meshway/server"
+        data.mkdir(mode=0o700)
+        (data / "controller.sqlite").touch(mode=0o600)
+        done = SimpleNamespace(returncode=0, stdout="Database migrated from schema 8 to 9 in 12 ms; the previous database is kept as /x/controller.sqlite.v8-1.\n", stderr='{"message":"Database migrated"}\n')
+        with patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run", return_value=done) as runner, patch("builtins.print") as printed:
+            self.local.migrate()
+        self.assertEqual(runner.call_args.args[0], [str(self.root / "target/debug/meshway-server"), "migrate", "--data-dir", str(data)])
+        self.assertIsNone(runner.call_args.kwargs["timeout"])
+        printed.assert_called_once_with(done.stdout.strip(), flush=True)
+        self.assertIn("Database migrated", (self.local.directory / "meshway-server.log").read_text())
+        for code, kind in ((78, "persistent storage block"), (1, "transient failure")):
+            failed = SimpleNamespace(returncode=code, stdout="", stderr="")
+            with patch.object(self.local, "data_users", return_value=set()), patch.object(dev, "run", return_value=failed), patch("builtins.print"):
+                with self.assertRaisesRegex(dev.DevError, kind):
+                    self.local.migrate()
+        with patch.object(self.local, "data_users", return_value={4242}), patch.object(dev, "run") as runner:
+            with self.assertRaisesRegex(dev.DevError, "still active"):
+                self.local.migrate()
+            runner.assert_not_called()
 
     def test_log_filter_launch_is_recorded_owned_and_replaced_only_by_restart(self):
         launch = dev.command("server", self.root, "info,meshway_server=debug")

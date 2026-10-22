@@ -41,6 +41,18 @@ pub struct App {
     shutdown_hooks: ShutdownHooks,
     console_origin: Option<Arc<crate::settings::Url>>,
     public_origin: Option<Arc<crate::settings::Url>>,
+    migrated: Option<Migrated>,
+}
+
+/// The storage migration this opening performed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Migrated {
+    /// Schema version of the database before.
+    pub from: i64,
+    pub to: i64,
+    /// The old database file, kept in the data directory.
+    pub backup: std::path::PathBuf,
+    pub elapsed: std::time::Duration,
 }
 
 /// Committed effects: netmap changes wake pending syncs, everything else
@@ -78,7 +90,7 @@ impl Drop for ShutdownHooks {
 }
 
 /// Safe diagnostic categories: no filesystem paths, SQL, or credentials.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AppError {
     #[error("invalid database budget or session setting")]
@@ -109,6 +121,32 @@ pub enum AppError {
     MasterKey,
     #[error("private storage cryptography failed")]
     Cryptography,
+    #[error(
+        "database has an earlier schema version; run `meshway-server migrate` with the Server stopped first"
+    )]
+    MigrationRequired,
+    #[error("not enough free space in the data directory to migrate the database")]
+    InsufficientSpace,
+}
+
+impl AppError {
+    /// A proven inconsistency or unsupported storage that a restart does not
+    /// change: it needs an operator (exit status 78 for a service manager).
+    /// Every other failure is transient, and a start again repeats the proof.
+    pub fn is_persistent(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidSettings
+                | Self::InvalidDataDirectory
+                | Self::UnsafeStorage
+                | Self::UnsupportedSchema
+                | Self::SchemaStructure(_)
+                | Self::StorageIntegrity
+                | Self::UnsupportedPlatform
+                | Self::MasterKey
+                | Self::MigrationRequired
+        )
+    }
 }
 
 impl App {
@@ -150,12 +188,16 @@ impl App {
             .acquire()
             .await
             .map_err(|_| AppError::Worker)?;
-        let directory = tokio::task::spawn_blocking(move || {
+        let migration = settings.migration;
+        let (directory, migrated) = tokio::task::spawn_blocking(move || {
             // The task retains its budget through completion even if its caller
-            // cancels. An unclaimed result drops the directory and its lock;
-            // SQLite has not been opened at this stage.
+            // cancels: a started migration completes or fails as a whole. An
+            // unclaimed result drops the directory and its lock; the SQLite
+            // worker has not been opened at this stage.
             let _permit = permit;
-            Directory::open(&settings.data_dir)
+            let mut directory = Directory::open(&settings.data_dir)?;
+            let migrated = schema::migrate::prepare(&mut directory, migration)?;
+            Ok::<_, AppError>((directory, migrated))
         })
         .await
         .map_err(|_| AppError::Worker)??;
@@ -169,6 +211,7 @@ impl App {
         )
         .await?;
         app.public_origin = settings.public_origin.map(Arc::new);
+        app.migrated = migrated;
         app.stun = crate::stun::Hosted::start(stun_sockets)?;
         app.stun_servers = Arc::new(settings.stun_servers);
         app.netmap_timing = settings.netmap;
@@ -277,6 +320,7 @@ impl App {
             shutdown_hooks,
             console_origin,
             public_origin: None,
+            migrated: None,
             observation_maintenance: std::sync::Mutex::default(),
             boot: meshway_model::InstanceId::new(
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
@@ -342,6 +386,11 @@ impl App {
                 "Stored netmaps checked against this build; nothing changed");
         }
         Ok(())
+    }
+
+    /// The storage migration this opening performed, if any.
+    pub fn migrated(&self) -> Option<&Migrated> {
+        self.migrated.as_ref()
     }
 
     /// An account service handle, without network or instance privileges.

@@ -27,5 +27,5 @@ pub mod settings;
 mod store;
 mod stun;
 
-pub use app::{App, AppError};
-pub use settings::{InvalidConsoleOrigin, Settings, console_origin};
+pub use app::{App, AppError, Migrated};
+pub use settings::{InvalidConsoleOrigin, Migration, Settings, console_origin};

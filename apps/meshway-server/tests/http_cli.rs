@@ -453,3 +453,75 @@ fn export_binary_needs_no_storage_and_matches_live_route_schema() {
         serde_json::to_value(meshway_server::http::openapi()).unwrap()
     );
 }
+
+/// Storage that a restart cannot change exits with 78 (`EX_CONFIG`), so a
+/// service manager does not restart into it. Only `migrate` and serving
+/// convert an earlier schema; other maintenance refuses it first.
+#[tokio::test]
+async fn migrate_and_persistent_storage_blocks_have_their_own_exit_status() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("data");
+    App::open_with_connector(
+        Settings::new(&path),
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap()
+    .shutdown()
+    .await
+    .unwrap();
+    let maintenance = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_meshway-server"))
+            .env_remove("MESHWAY_DATA_DIR")
+            .env("MESHWAY_LOG_FORMAT", "json")
+            .env("RUST_LOG", "info")
+            .args(arguments)
+            .arg("--data-dir")
+            .arg(&path)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let output = maintenance(&["migrate"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Database is already at this build's schema; nothing migrated.\n"
+    );
+    let set_version = |version: i64| {
+        let db = rusqlite::Connection::open(path.join("controller.sqlite")).unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+    };
+    let failed = |output: std::process::Output, message: &str| {
+        assert_eq!(output.status.code(), Some(78));
+        let errors = log_events(&String::from_utf8(output.stderr).unwrap());
+        assert!(
+            errors
+                .iter()
+                .any(|event| event["level"] == "ERROR" && event["fields"]["error"] == message),
+            "{errors:?}"
+        );
+    };
+    // Newer than this build.
+    set_version(99);
+    failed(
+        maintenance(&["migrate"]),
+        "Server storage startup failed: database application or schema version is unsupported.",
+    );
+    failed(
+        command(&path).output().unwrap(),
+        "Server storage startup failed: database application or schema version is unsupported.",
+    );
+    // Claims an earlier version but is not what that version wrote.
+    set_version(8);
+    failed(
+        maintenance(&["rotate-netmap-key"]),
+        "Server storage startup failed: database has an earlier schema version; run \
+         `meshway-server migrate` with the Server stopped first.",
+    );
+    failed(
+        maintenance(&["migrate"]),
+        "Server storage startup failed: database structure does not match the current schema: \
+         unexpected table schema_migrations.",
+    );
+}
