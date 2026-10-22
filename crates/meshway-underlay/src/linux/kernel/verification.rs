@@ -2,6 +2,7 @@
 //! long ownership may stay unproved. A read that fails or is abandoned proves
 //! nothing about ownership; only a read-back that differs ends it at once.
 use crate::Error;
+use meshway_model::recovery::{Horizon, Observation, Policy, Recovery, Step};
 use std::time::{Duration, Instant};
 
 /// One read-back of an owned object against its receipt.
@@ -48,19 +49,40 @@ pub(super) enum Owner {
     Exit,
 }
 
-/// Consecutive periodic verifications that could not read the object.
-#[derive(Debug, Default)]
+/// The recovery policy of an owner whose parent is kernel ownership: an
+/// unknown read or change that lasts [`UNVERIFIED_LIMIT`] is handed to the
+/// Host as an unavailable end (which re-proves it), retried meanwhile after
+/// 1 s doubling to 60 s.
+fn escalating() -> Policy {
+    Policy {
+        backoff: meshway_model::Backoff::new(CHANGE_RETRY, CHANGE_RETRY_MAX),
+        horizon: Horizon::Escalate(UNVERIFIED_LIMIT),
+        reread_blocked: None,
+    }
+}
+
+/// The judgement of one read-back of the owned objects.
+fn judged(verification: &Verification, unavailable: &'static str) -> Observation {
+    match verification {
+        Verification::Holds => Observation::Holds,
+        Verification::Unavailable(error) => Observation::unknown(unavailable, error),
+        Verification::Changed(what) => Observation::proven("verify", what),
+    }
+}
+
+/// Periodic verifications of an owner's objects: consecutive failed reads
+/// are one unknown, ended by a consistent read or the limit.
+#[derive(Debug)]
 pub(super) struct Unverified {
     owner: Owner,
-    since: Option<Instant>,
-    failures: u32,
+    recovery: Recovery,
 }
 
 impl Unverified {
     pub fn new(owner: Owner) -> Self {
         Self {
             owner,
-            ..Self::default()
+            recovery: Recovery::new(escalating()),
         }
     }
 
@@ -70,10 +92,18 @@ impl Unverified {
         verification: &Verification,
         now: Instant,
     ) -> std::result::Result<(), &'static str> {
-        match verification {
-            Verification::Holds => {
-                if let Some(since) = self.since.take() {
-                    let failures = self.failures;
+        let unknown = match self.recovery.health() {
+            meshway_model::recovery::Health::Retrying(retrying) => {
+                Some((retrying.since, retrying.attempts))
+            }
+            _ => None,
+        };
+        let step = self
+            .recovery
+            .observe(judged(verification, "verify_unavailable"), now);
+        if self.recovery.transitioned() {
+            match (verification, unknown) {
+                (Verification::Holds, Some((since, failures))) => {
                     let unverified_ms = now.duration_since(since).as_millis() as u64;
                     match self.owner {
                         Owner::Egress => tracing::info!(
@@ -88,13 +118,7 @@ impl Unverified {
                         ),
                     }
                 }
-                self.failures = 0;
-                Ok(())
-            }
-            Verification::Unavailable(error) => {
-                let since = *self.since.get_or_insert(now);
-                self.failures = self.failures.saturating_add(1);
-                if self.failures == 1 {
+                (Verification::Unavailable(error), _) => {
                     let limit_s = UNVERIFIED_LIMIT.as_secs();
                     match self.owner {
                         Owner::Egress => tracing::warn!(
@@ -109,18 +133,18 @@ impl Unverified {
                         ),
                     }
                 }
-                if now.duration_since(since) >= UNVERIFIED_LIMIT {
-                    Err("verify_unavailable")
-                } else {
-                    Ok(())
-                }
+                _ => {}
             }
-            Verification::Changed(_) => Err("verify"),
+        }
+        match step {
+            Step::Hold | Step::RetryAt(_) => Ok(()),
+            Step::Escalate(check) => Err(check),
+            Step::Block(_) => Err("verify"),
         }
     }
 
     pub fn unknown(&self) -> bool {
-        self.since.is_some()
+        !self.recovery.health().is_healthy()
     }
 }
 
@@ -178,9 +202,12 @@ pub(super) struct Retry {
     owner: Owner,
     operation: &'static str,
     since: Instant,
+    /// Attempts of the change itself, the first failed one included.
     attempts: u32,
-    wait: Duration,
     reason: String,
+    /// The change's outcome, unknown from its first failure: rereads that
+    /// leave it due are retried within the limit.
+    recovery: Recovery,
     retry_at: Option<Instant>,
     /// A reread found the target already once.
     done: bool,
@@ -189,13 +216,15 @@ pub(super) struct Retry {
 impl Retry {
     /// The first failed attempt of `operation`.
     pub fn new(owner: Owner, operation: &'static str, error: &Error, now: Instant) -> Self {
+        let mut recovery = Recovery::new(escalating());
+        recovery.begin("change_unavailable", error, now);
         Self {
             owner,
             operation,
             since: now,
             attempts: 1,
-            wait: CHANGE_RETRY,
             reason: error.to_string(),
+            recovery,
             retry_at: None,
             done: false,
         }
@@ -214,21 +243,24 @@ impl Retry {
         reread: &Reread,
         now: Instant,
     ) -> std::result::Result<Duration, &'static str> {
-        let elapsed = now.duration_since(self.since);
-        let left = UNVERIFIED_LIMIT.saturating_sub(elapsed);
-        let wait = match reread {
-            Reread::Changed(_) => return Err("verify"),
-            Reread::Done | Reread::Start if left.is_zero() => return Err("change_unavailable"),
+        let left = UNVERIFIED_LIMIT.saturating_sub(now.duration_since(self.since));
+        let observation = match reread {
+            Reread::Changed(what) => Observation::proven("verify", what),
             // Recorded at once the first time; a recording that fails again
             // waits like any other attempt.
-            Reread::Done if !std::mem::replace(&mut self.done, true) => Duration::ZERO,
-            Reread::Unavailable(_) if left.is_zero() => return Err("verify_unavailable"),
-            Reread::Done | Reread::Start | Reread::Unavailable(_) => {
-                let wait = self.wait.min(left);
-                self.wait =
-                    meshway_model::Backoff::new(CHANGE_RETRY, CHANGE_RETRY_MAX).next(self.wait);
-                wait
+            Reread::Done if !left.is_zero() && !std::mem::replace(&mut self.done, true) => {
+                Observation::Holds
             }
+            Reread::Done | Reread::Start => Observation::unknown("change_unavailable", reread),
+            Reread::Unavailable(error) => Observation::unknown("verify_unavailable", error),
+        };
+        let wait = match observation {
+            Observation::Holds => Duration::ZERO,
+            observation => match self.recovery.observe(observation, now) {
+                Step::RetryAt(at) => at.saturating_duration_since(now),
+                Step::Escalate(check) => return Err(check),
+                Step::Block(_) | Step::Hold => return Err("verify"),
+            },
         };
         if self.attempts == 1 || self.attempts.is_power_of_two() {
             let (operation, attempts, reason) = (self.operation, self.attempts, &self.reason);

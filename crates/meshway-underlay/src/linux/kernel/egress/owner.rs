@@ -37,22 +37,63 @@ struct State {
 /// The receipt of the last MSS clamp replacement: after a failed nft
 /// transaction the same clamp is due again after a backoff (1 s doubling to
 /// 60 s), so an unchanged clamp is not taken as installed.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct ClampRetry {
-    failures: u32,
+    /// The replacement's own recovery (it does not fail closed: a clamp
+    /// that is not replaced leaves the previous one): retried until it
+    /// applies, logged when it starts failing and when it applies again.
+    recovery: meshway_model::recovery::Recovery,
     at: Option<std::time::Instant>,
+}
+
+impl Default for ClampRetry {
+    fn default() -> Self {
+        Self {
+            recovery: meshway_model::recovery::Recovery::new(meshway_model::recovery::Policy {
+                backoff: meshway_model::Backoff::new(
+                    Duration::from_secs(1),
+                    Duration::from_secs(60),
+                ),
+                horizon: meshway_model::recovery::Horizon::Unbounded,
+                reread_blocked: None,
+            }),
+            at: None,
+        }
+    }
 }
 
 impl ClampRetry {
     fn succeeded(&mut self) {
-        *self = Self::default();
+        let attempts = self.recovery.attempts();
+        self.recovery.observe(
+            meshway_model::recovery::Observation::Holds,
+            std::time::Instant::now(),
+        );
+        if self.recovery.transitioned() {
+            tracing::info!(attempts, "TCP MSS clamp table replaced after retrying");
+        }
+        self.at = None;
     }
-    fn failed(&mut self, now: std::time::Instant) -> Duration {
-        self.failures = self.failures.saturating_add(1);
-        let wait = meshway_model::Backoff::new(Duration::from_secs(1), Duration::from_secs(60))
-            .delay(self.failures);
-        self.at = Some(now + wait);
-        wait
+    fn failed(&mut self, now: std::time::Instant, error: &dyn std::fmt::Display) -> Duration {
+        let step = self.recovery.observe(
+            meshway_model::recovery::Observation::unknown("mss_clamp", error),
+            now,
+        );
+        let at = match step {
+            meshway_model::recovery::Step::RetryAt(at) => at,
+            _ => now,
+        };
+        let failures = self.recovery.attempts();
+        if self.recovery.transitioned() || failures.is_power_of_two() {
+            tracing::warn!(
+                failures,
+                error = %error,
+                retry_ms = at.saturating_duration_since(now).as_millis() as u64,
+                "TCP MSS clamp table could not be replaced; retrying"
+            );
+        }
+        self.at = Some(at);
+        at.saturating_duration_since(now)
     }
     /// Whether the failed clamp is due again; once true, it is not due again
     /// until its next receipt.
@@ -432,11 +473,7 @@ impl super::super::Kernel {
                             if let Ok(mut retry) = clamp_retry.lock() {
                                 match applied {
                                     Ok(_) => retry.succeeded(),
-                                    Err(_) => {
-                                        let wait = retry.failed(std::time::Instant::now());
-                                        tracing::warn!(failures = retry.failures, retry_ms = wait.as_millis() as u64,
-                                            "TCP MSS clamp table could not be replaced; retrying");
-                                    }
+                                    Err(error) => { retry.failed(std::time::Instant::now(), &error); }
                                 }
                             }
                             continue;
@@ -565,7 +602,10 @@ mod clamp_tests {
         let mut retry = ClampRetry::default();
         let now = Instant::now();
         assert!(!retry.take_due(now));
-        let waits: Vec<_> = (0..8).map(|_| retry.failed(now).as_secs()).collect();
+        let error = crate::Error::Netlink;
+        let waits: Vec<_> = (0..8)
+            .map(|_| retry.failed(now, &error).as_secs())
+            .collect();
         assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60]);
         assert!(!retry.take_due(now));
         assert!(retry.take_due(now + Duration::from_secs(60)));
@@ -573,9 +613,9 @@ mod clamp_tests {
             !retry.take_due(now + Duration::from_secs(61)),
             "once per receipt"
         );
-        retry.failed(now);
+        retry.failed(now, &error);
         retry.succeeded();
         assert!(!retry.take_due(now + Duration::from_secs(3600)));
-        assert_eq!(retry.failures, 0);
+        assert_eq!(retry.recovery.attempts(), 0);
     }
 }
