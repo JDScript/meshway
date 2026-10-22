@@ -453,9 +453,6 @@ impl Host for Attachment {
     fn ownership_ended(&self) -> Option<meshway_underlay::OwnershipEnd> {
         None
     }
-    fn ended(&self) -> Local<'_, ()> {
-        Box::pin(std::future::pending())
-    }
     fn recovery_at(&self) -> Option<std::time::Instant> {
         None
     }

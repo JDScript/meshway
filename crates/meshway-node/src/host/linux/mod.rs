@@ -184,8 +184,8 @@ impl Host for Attachment {
     fn resolver_exchange(&self) -> Arc<dyn meshway_dns::ResolverExchange> {
         Arc::new(self.inner.sockets())
     }
-    fn ended(&self) -> Local<'_, ()> {
-        Box::pin(self.inner.ended())
+    fn ownership(&self) -> Option<watch::Receiver<meshway_model::recovery::Health>> {
+        Some(self.inner.ownership())
     }
     fn clamp_mss(&mut self, limits: meshway_tun::PathLimits) -> Result<()> {
         self.inner.clamp_mss(limits).map_err(Into::into)

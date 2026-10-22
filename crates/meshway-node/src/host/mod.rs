@@ -128,7 +128,11 @@ pub trait Host: Send {
         Vec::new()
     }
     fn ownership_ended(&self) -> Option<meshway_underlay::OwnershipEnd>;
-    fn ended(&self) -> Local<'_, ()>;
+    /// Kernel ownership's health, live (`None`: this host has no kernel
+    /// ownership to lose). Its change from healthy is the end of ownership.
+    fn ownership(&self) -> Option<watch::Receiver<meshway_model::recovery::Health>> {
+        None
+    }
     fn recovery_at(&self) -> Option<std::time::Instant>;
     fn recover(&mut self) -> Local<'_, Result<()>>;
     fn repair_at(&self) -> Option<std::time::Instant>;

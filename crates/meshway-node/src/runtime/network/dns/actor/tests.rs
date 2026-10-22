@@ -140,12 +140,12 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     });
     let mut state = actor.state.clone();
     state.wait_for(|fact| fact.fault.is_some()).await.unwrap();
-    tokio::time::timeout(
-        RECOVERY_INTERVAL / 2,
-        super::DnsHealth::new(actor.state.clone(), 0).failed(),
-    )
-    .await
-    .expect("a fault not yet re-proved is a failure");
+    assert!(
+        !state.borrow().health.is_healthy(),
+        "a fault not yet re-proved is a failure"
+    );
+    let epoch = state.borrow().epoch;
+    assert_eq!(epoch, 1, "one fault");
     // The fault carries the check the owner recorded, for the report.
     let detail = state.borrow().detail.clone().unwrap();
     assert_eq!(detail.check, "anchor_netlink");
@@ -166,27 +166,12 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     tokio::time::sleep(RECOVERY_INTERVAL * 2).await;
     assert_eq!(observations.load(Ordering::SeqCst), 1);
     assert_eq!(recoveries.load(Ordering::SeqCst), 2);
+    // Re-proved, the fault stays (one epoch, healthy) until the plane's hold:
+    // a failure once for a plane that has not acknowledged it, then one
+    // recovery (worker::lifecycle).
     assert_eq!(state.borrow().fault, Some(SystemDnsError::Backend));
-    // Not yet acknowledged, the re-proved fault is still the plane's failure.
-    tokio::time::timeout(
-        RECOVERY_INTERVAL,
-        super::DnsHealth::new(actor.state.clone(), 0).failed(),
-    )
-    .await
-    .expect("an unacknowledged re-proved fault is a failure");
-    // The plane sees that fault once (`Attachment::acknowledge`): re-proved,
-    // it is a recovery and no longer a failure while it waits for the hold.
-    let epoch = state.borrow().epoch;
-    let health = super::DnsHealth::new(actor.state.clone(), epoch);
-    assert!(
-        tokio::time::timeout(RECOVERY_INTERVAL, health.clone().failed())
-            .await
-            .is_err(),
-        "a re-proved fault is not a failure"
-    );
-    tokio::time::timeout(RECOVERY_INTERVAL, health.recovered())
-        .await
-        .expect("the recovery stays until the hold");
+    assert_eq!(state.borrow().epoch, epoch, "the same fault");
+    assert!(state.borrow().health.is_healthy());
     actor.shutdown(true).await.unwrap();
 }
 
@@ -268,12 +253,14 @@ async fn a_failed_hold_or_installation_publishes_its_check_and_is_recovered() {
     assert_eq!(detail.check, "link_settings");
     assert_eq!(detail.source.as_deref(), Some("resolve1 SetLinkDNS"));
     assert_eq!(actor.state.borrow().fault, Some(SystemDnsError::Backend));
+    let mut state = actor.state.clone();
     tokio::time::timeout(
         RECOVERY_INTERVAL * 3,
-        super::DnsHealth::new(actor.state.clone(), 0).recovered(),
+        state.wait_for(|fact| fact.health.is_healthy()),
     )
     .await
-    .expect("a failed hold has an owner that recovers it");
+    .expect("a failed hold has an owner that recovers it")
+    .unwrap();
     actor.shutdown(true).await.unwrap();
 
     let (scopes, _) = watch::channel(None);
@@ -342,19 +329,15 @@ async fn a_failed_hold_is_recovered_by_its_owner_and_the_next_hold_clears_it() {
     });
     let netmap = compiled().netmap.as_ref().clone();
     assert!(actor.hold(&netmap).await.is_err());
-    let epoch = actor.state.borrow().epoch;
-    tokio::time::timeout(
-        RECOVERY_INTERVAL / 2,
-        super::DnsHealth::new(actor.state.clone(), epoch - 1).failed(),
-    )
-    .await
-    .expect("one failure edge");
+    assert_eq!(actor.state.borrow().epoch, 1, "one failure");
+    let mut state = actor.state.clone();
     tokio::time::timeout(
         RECOVERY_INTERVAL * 3,
-        super::DnsHealth::new(actor.state.clone(), epoch).recovered(),
+        state.wait_for(|fact| fact.fault.is_some() && fact.health.is_healthy()),
     )
     .await
-    .expect("a failed hold has an owner that recovers it");
+    .expect("a failed hold has an owner that recovers it")
+    .unwrap();
     actor.hold(&netmap).await.unwrap();
     assert_eq!(actor.state.borrow().fault, None, "the next hold clears it");
     actor.shutdown(true).await.unwrap();

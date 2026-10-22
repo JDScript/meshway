@@ -392,57 +392,6 @@ fn settle(
 #[cfg(test)]
 mod tests;
 
-/// The DNS owner's health as the packet plane observes it, as edges. Each
-/// fault is one failure and at most one recovery: a fault the plane has not
-/// acknowledged ([`Attachment::acknowledge`]) is a failure even when the
-/// owner re-proved it before the plane looked (its query authority stays
-/// withdrawn until the plane's next hold, so the plane withdraws and
-/// reinstalls); an acknowledged fault the owner re-proved is not, and waits
-/// for that hold without becoming a level that stays ready while the plane
-/// cannot reach the hold (another component's installation failing first).
-#[derive(Clone)]
-pub(in crate::runtime::network) struct DnsHealth {
-    state: watch::Receiver<DnsFact>,
-    /// The fault epoch the plane acknowledged.
-    acknowledged: u64,
-}
-impl DnsHealth {
-    pub fn new(state: watch::Receiver<DnsFact>, acknowledged: u64) -> Self {
-        Self {
-            state,
-            acknowledged,
-        }
-    }
-    /// Resolves while the owner has a fault the plane has not acknowledged
-    /// or the owner has not re-proved, or once the owner has gone.
-    pub async fn failed(mut self) {
-        loop {
-            {
-                let fact = self.state.borrow_and_update();
-                if fact.fault.is_some()
-                    && (fact.epoch != self.acknowledged || !fact.health.is_healthy())
-                {
-                    return;
-                }
-            }
-            if self.state.changed().await.is_err() {
-                return;
-            }
-        }
-    }
-    /// Resolves once a failed owner has re-proved its system installation.
-    pub async fn recovered(mut self) {
-        if self
-            .state
-            .wait_for(|fact| fact.fault.is_some() && fact.health.is_healthy())
-            .await
-            .is_err()
-        {
-            std::future::pending::<()>().await;
-        }
-    }
-}
-
 pub(in crate::runtime::network) struct Attachment {
     settings: SystemDnsSettings,
     actor: Option<Actor>,
@@ -456,7 +405,9 @@ pub(in crate::runtime::network) struct Attachment {
     report_receiver: Option<mpsc::Receiver<meshway_protocol::DnsAssociationReport>>,
     /// Why preparing the owner failed, while no actor runs.
     prepare_failure: Option<SystemDnsFailure>,
-    /// The fault epoch the plane acknowledged (see [`DnsHealth`]).
+    /// The fault epoch the plane acknowledged: a fault of a later epoch is
+    /// a new failure for it, even when the owner re-proved it before the
+    /// plane looked (see `worker::lifecycle`).
     acknowledged: u64,
 }
 impl Attachment {
@@ -477,12 +428,16 @@ impl Attachment {
         }
     }
     /// The plane reacted to the owner's current fault: it withdrew for it,
-    /// or reinstalls after its recovery. [`DnsHealth::failed`] then reports
-    /// only a later fault, or this one while it is not re-proved.
+    /// or reinstalls after its recovery. Only a later fault, or this one
+    /// while it is not re-proved, is a failure for it then.
     pub fn acknowledge(&mut self) {
         if let Some(actor) = &self.actor {
             self.acknowledged = actor.state.borrow().epoch;
         }
+    }
+    /// The fault epoch the plane acknowledged last.
+    pub fn acknowledged(&self) -> u64 {
+        self.acknowledged
     }
     /// The checked reason of the current DNS fault, for the plane's report
     /// (`lastErrorDetail`).
@@ -567,19 +522,6 @@ impl Attachment {
     /// The running owner's state, live (Status reads its fault and detail).
     pub fn guard(&self) -> Option<watch::Receiver<DnsFact>> {
         self.actor.as_ref().map(|actor| actor.state.clone())
-    }
-    /// The running owner's health; `None` while no owner runs.
-    pub fn health(&self) -> Option<DnsHealth> {
-        self.actor
-            .as_ref()
-            .map(|actor| DnsHealth::new(actor.state.clone(), self.acknowledged))
-    }
-    /// See [`DnsHealth::failed`]; never while no owner runs.
-    pub async fn failed(&self) {
-        match self.health() {
-            Some(health) => health.failed().await,
-            None => std::future::pending().await,
-        }
     }
     /// The Host proved its kernel ownership again in a new term: this owner's
     /// anchor and sockets belonged to the ended one. Stop it and keep the

@@ -27,7 +27,7 @@ mod withdrawal;
 use packets::{packet_pool, receive_packets};
 use peers::PeerChannels;
 use sample::{RoamEvidence, sample_host};
-use timing::{Retry, lease_end, sleep_until};
+use timing::{apply_failed, apply_recovery, apply_retry_at, lease_end, sleep_until};
 use withdrawal::{
     Cause, Withdrawn, finish_withdrawal, persistent, shutdown, withdraw, withdrawing,
 };
@@ -69,7 +69,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     // An external address inside a Mesh pool: nothing installs while it
     // lasts, and its departure installs the offered netmap again.
     let mut overlap: Option<meshway_underlay::PoolOverlap> = overlaps.borrow_and_update().clone();
-    let mut overlap_cleared = false;
+    // Every fail-closed owner's health, consumed as edges (kernel ownership,
+    // the DNS owner, queued reinstalls of the same netmap).
+    let mut healths = lifecycle::Healths::new(host.ownership());
     // A path change re-probes the exit prerequisites after reporting `probing`.
     let mut exit_probe_at: Option<tokio::time::Instant> = None;
     let mut roams = RoamEvidence::default();
@@ -91,18 +93,15 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut dns_queries = super::dns::mesh::Queries::default();
     #[cfg(target_os = "macos")]
     let mut dns_output: Option<meshway_dns::packet::Output> = None;
-    let mut retry = Retry::default();
+    // The worker's own recovery of a failed installation of the same netmap.
+    let mut retry = apply_recovery();
     let mut dns_failed = false;
     // A failure withdrew installed content and nothing installed since.
     let mut withdrawn: Option<Withdrawn> = None;
-    // The exit role's prerequisites came to hold after its content applied
-    // without it: apply that content again so the role installs.
-    let mut exit_recovered = false;
     // Whether the last apply saw a configured listener unbound; its Manager
     // owner retries the bind, and a change of this fact applies the content
-    // again so the outcome reports it.
+    // again so the outcome reports it (a queued reinstall).
     let mut listener_gap = false;
-    let mut listeners_changed = false;
     let mut sample_at = None;
     let mut channels = PeerChannels::default();
     let mut clamped_at: Option<tokio::time::Instant> = None;
@@ -148,11 +147,16 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Command(Option<Command>),
             Offer,
             Retry,
+            /// The exit role's prerequisites came to hold after its content
+            /// applied without it: apply that content again.
             ExitRecovered,
             /// A listener became unavailable or bound again.
             ListenersChanged,
             Expired,
             HostFailed,
+            /// An owner's health changed, a re-proof is due or a reinstall
+            /// was queued: [`lifecycle::decide`] says what follows.
+            Lifecycle(lifecycle::Edge),
             /// An unavailable end of kernel ownership is due for its re-proof.
             HostRecovery,
             /// The Host proved its ownership again in a new term.
@@ -221,14 +225,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             let at = tokio::time::Instant::now() + Duration::from_secs(1);
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
-        let retry_at = retry
-            .at
+        let retry_at = apply_retry_at(&retry)
             .filter(|_| (plane.installed.is_none() || engine_degraded) && overlap.is_none());
         let recovery_at = plane.host.recovery_at().map(tokio::time::Instant::from_std);
+        healths.follow_dns(plane.dns.guard());
         let repair_at = plane.host.repair_at().map(tokio::time::Instant::from_std);
         let Plane {
             host,
-            dns,
             packets,
             installed,
             ..
@@ -242,18 +245,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             query = dns_requests.recv() => match query { Some(query) => Work::DnsQuery(Box::new(query)), None => Work::Command(None) },
             Some(report) = dns_reports.recv() => Work::DnsReport(Box::new(report)),
             _ = sleep_until(retry_at) => Work::Retry,
-            () = std::future::ready(()), if exit_recovered => Work::ExitRecovered,
-            () = std::future::ready(()), if listeners_changed => Work::ListenersChanged,
-            () = std::future::ready(()), if overlap_cleared => Work::Offer,
             changed = overlaps.changed() => if changed.is_ok() { Work::PoolOverlap } else { Work::Command(None) },
             changed = repairs.changed() => if changed.is_ok() { Work::Repair } else { Work::Command(None) },
             _ = sleep_until(repair_at) => Work::Repair,
-            due = lifecycle::next(recovery_at, dns.health(), dns_failed, host.ended(), installed.is_some()) => match due {
-                lifecycle::Lifecycle::HostRecovery => Work::HostRecovery,
-                lifecycle::Lifecycle::DnsFailure => Work::DnsFailure,
-                lifecycle::Lifecycle::DnsRecovered => Work::DnsRecovered,
-                lifecycle::Lifecycle::HostFailed => Work::HostFailed,
-            },
+            edge = healths.next(recovery_at) => Work::Lifecycle(edge),
             changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = sleep_until(sample_at) => Work::SampleDue,
             Ok(()) = exit_dns.changed() => Work::ExitDns,
@@ -316,6 +311,51 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             work
         };
         let work = match work {
+            Work::Lifecycle(lifecycle::Edge::Reinstall(trigger)) => match trigger {
+                "exitRecovered" => Work::ExitRecovered,
+                "listenersChanged" => Work::ListenersChanged,
+                _ => Work::Offer,
+            },
+            Work::Lifecycle(edge) => {
+                let plane = engine.components();
+                let host = healths.host();
+                let snapshot = lifecycle::Snapshot {
+                    host_ended: !host.is_healthy(),
+                    host_due: recovery_at.is_some_and(|at| tokio::time::Instant::now() >= at),
+                    dns: healths.dns(plane.dns.acknowledged()),
+                    dns_failed,
+                    installed: plane.installed.is_some(),
+                };
+                match lifecycle::decide(&snapshot) {
+                    lifecycle::Action::ReproveHost => Work::HostRecovery,
+                    lifecycle::Action::WithdrawDns => Work::DnsFailure,
+                    lifecycle::Action::ReinstallDns => Work::DnsRecovered,
+                    lifecycle::Action::WithdrawHost => Work::HostFailed,
+                    lifecycle::Action::Nothing => {
+                        // A change of kernel ownership the plane need not act
+                        // on (an unavailable end that became a conflict while
+                        // withdrawn): its report follows the owner.
+                        if edge == lifecycle::Edge::Host && !host.is_healthy() {
+                            let mut report = reports.borrow().clone();
+                            let detail = plane.host.ownership_ended().map(|end| end.to_string());
+                            if report.problem == Some(Problem::Underlay)
+                                && report.problem_detail != detail
+                            {
+                                report.problem_detail = detail;
+                                report.persistent = persistent(
+                                    &engine,
+                                    report.problem,
+                                    apply_retry_at(&retry).is_some(),
+                                    false,
+                                );
+                                report.observed_at = chrono::Utc::now();
+                                reports.send_replace(report);
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
             Work::HostRecovery => {
                 let plane = engine.components_mut();
                 match plane.host.recover().await {
@@ -335,8 +375,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         report.problem_detail =
                             plane.host.ownership_ended().map(|end| end.to_string());
                         report.observed_at = chrono::Utc::now();
-                        report.persistent =
-                            persistent(&engine, report.problem, retry.at.is_some(), false);
+                        report.persistent = persistent(
+                            &engine,
+                            report.problem,
+                            apply_retry_at(&retry).is_some(),
+                            false,
+                        );
                         reports.send_replace(report);
                         continue;
                     }
@@ -374,10 +418,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         if stale && engine.desired().is_some() {
             exit_probe_at = None;
             let capability = engine.components_mut().exit_capability().await;
-            exit_recovered = engine.components().exit_pending()
+            if engine.components().exit_pending()
                 && capability
                     .as_ref()
-                    .is_some_and(meshway_model::exit::ExitCapability::installable);
+                    .is_some_and(meshway_model::exit::ExitCapability::installable)
+            {
+                healths.reinstall("exitRecovered");
+            }
             let mut report = reports.borrow().clone();
             report.exit_capability = capability;
             reports.send_replace(report);
@@ -475,8 +522,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     None => {
                         if overlap.take().is_some() {
                             tracing::info!("Mesh pool overlap ended; installing the netmap again");
-                            retry = Retry::default();
-                            overlap_cleared = true;
+                            retry = apply_recovery();
+                            healths.reinstall("offer");
                         }
                     }
                 }
@@ -560,7 +607,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 dns_queries.stop().await;
                 diagnostics.stop().await;
                 let closing = engine.reconfig(None).await.map_err(|_| Problem::Underlay);
-                retry = Retry::default();
+                retry = apply_recovery();
+                healths.clear_reinstall();
                 withdrawn = None;
                 let plane = engine.components_mut();
                 let dns_result = if down {
@@ -608,11 +656,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 if reapply && matches!(work, Work::ListenersChanged) {
                     tracing::info!("Listener availability changed; applying the netmap again");
                 }
-                exit_recovered = false;
-                listeners_changed = false;
-                overlap_cleared = false;
+                // This install takes every queued reinstall with it.
+                healths.clear_reinstall();
                 if !matches!(work, Work::Retry) {
-                    retry = Retry::default();
+                    retry = apply_recovery();
                 }
                 // The reinstall below logs once it installs, whichever input
                 // led to it (see `Withdrawn::reinstalled`).
@@ -684,18 +731,22 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                                 engine.components_mut().exit_capability().await;
                             // Content applied before the instance arrived
                             // could not observe the exit prerequisites.
-                            exit_recovered = engine.components().exit_pending()
+                            if engine.components().exit_pending()
                                 && report
                                     .exit_capability
                                     .as_ref()
-                                    .is_some_and(meshway_model::exit::ExitCapability::installable);
+                                    .is_some_and(meshway_model::exit::ExitCapability::installable)
+                            {
+                                healths.reinstall("exitRecovered");
+                            }
                         }
                         reports.send_replace(report);
                     }
                     // A first instance rebinds Native UDP listeners as
                     // coordination sockets; one may now be unavailable.
-                    listeners_changed |=
-                        rebound && engine.components().listeners_unavailable() != listener_gap;
+                    if rebound && engine.components().listeners_unavailable() != listener_gap {
+                        healths.reinstall("listenersChanged");
+                    }
                     continue;
                 }
                 let previous = reports.borrow().clone();
@@ -781,9 +832,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         } else {
                             DataPlane::Failed
                         };
-                        retry.failed(failure);
-                        report.persistent =
-                            persistent(&engine, Some(problem), retry.at.is_some(), false);
+                        apply_failed(&mut retry, failure);
+                        report.persistent = persistent(
+                            &engine,
+                            Some(problem),
+                            apply_retry_at(&retry).is_some(),
+                            false,
+                        );
                     }
                     Err(error) if plane.failure.is_none() && kept => {
                         // Rejected input (regressing reference or stale lease):
@@ -816,9 +871,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         report.problem = Some(problem);
                         report.problem_detail = plane.failure_detail.take();
                         report.plane = DataPlane::Failed;
-                        retry.failed(failure);
-                        report.persistent =
-                            persistent(&engine, Some(problem), retry.at.is_some(), false);
+                        apply_failed(&mut retry, failure);
+                        report.persistent = persistent(
+                            &engine,
+                            Some(problem),
+                            apply_retry_at(&retry).is_some(),
+                            false,
+                        );
                     }
                 }
                 reports.send_replace(report);
@@ -854,7 +913,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         .host
                         .ownership_ended()
                         .map(|end| end.to_string()),
-                    persistent(&engine, Some(Problem::Underlay), false, false),
+                    persistent(&engine, Some(Problem::Underlay), true, false),
                 );
                 withdrawn.get_or_insert(Withdrawn::now(Problem::Underlay));
                 diagnostics.stop().await;
@@ -875,10 +934,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     "Exit role failed; withdrawing it alone"
                 );
                 let capability = plane.exit_capability().await;
-                exit_recovered = engine.components().exit_pending()
+                if engine.components().exit_pending()
                     && capability
                         .as_ref()
-                        .is_some_and(meshway_model::exit::ExitCapability::installable);
+                        .is_some_and(meshway_model::exit::ExitCapability::installable)
+                {
+                    healths.reinstall("exitRecovered");
+                }
                 let mut report = reports.borrow().clone();
                 report.exit_capability = capability;
                 report.exit_flows = None;
@@ -922,12 +984,17 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 } else {
                     ended
                 };
-                retry.failed(withdrawal::failure(problem));
+                apply_failed(&mut retry, withdrawal::failure(problem));
                 let mut report = withdrawing(
                     &reports,
                     problem,
                     detail,
-                    persistent(&engine, Some(problem), retry.at.is_some(), false),
+                    persistent(
+                        &engine,
+                        Some(problem),
+                        apply_retry_at(&retry).is_some(),
+                        false,
+                    ),
                 );
                 withdrawn.get_or_insert(Withdrawn::now(problem));
                 // The decisions of every external ping go with the content.
@@ -944,8 +1011,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     report.problem = Some(Problem::Underlay);
                     report.problem_detail = Some(end.to_string());
                     report.completion = Some(Err(ApplyFailure::Underlay));
-                    report.persistent =
-                        persistent(&engine, report.problem, retry.at.is_some(), false);
+                    report.persistent = persistent(
+                        &engine,
+                        report.problem,
+                        apply_retry_at(&retry).is_some(),
+                        false,
+                    );
                     report.observed_at = chrono::Utc::now();
                     reports.send_replace(report.clone());
                 }
@@ -1033,7 +1104,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 continue;
             }
             Work::DiagnosticSent => {}
-            Work::ExitChanged | Work::HostRecovery => unreachable!("mapped above"),
+            Work::ExitChanged | Work::HostRecovery | Work::Lifecycle(_) => {
+                unreachable!("mapped above")
+            }
         }
         let live = engine.desired().is_some();
         let instance = engine
@@ -1102,8 +1175,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             }
             diagnostics.synchronize(&state.desired, instance);
             tokio::select! { biased;
-                _ = host.ended() => {},
-                _ = dns.failed(), if !dns_failed => {},
+                // An owner's health changed: the next turn takes it.
+                _ = healths.changed() => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
                     PROFILE.poll(packets.drive(secure, manager, carriers.as_ref(), host.as_ref(), &state.desired, &mut diagnostics, &mut dns_queries, dns.dispatcher(), &mut pool, state.exit.as_mut())).await;
@@ -1122,7 +1195,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             && engine.desired().is_some()
             && engine.components().listeners_unavailable() != listener_gap
         {
-            listeners_changed = true;
+            healths.reinstall("listenersChanged");
         }
         if structural {
             let report = sample_host(engine.components(), &diagnostics, reports.borrow().clone());
