@@ -12,7 +12,7 @@ Server 部署形态（MIG-2，`mig2/server-deploy`）：wire、IPC、`compilerVe
 - 修复（不变量：存储持久阻断的退出状态只有一个分类；owner：`AppError::exit_code`／`command::Failure`）：`reset-password` 与 `ip-datasets` 遇到持久阻断（含需要迁移的旧库）以 78 退出，此前为 1。
 - 发布：Release 新增 `meshway-server-<target>.tar.gz`（`meshway-server`、`ip-datasets`、`reset-password`、unit）与 Console 静态文件 `meshway-console.tar.gz`（由同源反向代理提供，Server 不出静态文件）；发布门槛 `scripts/ci/server-upgrade.py` 从上一 release 的 Server 经真实 API 建库并接入一个 control-only Node，再以本构建迁移、核对登录、配置、活动、Node 不重新接入与旧版本拒绝新库；Check 在存储路径变化时运行它（`mise run test:server-upgrade`）。`workflow_dispatch` 是不发布的演练。
 
-验证：`meshway-vm` 独立实例上的安装、沙箱、升级（9 → 9、8 → 9）、迁移失败／`READY` 超时／启动失败三种自动回退与 sync 之后拒绝回退、1.3 GiB 库在 3 s 启动超时下的迁移、备份与恢复、卸载，见[安装 · 验收记录](/v2/install#server-validation)；私有证据 `.meshway/validation/mig2/`。
+验证：`meshway-vm` 独立实例上的安装、沙箱、升级（9 → 9、8 → 9）、迁移失败／`READY` 超时／启动失败三种自动回退与 sync 之后拒绝回退、1.3 GiB 库在 3 s 启动超时下的迁移、备份与恢复、卸载，见[安装 · 验收记录](/v2/install#server-validation)；`release.yml` 在分支上的 `workflow_dispatch` 演练（run `39769183040`）产出六个资产与 `SHA256SUMS`，门槛以 alpha.21 tag 构建的 Server 升级到本构建的 x86_64 程序通过，aarch64 Server 资产在 VM 上经 `install.sh` 安装；Planck 25 行矩阵 `20261022T111544Z-81951f2c`（`126a4a5b`）全部通过；私有证据 `.meshway/validation/mig2/`。
 
 ## v0.1.0-alpha.21
 
