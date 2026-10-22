@@ -293,6 +293,231 @@ pub(super) async fn links(handle: &Handle, limit: usize) -> Result<Vec<LinkMessa
     .await
 }
 
+/// The links of this namespace whose index, name or alias is the given one,
+/// fully decoded; every other link of the dump is only scanned for those
+/// three fields (G16). A periodic proof then costs what it compares, not the
+/// configuration of unrelated interfaces: the route codec renders each
+/// attribute of a bridge or TUN while decoding it. The dump has its own
+/// socket (no other dump can be running on it) and the same rules as
+/// [`dump`]: an interrupted one is read again, at most [`DUMP_ATTEMPTS`]
+/// times, within [`DUMP_BUDGET`]; more than `limit` links is `Capacity`.
+pub(super) async fn links_named(
+    index: u32,
+    name: &str,
+    alias: &str,
+    limit: usize,
+) -> Result<Vec<LinkMessage>> {
+    tokio::time::timeout(
+        DUMP_BUDGET,
+        unfinished(
+            "dump",
+            || async {
+                #[cfg(test)]
+                if super::tool::command::faults::take(
+                    &super::tool::command::faults::INTERRUPTED_DUMPS,
+                ) {
+                    return None;
+                }
+                match named_once(index, name, alias, limit).await {
+                    Ok(Some(links)) => Some(Ok(links)),
+                    Ok(None) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            },
+            Error::Netlink,
+        ),
+    )
+    .await
+    .map_err(|_| netlink_timeout("dump"))?
+}
+
+const NLMSG_HEADER: usize = 16;
+const IFINFOMSG: usize = 16;
+const NLMSG_ERROR: u16 = 2;
+const NLMSG_DONE: u16 = 3;
+const RTM_NEWLINK: u16 = 16;
+const RTM_GETLINK: u16 = 18;
+const IFLA_IFNAME: u16 = 3;
+const IFLA_IFALIAS: u16 = 20;
+
+/// One attempt of [`links_named`]: `None` when it was interrupted.
+async fn named_once(
+    index: u32,
+    name: &str,
+    alias: &str,
+    limit: usize,
+) -> Result<Option<Vec<LinkMessage>>> {
+    use rtnetlink::sys::{Socket, SocketAddr, protocols::NETLINK_ROUTE};
+    let mut socket = Socket::new(NETLINK_ROUTE)?;
+    socket.set_non_blocking(true)?;
+    socket.bind_auto()?;
+    let socket = tokio::io::unix::AsyncFd::new(socket)?;
+    let sequence = 1;
+    let mut request = vec![0; NLMSG_HEADER + IFINFOMSG];
+    let length = u32::try_from(request.len()).map_err(|_| Error::Netlink)?;
+    request[0..4].copy_from_slice(&length.to_ne_bytes());
+    request[4..6].copy_from_slice(&RTM_GETLINK.to_ne_bytes());
+    request[6..8].copy_from_slice(&(NLM_F_REQUEST | NLM_F_DUMP).to_ne_bytes());
+    request[8..12].copy_from_slice(&u32::to_ne_bytes(sequence));
+    if socket
+        .get_ref()
+        .send_to(&request, &SocketAddr::new(0, 0), 0)?
+        != request.len()
+    {
+        return Err(Error::Netlink);
+    }
+    let mut buffer = vec![0; 65_536];
+    let mut scan = Named::new(index, name, alias, limit);
+    loop {
+        let mut ready = socket.readable().await?;
+        let (size, source) = match socket.get_ref().recv_from(&mut &mut buffer[..], 0) {
+            Ok(received) => received,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                ready.clear_ready();
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if source.port_number() != 0 {
+            continue;
+        }
+        if size == 0 || size >= buffer.len() {
+            return Err(Error::Netlink);
+        }
+        if let Some(done) = scan.datagram(&buffer[..size], sequence)? {
+            return Ok(done);
+        }
+    }
+}
+
+/// The scan of one link dump: header, `IFLA_IFNAME` and `IFLA_IFALIAS` of
+/// every link, the full decode of matching ones only.
+struct Named<'a> {
+    index: u32,
+    name: &'a [u8],
+    alias: &'a [u8],
+    limit: usize,
+    seen: usize,
+    interrupted: bool,
+    failed: Option<Error>,
+    links: Vec<LinkMessage>,
+    #[cfg(test)]
+    decoded: usize,
+}
+
+impl<'a> Named<'a> {
+    fn new(index: u32, name: &'a str, alias: &'a str, limit: usize) -> Self {
+        Self {
+            index,
+            name: name.as_bytes(),
+            alias: alias.as_bytes(),
+            limit,
+            seen: 0,
+            interrupted: false,
+            failed: None,
+            links: Vec::new(),
+            #[cfg(test)]
+            decoded: 0,
+        }
+    }
+
+    /// One datagram; `Some` once the dump ended (`None` inside: it was
+    /// interrupted). Every message is read to the end of the dump.
+    fn datagram(
+        &mut self,
+        mut datagram: &[u8],
+        sequence: u32,
+    ) -> Result<Option<Option<Vec<LinkMessage>>>> {
+        while datagram.len() >= NLMSG_HEADER {
+            let word = |at: usize| -> Result<[u8; 4]> {
+                datagram
+                    .get(at..at + 4)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .ok_or(Error::Netlink)
+            };
+            let length =
+                usize::try_from(u32::from_ne_bytes(word(0)?)).map_err(|_| Error::Netlink)?;
+            if length < NLMSG_HEADER || length > datagram.len() {
+                return Err(Error::Netlink);
+            }
+            let kind = u16::from_ne_bytes([datagram[4], datagram[5]]);
+            let flags = u16::from_ne_bytes([datagram[6], datagram[7]]);
+            if u32::from_ne_bytes(word(8)?) != sequence {
+                return Err(Error::Netlink);
+            }
+            self.interrupted |= flags & NLM_F_DUMP_INTR != 0;
+            let message = &datagram[..length];
+            match kind {
+                NLMSG_DONE | NLMSG_ERROR => {
+                    let code = message
+                        .get(NLMSG_HEADER..NLMSG_HEADER + 4)
+                        .and_then(|bytes| bytes.try_into().ok())
+                        .map_or(0, i32::from_ne_bytes);
+                    if -code == EBUSY {
+                        self.interrupted = true;
+                    } else if code != 0 || kind == NLMSG_ERROR {
+                        self.failed.get_or_insert(Error::Netlink);
+                    }
+                    if let Some(error) = self.failed.take() {
+                        return Err(error);
+                    }
+                    return Ok(Some(
+                        (!self.interrupted).then(|| std::mem::take(&mut self.links)),
+                    ));
+                }
+                RTM_NEWLINK => self.link(message),
+                _ => {
+                    self.failed.get_or_insert(Error::Netlink);
+                }
+            }
+            datagram = datagram.get((length + 3) & !3..).unwrap_or_default();
+        }
+        Ok(None)
+    }
+
+    fn link(&mut self, message: &[u8]) {
+        self.seen += 1;
+        if self.seen > self.limit {
+            self.failed.get_or_insert(Error::Capacity);
+            return;
+        }
+        let Some(header) = message.get(NLMSG_HEADER..NLMSG_HEADER + IFINFOMSG) else {
+            self.failed.get_or_insert(Error::Netlink);
+            return;
+        };
+        let index = u32::from_ne_bytes([header[4], header[5], header[6], header[7]]);
+        let mut named = index == self.index;
+        for attribute in
+            rtnetlink::packet_core::NlasIterator::new(&message[NLMSG_HEADER + IFINFOMSG..])
+        {
+            let Ok(attribute) = attribute else {
+                self.failed.get_or_insert(Error::Netlink);
+                return;
+            };
+            let value = attribute.value();
+            let value = value.strip_suffix(&[0]).unwrap_or(value);
+            named |= (attribute.kind() == IFLA_IFNAME && value == self.name)
+                || (attribute.kind() == IFLA_IFALIAS && value == self.alias);
+        }
+        if !named {
+            return;
+        }
+        #[cfg(test)]
+        {
+            self.decoded += 1;
+        }
+        match NetlinkMessage::<RouteNetlinkMessage>::deserialize(message) {
+            Ok(NetlinkMessage {
+                payload: NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link)),
+                ..
+            }) => self.links.push(link),
+            _ => {
+                self.failed.get_or_insert(Error::Netlink);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,5 +720,67 @@ mod tests {
         drop((handle, unlayered));
         task.abort();
         plain.abort();
+    }
+
+    /// RC-1 G16 (P2: one link dump decoded 528 µs on it7, 0.6 µs reading
+    /// only index, name and alias): the anchor proof fully decodes only the
+    /// links with its index, name or alias, however many unrelated (and
+    /// however richly configured) links the namespace has; an interrupted
+    /// dump is no answer, and the limit counts every link.
+    #[test]
+    fn a_named_link_scan_decodes_only_the_links_it_compares() {
+        use rtnetlink::packet_route::link::{InfoKind, LinkAttribute, LinkInfo};
+        let bytes = |mut message: NetlinkMessage<RouteNetlinkMessage>| {
+            message.header.sequence_number = 1;
+            message.finalize();
+            let mut buffer = vec![0; message.buffer_len()];
+            message.serialize(&mut buffer);
+            buffer
+        };
+        let named = |index: u32, name: &str, alias: Option<&str>| {
+            let mut link = LinkMessage::default();
+            link.header.index = index;
+            link.attributes.push(LinkAttribute::IfName(name.into()));
+            if let Some(alias) = alias {
+                link.attributes.push(LinkAttribute::IfAlias(alias.into()));
+            }
+            link.attributes.push(LinkAttribute::Mtu(1500));
+            link.attributes
+                .push(LinkAttribute::LinkInfo(vec![LinkInfo::Kind(
+                    InfoKind::Bridge,
+                )]));
+            bytes(NetlinkMessage::from(RouteNetlinkMessage::NewLink(link)))
+        };
+        for unrelated in [2, 200] {
+            let mut datagram = Vec::new();
+            for index in 0..unrelated {
+                datagram.extend(named(100 + index, &format!("br{index}"), Some("other")));
+            }
+            datagram.extend(named(7, "mwdd1", Some("meshway-dns")));
+            datagram.extend(named(300, "renamed", Some("meshway-dns")));
+            datagram.extend(bytes(done(0, 0)));
+            let mut scan = Named::new(7, "mwdd1", "meshway-dns", 65_536);
+            let links = scan.datagram(&datagram, 1).unwrap().unwrap().unwrap();
+            assert_eq!(
+                links
+                    .iter()
+                    .map(|link| link.header.index)
+                    .collect::<Vec<_>>(),
+                [7, 300]
+            );
+            assert_eq!(
+                scan.decoded, 2,
+                "{unrelated} unrelated links decoded nothing"
+            );
+            let mut small = Named::new(7, "mwdd1", "meshway-dns", 2);
+            assert!(matches!(small.datagram(&datagram, 1), Err(Error::Capacity)));
+        }
+        let mut datagram = named(7, "mwdd1", None);
+        datagram.extend(bytes(done(0, NLM_F_DUMP_INTR)));
+        let mut scan = Named::new(7, "mwdd1", "meshway-dns", 16);
+        assert!(
+            matches!(scan.datagram(&datagram, 1), Ok(Some(None))),
+            "an interrupted dump is read again"
+        );
     }
 }

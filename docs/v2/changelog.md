@@ -30,6 +30,7 @@ RC-1 恢复状态机收敛（`rc1/recovery`，设计 RC-D）：Node 上所有 fa
 - 暂态阻断（不变量：每个暂态都有命名 owner 与无总期限的有界重证；owner：worker 安装重试、DNS owner、repair）：worker 的安装重试 5 秒起翻倍、上限 60 秒不再在第 3 次后停止（G1）；DNS 的 hold／install 失败由 DNS owner 自己重证（G2）；被拥有的 repair 读取失败按 30 秒时长而非 5 次；启动时 resolver 未打开、读取失败、锁被持有为 `retrying`（G9）。
 - 汇合与 Status（不变量：事件循环无电平分支，Status 只读 owner 现值；owner：`worker::lifecycle`、`status::owners`）：worker 以边沿消费宿主归属与 DNS 的 `Health`，由纯函数 `decide` 按当前快照决定动作，取代三个布尔标志与 `std::future::ready` 分支；宿主归属从暂态升级为冲突也是一个边沿（G8）；`Report.persistent`／`recovering` 删除，`phase` 与 `lastError` 由各 owner 现值求出，多原因时宿主归属优先、否则最早（G12、Q7）；MSS clamp 重试可见于日志（G13）。
 - 恢复后的包流（不变量：相邻端换 boot 时经它的 circuit 立即可重建；owner：SecureNode）：中继上仍在握手、尚无逐跳密钥的 circuit 在下一跳换 boot 时被遗忘而不留死 CID，源端每 250 ms 的 INIT 重试即刻穿过（G14，F7 `fault/throttle` 限额解除后包流 5–9.5 秒 → 0.1 秒）；成功的 DNS install 清除此前的故障，限额解除时不再多撤回一次（G15，`withdrawalsAtRestore` 1 → 0）。
+- 周期证明的成本（不变量：周期性证明的成本只取决于它比较的字段，不随宿主无关接口的配置量放大；owner：Underlay `kernel::anchor`、`rtnl::links_named`）：DNS 锚点的每次证明只完整解码 index、名称或别名与锚点相同的 link，其余只读这三项（G16，P2：it7 一次 link dump 解码 528 µs，只读三项 0.6 µs）；observe 节拍与出口审计不变。
 - Control：路径变化后以网络错误失败的工作每条路径立即重试一次（`roam/exit` soft 格）。本机记录写入结果不确定仍为 `blocked`，作为 v0.1.0 唯一显式例外写入 `AGENTS.md`（G11、Q6）。
 
 ## v0.1.0-alpha.21

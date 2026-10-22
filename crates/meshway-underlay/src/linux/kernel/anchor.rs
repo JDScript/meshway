@@ -336,8 +336,7 @@ impl Kernel {
                     )]))
                     .build();
                 execute(self.handle.link().set(configured).execute()).await?;
-                let configured =
-                    owned_link(&self.handle, &record, self.options.max_kernel_objects).await?;
+                let configured = owned_link(&record, self.options.max_kernel_objects).await?;
                 if configured.header.flags.contains(LinkFlags::Up)
                     || !installed_settings_match(&record, &configured)
                 {
@@ -346,8 +345,7 @@ impl Kernel {
                 let mut request = self.handle.address().add(index, IpAddr::V4(address), 32);
                 request.message_mut().header.scope = AddressScope::Universe;
                 execute(request.execute()).await?;
-                let configured =
-                    owned_link(&self.handle, &record, self.options.max_kernel_objects).await?;
+                let configured = owned_link(&record, self.options.max_kernel_objects).await?;
                 if configured.header.flags.contains(LinkFlags::Up)
                     || !installed_settings_match(&record, &configured)
                 {
@@ -690,7 +688,7 @@ async fn inspect(
             "/proc/self/ns/net",
         ));
     }
-    let link = find_owned_link(handle, record, limit).await?;
+    let link = find_owned_link(record, limit).await?;
     if !link_matches(record, &link) {
         return Err(Mismatch::new("anchor_link", describe_link(&link), LINKS));
     }
@@ -705,19 +703,25 @@ async fn inspect(
     .await
 }
 
-async fn owned_link(handle: &Handle, record: &Record, limit: usize) -> Result<LinkMessage> {
-    find_owned_link(handle, record, limit)
+async fn owned_link(record: &Record, limit: usize) -> Result<LinkMessage> {
+    find_owned_link(record, limit)
         .await
         .map_err(|mismatch| mismatch.error)
 }
 async fn find_owned_link(
-    handle: &Handle,
     record: &Record,
     limit: usize,
 ) -> std::result::Result<LinkMessage, Mismatch> {
-    let links = get_links(handle, limit)
-        .await
-        .map_err(Mismatch::dump(LINKS))?;
+    // Only links with its index, name or alias are decoded (G16): the
+    // proof's cost does not grow with unrelated interfaces.
+    let links = super::rtnl::links_named(
+        record.identity.index,
+        &record.identity.name,
+        &record.alias,
+        limit,
+    )
+    .await
+    .map_err(Mismatch::dump(LINKS))?;
     let matches: Vec<_> = links
         .iter()
         .filter(|link| {
