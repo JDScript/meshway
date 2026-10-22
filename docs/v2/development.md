@@ -62,8 +62,10 @@ mise run services stop docs
 Console 使用其所属任务运行：
 
 ```sh
-MESHWAY_CONTROLLER_URL=https://meshway-dev-api.jdscript.dev mise run dev:console
+MESHWAY_CONTROLLER_URL=http://127.0.0.1:8420 mise run dev:console -- --host 127.0.0.1
 ```
+
+开发服务器把 `/api` 代理到该地址且保留浏览器的 Host（同源，与 `--console-origin http://127.0.0.1:3001` 一致），因此目标须是本机 loopback 上的 Server；指向经 Cloudflare 的 HTTPS 域名时，TLS 以 `127.0.0.1` 作 SNI 而握手失败。`--host 127.0.0.1` 使 Vite 监听 IPv4 loopback（默认只监听 `[::1]`，设备批准链接中的 `127.0.0.1:3001` 将无法打开）。
 
 对外域名只提供 HTTPS 转发。开发 Server 以 `--stun-server dev-public=stun.l.google.com:19302 --stun-server dev-cloudflare=stun.cloudflare.com:3478` 发布两个不同 IP 的外部 STUN（netcheck 判断映射类型所需），由 Node 的实际 UDP socket 查询，需要实际网络可达；托管 STUN 另需显式的 `--stun-listen`。HTTPS 域名可用不证明任何公网 UDP 映射可用。lab 容器的 bootstrap DNS 见[三节点环境](/v2/node/docker-lab#节点与持久状态)。
 
