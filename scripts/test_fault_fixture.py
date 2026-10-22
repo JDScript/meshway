@@ -62,7 +62,7 @@ class Report:
         stages["cpu-short"] = self.throttle(1300.0, 30)
         stages["resolved-restart"] = {
             "kind": "resolved", "node": "b", "injectedAt": 1450.0, "restoredAt": 1462.0,
-            "restarts": [{"requestedAt": 1450.0, "result": {"resolved": True, "answeredBefore": True, "recoveredMs": 600}},
+            "restarts": [{"requestedAt": 1450.0, "result": {"resolved": True, "answeredBefore": True, "recoveredMs": 0}},
                          {"requestedAt": 1462.0, "result": {"resolved": True, "answeredBefore": True, "recoveredMs": 700}}],
             "faultCpu": quiet(1450.0, 24.0), "idleCpuStartedAt": 1480.0, "idleCpu": quiet(1480.0), "endedAt": 1540.0}
         for at in (1450.0, 1462.0):

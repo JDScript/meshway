@@ -207,7 +207,10 @@ def judge_stage(stage, by_role, echoes, logs, serials):
     values = by_role[node]
     events = log_events(logs[node], injected, end)
     failed, reinstalled = withdrawals(events)
-    measured = {"paths": paths(events), "withdrawals": len(failed), "reinstalls": len(reinstalled)}
+    measured = {"paths": paths(events), "withdrawals": len(failed), "reinstalls": len(reinstalled),
+                # Recorded: fault edges the worker handles as the pressure ends
+                # (the DNS owner may re-prove a fault before the worker looks).
+                "withdrawalsAtRestore": sum(1 for at in failed if at >= restored - 2)}
     checks = {"neverBlocked": never_blocked(by_role, injected, end),
               "withdrawalsBounded": len(failed) <= WITHDRAWAL_BOUND,
               "everyWithdrawalReinstalled": len(failed) == len(reinstalled)}
@@ -238,7 +241,8 @@ def judge_stage(stage, by_role, echoes, logs, serials):
         checks["namesAnswered"] = len(stage["restarts"]) == 2 and all(
             (restart.get("result") or {}).get("resolved") is True
             and restart["result"].get("answeredBefore") is True
-            and (restart["result"].get("recoveredMs") or RESOLVED_LIMIT_MS + 1) <= RESOLVED_LIMIT_MS
+            and restart["result"].get("recoveredMs") is not None
+            and restart["result"]["recoveredMs"] <= RESOLVED_LIMIT_MS
             for restart in stage["restarts"])
         checks["recovered"] = len(recovered) == 2 and all(value is not None and value <= RECOVERY_LIMIT
                                                           for value in recovered)
