@@ -46,6 +46,17 @@ T2 的每一行都受生产时间常量约束（60 秒 execution lease、续租�
 5. **回收**：删除 worktree 与分支；证据写入 [changelog](/v2/changelog)（工作包、提交、T2／T3 报告 ID）。
 6. **部署**：常驻 lab 只部署合入后自动层全绿的 main；首次初始化运行 `node:lab configure`。容器重建后的 bridge IP 由 Node State 自动更新，既有配置不因 IP 变化重做。
 
+## v0.1.0 交付门槛 {#v0-1-gate}
+
+v0.1.0 只含 Linux Node 与 Server：一个小团队能自行安装，在真实网络上连续运行 14 天无需人工值守，已知限制写明。到达门槛前**功能冻结**——不开新功能工作包；以下移到 v0.1.0 之后：自动方案地区推断（GeoIP）、多出口 DNS plan、IPv6 出口前缀变化与出口合成 PTB（I6-2，列为已知限制）、千节点规模、非 root／netstack、Apple。
+
+| 里程碑 | 内容 | 退出条件 |
+| --- | --- | --- |
+| A 还债 | 已登记缺陷（X16、R4、X17 及 `fault/throttle` 行暴露的问题）；恢复状态机收敛为一个共享框架；[验收范围](/v2/node/validation)改为对外参考格式 | 无未登记的矩阵失败签名；`fault/throttle` 行连续 3 轮全绿 |
+| B 交付件 | Server 存储迁移（schema 升级不 reset、不重新接入）；Server 部署形态（systemd unit、备份、远程升级）；含 compilerVersion 断网窗口的升级演练 | 在现场从上一版本按[安装](/v2/install)文档升级成功 |
+| C 现场 soak | 常驻六台连续 14 天 | 零人工重启；每次 `blocked` 都有已证实的原因；空闲 CPU 每线程 <5% |
+| D 审阅 | 威胁模型／安全审阅与最终代码审阅（只读，与 C 并行） | 无高危未修 |
+
 ## 分支与证据
 
 - 已完全合入 main 的分支（tip 为 main 祖先）在回收时删除；保留价值在提交、报告 ID 与 changelog，不在分支名。
