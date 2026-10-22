@@ -60,7 +60,7 @@ B1 证据根为仓库公共 `.meshway/macos-lab/b1/`，与 A3 目录并列；0.1
 | `validate:matrix --rows roam/relay` | 同上＋公网中继 R | off | 同上 | 空窗内新流经 R 且留在 R、旧流空窗等于重新穿透、恢复后新流直连，见 [roam/relay 行](#roam-relay-row) | 通过；同一矩阵行 `20261016T002745Z-01c614f4` |
 | `validate:matrix --rows roam/flap` | Native UDP 已发布 listener | off | A 的两个端口保持型 SNAT 上联 | 2 次（soft）、合并窗内 3 次（burst）、5 次（hard，链路 down/up）快速往返：每次 path 变化一次反应、报告有界、无 circuit 退役、跟随最终来源，见 [roam/flap 行](#roam-flap-row) | 通过（main 同样通过）；同一矩阵行 `20261016T002641Z-4d5f6d62` |
 | `validate:matrix --rows roam/exit` | Native UDP 已发布 listener（A 拨号） | off | A（B 的出口）的两个端口保持型 SNAT 上联，出口服务 T 在 WAN | 出口节点漫游：能力 `probing`→`ready`、旧出口 TCP 连接结束、新流经新上联、出口角色保持并可撤回、B→A Mesh 流不受影响，见 [roam/exit 行](#roam-exit-row) | 通过；合入后同一矩阵行 `20261016T115223Z-dbf8ee30`；合入前 `20261016T111250Z-273a0df4`（main 上 `down` 时出口退役一直冲突、行失败） |
-| `validate:matrix --rows fault/throttle` | Native UDP 静态端点；A→R→B，B 经出口 E | 四端 resolved 后端＋MagicDNS | — | B 限额 0.02 核 90／30 秒、B 的 resolved 重启两次、Controller 侧丢弃 B 的 Server 连接 100 秒、E 限额 12 秒：期间不 `blocked`、撤回期间 `retrying`＋原因、≤ 10 秒以同一 netmap 恢复与包流恢复；每段恢复后及非限额故障期间各节点 meshwayd 最忙线程 < 5 %、进程 < 10 %，见 [fault/throttle 行](#fault-row) | 见该节 |
+| `validate:matrix --rows fault/throttle` | Native UDP 静态端点；A→R→B，B 经出口 E | 四端 resolved 后端＋MagicDNS | — | B 限额 0.02 核 90／30 秒、B 的 resolved 重启两次、Controller 侧丢弃 B 的 Server 连接 100 秒、E 限额 12 秒：期间不 `blocked`、撤回期间 `retrying`＋原因、≤ 10 秒以同一 netmap 恢复与包流恢复；每段恢复后及非限额故障期间各节点 meshwayd 最忙线程 < 5 %、进程 < 10 %，见 [fault/throttle 行](#fault-row) | 通过（单行连续 3 轮）；Planck 25 行矩阵 `20261022T080007Z-a6709a82` 行 `20261022T080248Z-8f1ca896`；`a41791bf`（X18 之前）在 CPU 门槛失败 |
 | `validate:matrix --rows exit/off` | Native UDP；声明 Native TCP 能力 | 三端 resolved 后端（MagicDNS＋一个 `useWithExit` split） | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回、HTTP 中断内离线出口与租约到期全撤／恢复、journal；单出口 DNS（第 9 阶段）；域名出口与可信关联（第 10 阶段）；方案切换含 `global:E`（第 11 阶段）；ICMP 错误、PMTU 与窄通道 MSS／fragmentation needed（第 12 阶段）；`meshway ping` Mesh 外目标：公网 IP 经 E、direct、域名经 E resolver 与关联、撤权后 denied（第 13 阶段）；`auto` 按 A 的地区选方案（第 14 阶段）；echo 寿命、出口投影容量与出口角色恢复（第 15 阶段）；出口与 Mesh 吞吐并排、echo 安装下的出口 TCP 流（第 16 阶段）；A 的 7,000 区间节点侧分割 | 当前 wire 已通过（含 DNS、域名出口阶段与节点侧分割）；R3＋X6 矩阵 `20261012T115405Z-61e14403` 行 `20261012T115835Z-1812d1b8`；D2（第 13 阶段）矩阵 `20261013T160631Z-761b2963` 行 `20261013T161638Z-b6eb53a0`；X6 Planck 矩阵 `20261012T101704Z-ae64c486` 行 `20261012T102856Z-a05feedb`，见[出口场景](#exit-scenario) |
 | `validate:matrix --rows exit6/off` | Native UDP；内层双栈 | 三端 resolved 后端 | IPv4 masquerade＋IPv6 NAT66（`exitFamilies: ["ipv4","ipv6"]`） | A→R→E 的 IPv6：两族能力与 IPv6 前置条件、TCP／UDP／ICMPv6 与 ULA LAN、PMTU／`traceroute -6`、MSS 与 1280 以下通道、AAAA 关联、方案切换、运行时只有 IPv4（`EACCES`）与静态只 IPv4 出口、撤回与 quarantine，见 [exit6/off 行](#exit6-off) | 通过（隔离 fixture；真实宿主 IPv6 出口未验收）；Planck 24 行矩阵 `20261017T213601Z-935b9b88`（`752673fe`）行 `20261017T214444Z-e8b51be7`；单行 `20261017T102314Z-37ac6ad7` 行 `20261017T102526Z-3a7dd7bf` |
 
@@ -536,6 +536,30 @@ H4 十轮全量的偶发失败逐一归因如下（证据 `.meshway/validation/h
 | `exit-audit` | E 限额 0.02 核 12 秒（X11 方法：其 nft 读取超出 2 秒预算） | E ≤ 10 秒 running／ready、≤ 30 秒（owner 的未验证上限）出口能力再次 ready 且已安装；A→B 回显最长间隔 ≤ 2 秒；记录是否出现出口审计 `unavailable`。underlay 的测试专用工具故障（X11／X12）只存在于其库测试中，不能从 daemon 进程外触发，本阶段以外部限额代替 |
 
 各段共同项：全程（所有节点）没有 `blocked`；撤回次数 ≤ 10 且等于重装次数（X15 的循环为每秒约 37,000 次）；空闲窗口内 A 的回显最长间隔 ≤ 2 秒；四个 meshwayd 的 CPU 由 `/proc/<pid>/task/*/stat` 两次采样之差计算（缺测为失败，不填零）：最忙线程 < 5 %、整进程 < 10 %（单核百分比；X18 的电平分支使一个线程约 100 %，release 空闲 0.56 %；本行为 debug 构建、每秒两次 Status 读取与 5 pps 业务流）。行结束时各节点 applied 仍为基线 serial。门槛与来源的唯一定义在 `dev/fault-fixture/evidence.py`，离线正负例为 `scripts/test_fault_fixture.py`。
+
+结果（Planck，并行矩阵内或单行；每轮五段全部门槛通过，`withdrawals` 为每段的撤回次数）：
+
+| 运行 | 最忙线程／进程 CPU（全部窗口最大） | `cpu-long`：Status 恢复／包流恢复，路径 | `cpu-short` | resolved 重启后 running | Control 恢复 sync | E 恢复 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 单行 `20261022T043027Z-96eb8bd6`、`…044612Z-32dd1aa0`、`…045759Z-bcdbb8b6`（`ecadabab`，连续 3 轮） | 2.24–2.31 %／4.50–5.00 % | 0.35–0.52 s／7.0–8.0 s，3 次撤回，只有 DNS | 0.38–0.59 s／5.3–7.1 s | 0.04–0.41 s | 0.85–1.87 s | 0.47–0.54 s |
+| 25 行矩阵 `20261022T080007Z-a6709a82`（`f994fe45`，并行 8，墙钟 1,083 秒，同机无其他矩阵）行 `20261022T080248Z-8f1ca896` | 2.13 %／4.70 % | 0.30 s／7.6 s | 0.47 s／9.5 s | 0.32–0.33 s | 2.25 s | 0.58 s |
+
+全部运行中 B 在限额下的撤回都只经 DNS（`observe_deadline`），没有出现 X12 变更重试或 X13 `verify_unavailable`：B 的 egress capture 规则集很小，撤回时的 `pause` 在 2 秒预算内完成；E 限额 12 秒同样只有 DNS 撤回，没有出口审计 `unavailable`（lab 中两者都出现过，见 [X12](#x12-change)、[X13](#x13-reproof)、[X11](#x11-exit)）。本行因此不覆盖这两条重证路径，它们仍由各自的隔离组件测试证明。resolved 重启后 Mesh 名在 0 ms 内即回答（resolved 从其 `/run` 状态文件恢复链路设置，DNS owner 以新 bus owner 重证通过、不撤回）。Control 中断期间 B 一直 running、`lastError: network`、无 `networkError`，A→B 最长间隔 ≤ 0.82 秒。
+
+旧提交回归（同一 fixture 摘入旧产品代码，单行各一次）：
+
+| 产品代码 | 结果 |
+| --- | --- |
+| `a41791bf`（alpha.19，X18 之前） | 未通过：基线与五段的每个 CPU 窗口里四个 meshwayd 都有一个线程约 100 %（进程约 104 %），第 5 段条件在所有窗口失败；其余恢复门槛通过。`20261022T033026Z-a72a1661` |
+| `54f37b29`（alpha.15，X15 之前） | 未通过：`cpu-long`／`cpu-short` 撤回期间 `lastError` 为 null、phase `synchronizing`（H4 之前的缺陷），无重装日志；X15 的忙循环需要宿主内核归属在 DNS 自行重证之后暂态结束，本行没有触发归属结束，未复现。`20261022T035853Z-1783c73a` |
+| `34987b0d`（alpha.14，X13 之前） | 同上（H4 之前的缺陷）；X13 的不自愈需要 `verify_unavailable`，本行未触发。`20261022T041239Z-62b4984e` |
+
+本行暴露、尚未修复的问题（已登记，不放宽门槛）：
+
+- **B 恢复后包流晚 5–9.5 秒**：限额解除后 B 在 0.3–0.6 秒内 running，A→B 的回显却在 5.3–9.5 秒后才恢复（门槛 10 秒，余量小）。B 的 Manager 以新 boot 重建邻接，R 因 B 换 boot 退役与 B 的 circuit；A 在 B 重装前 0.5 秒新发起的 circuit 仍在握手，直到 A 自己约 10 秒的期限（`maintain` 退役）才重建，R 的退役没有使 A 立即重试。矩阵 `20261022T080007Z-a6709a82` 行 `20261022T080248Z-8f1ca896` 的 `cpu-short`：R 0.254 秒 `set_peer_boots` 退役，A 9.472 秒 `maintain` 退役、9.511 秒新 circuit 就绪。
+- **限额解除瞬间多一次撤回**：每次限额解除时 worker 先以 offer 重装，随后才处理限额期间 DNS owner 已发布、且已自行重证的故障边沿，撤回约 150 ms 再重装（`withdrawalsAtRestore` 每段 1 次）。撤回与重装成对、有界，状态与包流门槛不受影响。
+
+同期全量矩阵中的其他失败（与本行改动无关，均已处理或登记）：`exit/off` 第 11 阶段 `the kept split resolver was not reached from A directly`（`20261022T055011Z-d1fa2a6c`）——fixture 的 resolver 先回答、后写查询记录，读取早于写入（最终记录中查询确实来自 A），已改为记录写入后再回答（`tools/meshway-runtime-fixture/src/exit/dns.rs`）；`exit/off` 第 12 阶段 `A live UDP flow through the exit did not start`（`20261022T065619Z-34e5d00e`，20 个报文 0 回显，E 两次 `Exit forwarding refused by the kernel route decision`），单行复跑 `20261022T071519Z-76bc31dd` 通过，原因未定位；同机另一矩阵并发时的 Docker 地址池耗尽（`20261022T051010Z-bd60960c`）与 `underlay-restart-a` 90 秒等待超时（`20261022T061254Z-ffc4e746`，同机另一矩阵在 7 分钟后启动）。证据 `.meshway/validation/f7/`。
 
 ### 当前验证证据
 
