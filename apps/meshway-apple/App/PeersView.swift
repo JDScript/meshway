@@ -64,7 +64,9 @@ struct DevicesView: View {
                     }.padding(4)
                 }.scrollIndicators(.hidden)
                     .overlay {
-                        if model.peers.isEmpty { Text(model.search.isEmpty ? "暂无可见设备" : "没有匹配的设备").foregroundStyle(.secondary) }
+                        if let kind = EmptyStateKind.devices(query: model.search, count: model.peers.count, server: serverEmptyState(model)) {
+                            EmptyStateView(kind: kind)
+                        }
                     }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background.opacity(0.45), in: .rect(cornerRadius: 16))
@@ -73,6 +75,8 @@ struct DevicesView: View {
                 if let peer {
                     PeerDetail(model: model, peer: peer) { selected = nil }
                         .id(peer.nodeId).transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+                } else if let kind = serverEmptyState(model) {
+                    EmptyStateView(kind: kind, compact: true)
                 }
             }.frame(width: 210).frame(maxHeight: .infinity)
         }.font(.system(size: 12)).clipped()
@@ -174,6 +178,7 @@ struct ProfilesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("出口方案").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary).padding(.horizontal, 10)
             ProfileRows(model: model, selection: selection)
+            if selection.profiles.count == 1 && selection.profiles.first?.kind == .mesh { EmptyStateView(kind: .mesh) }
             Spacer()
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }

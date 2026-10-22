@@ -17,8 +17,7 @@ struct MenuPanel: View {
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
             sectionLabel("设备")
             if peers.isEmpty {
-                Text(model.status?.phase == .awaitingApproval ? "等待浏览器批准" : "接入网络后显示设备")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).padding(10)
+                EmptyStateView(kind: serverEmptyState(model) ?? .devices, compact: true)
             } else {
                 ScrollView {
                     VStack(spacing: 1) {

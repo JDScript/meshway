@@ -31,7 +31,7 @@ struct MainView: View {
                             case .peers: DevicesView(model: model)
                             case .exit:
                                 if let selection = model.selection { ProfilesView(model: model, selection: selection).padding(12) }
-                                else { ContentUnavailableView("暂无出口方案", systemImage: "arrow.up.forward", description: Text("安装 netmap 后显示可用方案。")) }
+                                else { EmptyStateView(kind: .profiles) }
                             case .diagnostics: DiagnosticsView(model: model)
                             }
                         }.id(page).transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
