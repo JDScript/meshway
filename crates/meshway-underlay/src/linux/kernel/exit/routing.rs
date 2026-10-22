@@ -1,3 +1,4 @@
+use super::super::rtnl::Handle;
 use super::super::{
     monitor::Expected,
     plan::{PROTOCOL, decode_route, decode_rule, encode_route, encode_rule, priority},
@@ -5,7 +6,7 @@ use super::super::{
 use super::storage::{Ledger, Store};
 use crate::{Error, Result};
 use rtnetlink::{
-    Handle, RouteMessageBuilder,
+    RouteMessageBuilder,
     packet_route::{
         AddressFamily,
         route::{RouteScope, RouteType},

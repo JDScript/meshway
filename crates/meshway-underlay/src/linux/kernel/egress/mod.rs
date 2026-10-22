@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 /// verifies its RPDB. The durable OUTPUT union remains negative until explicit
 /// authorized capture installation or down.
 pub(super) async fn recover(
-    handle: &rtnetlink::Handle,
+    handle: &super::rtnl::Handle,
     directory: Arc<meshway_private_storage::Directory>,
     limit: usize,
     remove: bool,

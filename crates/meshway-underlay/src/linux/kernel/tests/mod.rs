@@ -320,12 +320,9 @@ async fn assert_dns_anchor_installation(kernel: &Kernel, identity: &meshway_dns:
         "1",
         "anchor must disable IPv6 autoconfiguration"
     );
-    let links = collect(
-        kernel.handle.link().get().execute(),
-        kernel.options.max_kernel_objects,
-    )
-    .await
-    .unwrap();
+    let links = get_links(&kernel.handle, kernel.options.max_kernel_objects)
+        .await
+        .unwrap();
     let link = links
         .iter()
         .find(|link| link.header.index == identity.index)

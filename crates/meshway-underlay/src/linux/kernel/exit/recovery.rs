@@ -11,7 +11,7 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 pub(in crate::linux::kernel) async fn recover(
-    handle: &rtnetlink::Handle,
+    handle: &super::super::rtnl::Handle,
     directory: Arc<Directory>,
     limit: usize,
 ) -> Result<()> {
@@ -21,7 +21,7 @@ pub(in crate::linux::kernel) async fn recover(
     };
     // Descriptor ownership is never inferred from a journal name/index. A live
     // device at this identity belongs to a surviving descriptor or a conflict.
-    let links = super::super::collect(handle.link().get().execute(), limit).await?;
+    let links = super::super::get_links(handle, limit).await?;
     if links.iter().any(|link| link.header.index == ledger.program.interface || link.attributes.iter().any(|attribute| matches!(attribute, LinkAttribute::IfName(name) if name == &ledger.tun_name))) {
         #[cfg(test)] eprintln!("exit recovery live interface: {} index={}", ledger.tun_name, ledger.program.interface);
         return Err(Error::Conflict);

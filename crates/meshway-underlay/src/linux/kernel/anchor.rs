@@ -1,10 +1,12 @@
 //! Persistent DNS anchor, owned by the existing Kernel journal and monitor.
 //! It has a local installation address, never a leased Server Mesh address.
-use super::{Kernel, Pending, collect, execute, get_addresses, get_routes};
+use super::{
+    Kernel, Pending, collect, execute, get_addresses, get_links, get_routes, rtnl::Handle,
+};
 use crate::{Error, Result};
 use meshway_dns::{DnsFuture, DnsLinkIdentity, OwnedDnsLink, SystemDnsError, SystemDnsFailure};
 use rtnetlink::{
-    Handle, LinkDummy,
+    LinkDummy,
     packet_route::{
         AddressFamily,
         address::{AddressAttribute, AddressMessage, AddressScope},
@@ -84,8 +86,7 @@ impl Guard {
     /// task capacity.
     fn open_reader(&self) -> Result<Reader> {
         let closed = self.cancelled.child_token();
-        let (connection, handle, unsolicited) = rtnetlink::new_connection()?;
-        drop(unsolicited); // no multicast subscriptions on this read socket
+        let (connection, handle) = super::rtnl::connect()?;
         let stop = closed.clone();
         let conflict = self.shared.conflict.clone();
         // Tasks rejects at its existing capacity bound. On rejection the
@@ -221,11 +222,7 @@ impl Kernel {
         } else {
             let name = format!("mwd{}", &self.journal.installation[..10]);
             let alias = format!("meshway-dns:{}", self.journal.installation);
-            let links = collect(
-                self.handle.link().get().execute(),
-                self.options.max_kernel_objects,
-            )
-            .await?;
+            let links = get_links(&self.handle, self.options.max_kernel_objects).await?;
             if links.iter().any(|link| {
                 link.attributes.iter().any(|a| {
                     matches!(a, LinkAttribute::IfName(v) if v == &name)
@@ -419,11 +416,7 @@ impl Kernel {
             .map_err(|_| Error::Worker)?
             .anchor_deleting = true;
         execute(self.handle.link().del(record.identity.index).execute()).await?;
-        let links = collect(
-            self.handle.link().get().execute(),
-            self.options.max_kernel_objects,
-        )
-        .await?;
+        let links = get_links(&self.handle, self.options.max_kernel_objects).await?;
         if links.iter().any(|link| {
             link.header.index == record.identity.index
                 || link.attributes.iter().any(
@@ -708,7 +701,7 @@ async fn find_owned_link(
     record: &Record,
     limit: usize,
 ) -> std::result::Result<LinkMessage, Mismatch> {
-    let links = collect(handle.link().get().execute(), limit)
+    let links = get_links(handle, limit)
         .await
         .map_err(Mismatch::dump(LINKS))?;
     let matches: Vec<_> = links

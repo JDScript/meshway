@@ -11,8 +11,7 @@ fn isolated() {
 }
 
 async fn foreign() -> (Handle, tokio::task::JoinHandle<()>) {
-    let (connection, handle, unsolicited) = rtnetlink::new_connection().unwrap();
-    drop(unsolicited);
+    let (connection, handle) = rtnl::connect().unwrap();
     (handle, tokio::spawn(connection))
 }
 

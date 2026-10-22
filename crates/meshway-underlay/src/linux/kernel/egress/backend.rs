@@ -1,3 +1,4 @@
+use super::super::rtnl::Handle;
 use super::super::{
     exit::objects::{self, Receipt},
     monitor::Expected,
@@ -12,7 +13,7 @@ use super::{
 use crate::{Error, Result};
 use meshway_configuration::execution::EgressCapturePlan;
 use rtnetlink::{
-    Handle, RouteMessageBuilder,
+    RouteMessageBuilder,
     packet_route::{
         AddressFamily,
         route::{RouteMessage, RouteScope, RouteType},

@@ -11,6 +11,7 @@ mod plan;
 mod proof;
 mod repair;
 mod rpdb;
+pub(in crate::linux) mod rtnl;
 mod term;
 mod tool;
 mod verification;
@@ -20,14 +21,16 @@ use meshway_engine::Desired;
 use meshway_private_storage::Directory;
 use meshway_tun::Tun;
 use rtnetlink::{
-    Handle, IpVersion,
+    IpVersion,
     packet_route::{
         AddressFamily,
         address::{AddressAttribute, AddressMessage},
+        link::LinkMessage,
         route::RouteMessage,
         rule::{RuleAttribute, RuleMessage},
     },
 };
+use rtnl::Handle;
 use std::{
     net::IpAddr,
     sync::{Arc, Mutex, RwLock},
@@ -328,6 +331,7 @@ fn ended(operation: &'static str, error: &Error) -> crate::OwnershipEnd {
     }
 }
 
+/// The answers of one request that is not a dump (dumps: [`rtnl`]).
 async fn collect<S>(mut stream: S, limit: usize) -> Result<Vec<S::Ok>>
 where
     S: TryStream<Error = rtnetlink::Error> + Unpin,
@@ -383,14 +387,8 @@ async fn get_rules(handle: &Handle, limit: usize) -> Result<Vec<RuleMessage>> {
     if tool::command::faults::take(&tool::command::faults::FAILING_RULE_READS) {
         return Err(Error::Netlink);
     }
-    let mut rules = collect(handle.rule().get(IpVersion::V4).execute(), limit).await?;
-    rules.extend(
-        collect(
-            handle.rule().get(IpVersion::V6).execute(),
-            limit.saturating_sub(rules.len()),
-        )
-        .await?,
-    );
+    let mut rules = rtnl::rules(handle, IpVersion::V4, limit).await?;
+    rules.extend(rtnl::rules(handle, IpVersion::V6, limit.saturating_sub(rules.len())).await?);
     Ok(rules)
 }
 
@@ -402,28 +400,17 @@ async fn get_rules(handle: &Handle, limit: usize) -> Result<Vec<RuleMessage>> {
 async fn get_routes(handle: &Handle, limit: usize) -> Result<Vec<RouteMessage>> {
     let mut routes = Vec::new();
     for family in [AddressFamily::Inet, AddressFamily::Inet6] {
-        let mut message = RouteMessage::default();
-        message.header.address_family = family;
-        routes.extend(
-            collect(
-                handle.route().get(message).execute(),
-                limit.saturating_sub(routes.len()),
-            )
-            .await?
-            .into_iter()
-            .filter(|route| {
-                !route
-                    .header
-                    .flags
-                    .contains(rtnetlink::packet_route::route::RouteFlags::Cloned)
-            }),
-        );
+        routes.extend(rtnl::routes(handle, family, limit.saturating_sub(routes.len())).await?);
     }
     Ok(routes)
 }
 
 async fn get_addresses(handle: &Handle, limit: usize) -> Result<Vec<AddressMessage>> {
-    collect(handle.address().get().execute(), limit).await
+    rtnl::addresses(handle, limit).await
+}
+
+async fn get_links(handle: &Handle, limit: usize) -> Result<Vec<LinkMessage>> {
+    rtnl::links(handle, limit).await
 }
 
 #[cfg(test)]

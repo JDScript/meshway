@@ -44,6 +44,14 @@ CASES = {
     # from the read-back instead of deleting nothing until the role stops.
     "quarantine": ("meshway-underlay-kernel-tests",
                    "linux::kernel::exit::tests::changes::a_lost_quarantine_expiry_is_completed_from_the_read_back"),
+    # X16: an interrupted netlink dump (EBUSY: another dump on the socket;
+    # NLM_F_DUMP_INTR) is an unfinished read: one socket's dumps run one at a
+    # time and an interrupted one is read again; the install's route step
+    # completes and the flow's first packet is answered.
+    "dumps-socket": ("meshway-underlay-kernel-tests",
+                     "linux::kernel::rtnl::tests::dumps_of_one_socket_are_taken_one_at_a_time"),
+    "dumps-exit": ("meshway-underlay-kernel-tests",
+                   "linux::kernel::exit::tests::dumps::interrupted_dumps_are_read_again_and_the_first_packet_is_answered"),
     "changes-egress": ("meshway-underlay-kernel-tests",
                        "linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed"),
     "nft": ("meshway-underlay-kernel-tests",
@@ -69,8 +77,9 @@ def execute(report, image, platform, identity):
                       "meshway-exit-components-" + identity.lower(), capture=True).strip()
         inspection = json.loads(run("docker", "network", "inspect", network, capture=True))[0]
         subnet = ipaddress.ip_network(inspection["IPAM"]["Config"][0]["Subnet"])
-        if not inspection["Internal"] or subnet.num_addresses < 16:
-            raise RuntimeError("component fixture requires an internal /28 or larger")
+        # Network, gateway, the service, one address per case and broadcast.
+        if not inspection["Internal"] or subnet.num_addresses < len(CASES) + 4:
+            raise RuntimeError("component fixture requires an internal network with an address per case")
         remote = str(subnet.network_address + 2)
         server = run("docker", "create", "--pull", "never", "--label", label, "--network", network,
                      "--ip", remote, "--cap-drop", "ALL", "--read-only", "--security-opt", "no-new-privileges",

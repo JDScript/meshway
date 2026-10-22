@@ -3,19 +3,17 @@
 //! the caller's objects are monitored), mutate, and read back the exact result.
 //! Callers own their ledgers and persist intent before and outcome after a
 //! step; what counts as an owned object stays the caller's predicate.
+use super::rtnl::Handle;
 use super::{
-    collect, execute, get_routes, get_rules,
+    execute, get_links, get_routes, get_rules,
     monitor::{Event, Expected},
     plan::{decode_route, decode_rule, encode_route, encode_rule, priority},
 };
 use crate::{Error, Result};
-use rtnetlink::{
-    Handle,
-    packet_route::{
-        link::LinkAttribute,
-        route::RouteMessage,
-        rule::{RuleAttribute, RuleFlags, RuleMessage},
-    },
+use rtnetlink::packet_route::{
+    link::LinkAttribute,
+    route::RouteMessage,
+    rule::{RuleAttribute, RuleFlags, RuleMessage},
 };
 use std::sync::Mutex;
 
@@ -129,7 +127,7 @@ impl Objects<'_> {
                 .iter()
                 .any(|attribute| matches!(attribute, RuleAttribute::Iifname(iif) if iif == name))
         {
-            let links = collect(self.handle.link().get().execute(), self.limit).await?;
+            let links = get_links(self.handle, self.limit).await?;
             if !links.iter().any(|link| {
                 link.attributes
                     .iter()
