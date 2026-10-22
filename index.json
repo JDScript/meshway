@@ -1,8 +1,108 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T02:31:08.447841+00:00",
+  "updatedAt": "2026-10-22T03:36:34.927389+00:00",
   "runs": [
+    {
+      "id": 39717100610,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "329c3d7ff99bbf35949f28dadfe86ba1794b42e3",
+      "message": "Merge branch 's5/delta-baseline'",
+      "createdAt": "2026-10-22T03:29:19Z",
+      "updatedAt": "2026-10-22T03:30:22Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39717100610",
+      "jobs": [
+        {
+          "id": 119621989408,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T03:30:15Z",
+          "completedAt": "2026-10-22T03:30:18Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39717100610/job/119621989408"
+        },
+        {
+          "id": 119622014566,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T03:30:21Z",
+          "completedAt": "2026-10-22T03:33:46Z",
+          "seconds": 205.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39717100610/job/119622014566"
+        },
+        {
+          "id": 119622014639,
+          "name": "cargo",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-22T03:30:19Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39717100610/job/119622014639"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39717062339,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "3746e3be2ef046077839b4c0d3dfd693f7d7a478",
+      "message": "docs(development): Console dev proxy targets the loopback Server and listens on 127.0.0.1",
+      "createdAt": "2026-10-22T03:28:54Z",
+      "updatedAt": "2026-10-22T03:30:15Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39717062339",
+      "jobs": [
+        {
+          "id": 119621594062,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T03:28:56Z",
+          "completedAt": "2026-10-22T03:28:59Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39717062339/job/119621594062"
+        },
+        {
+          "id": 119621615558,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-22T03:29:00Z",
+          "completedAt": "2026-10-22T03:30:14Z",
+          "seconds": 74.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39717062339/job/119621615558"
+        },
+        {
+          "id": 119621617127,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T03:28:59Z",
+          "completedAt": "2026-10-22T03:28:59Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39717062339/job/119621617127"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 39711660342,
       "attempt": 1,
