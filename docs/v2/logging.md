@@ -25,6 +25,8 @@ JSON 事件包含 `timestamp`、`level`、`target`、`fields`；`fields.message`
 
 Apple bridge 在 extension 入口用同一 `Options::init_with_writer` 安装一次 subscriber，输出 JSON 行经 Swift 回调写入 os_log（`dev.meshway.node`／`node`），不在 Node 库安装 subscriber；日志回调不持控制凭据或包状态。默认 Rust 程序入口仍写 stderr。
 
+Apple Debug 构建另开启 Control HTTP、控制调度、State 确认与 Connectivity 的定向 debug 事件；Release 保持 info。HTTP 传输失败只记录阶段、I/O 类别、数字 OS 错误与已有 HTTP 状态，Host 主动中断另记 `host_interrupt`，不记录原始错误链、URL 或报文。读取 VM 日志使用 `sudo /usr/bin/log show --info --debug --predicate 'subsystem == "dev.meshway.node"'`。
+
 ## 事件与字段
 
 | 来源 | 常规日志 | debug 日志 |

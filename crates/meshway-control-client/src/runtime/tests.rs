@@ -128,6 +128,104 @@ fn json(status: u16, body: &'static str) -> HttpResponse<Body> {
 }
 
 #[tokio::test]
+async fn middleware_timeout_keeps_its_safe_transport_classification() {
+    let router = Router::new().route(
+        "/held",
+        get(|| async { std::future::pending::<HttpResponse<Body>>().await }),
+    );
+    let (base, mut server) = start_server(router).await;
+    let http = http_client_builder().unwrap().no_proxy().build().unwrap();
+    let client = reqwest_middleware::ClientBuilder::new(http).build();
+    let error = client
+        .get(format!("{base}/held?private=must-not-escape"))
+        .timeout(Duration::from_millis(50))
+        .send()
+        .await
+        .unwrap_err();
+    assert_eq!(transport_failure(&error).0, "timeout");
+    let classified: ClientError<Problem> = network(&error, None);
+    assert_eq!(format!("{classified:?}"), "Network { status: None }");
+    server.0.abort();
+    let _ = (&mut server.0).await;
+}
+
+#[test]
+fn io_wrapped_tls_failure_is_classified_without_arbitrary_error_text() {
+    for (error, expected) in [
+        (rustls::Error::DecryptError, "decrypt"),
+        (rustls::Error::General("must-not-escape".into()), "other"),
+    ] {
+        let wrapped = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+        let (_, io, _, tls) = transport_failure(&wrapped);
+        assert_eq!(io, Some(std::io::ErrorKind::InvalidData));
+        assert_eq!(tls.as_deref(), Some(expected));
+    }
+}
+
+#[tokio::test]
+async fn state_body_uses_shared_client_while_sync_is_held_and_after_path_interrupt() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let held = entered.clone();
+    let router = Router::new()
+        .route(
+            "/sync",
+            post(move || {
+                let held = held.clone();
+                async move {
+                    held.notify_one();
+                    std::future::pending::<HttpResponse<Body>>().await
+                }
+            }),
+        )
+        .route(
+            "/state",
+            post(|axum::Json(value): axum::Json<String>| async move {
+                assert_eq!(value, "s".repeat(200_000));
+                json(200, r#"{"value":"accepted"}"#)
+            }),
+        );
+    let (base, mut server) = start_server(router).await;
+    let (path, received) = tokio::sync::watch::channel(0);
+    let client = Client::new(
+        &base,
+        http_client_builder()
+            .unwrap()
+            .no_proxy()
+            .pool_max_idle_per_host(0),
+        1024 * 1024,
+    )
+    .unwrap()
+    .with_request_timeout(Duration::from_secs(2))
+    .with_request_interrupt(Some(Arc::new(PathChanged(received))));
+    let syncing = client.clone().with_request_timeout(Duration::from_secs(90));
+    let sync = tokio::spawn(async move {
+        syncing
+            .send::<_, Problem>(Method::POST, "/sync", None, Some(&()))
+            .await
+    });
+    entered.notified().await;
+    for changed in [false, true] {
+        if changed {
+            path.send_replace(1);
+        }
+        let response = client
+            .send::<_, Problem>(Method::POST, "/state", None, Some(&"s".repeat(200_000)))
+            .await
+            .unwrap();
+        assert_eq!(response.json::<Value, Problem>().unwrap().value, "accepted");
+        if !changed {
+            assert!(!sync.is_finished(), "State must not wait for the held sync");
+        }
+    }
+    assert!(matches!(
+        sync.await.unwrap(),
+        Err(ClientError::Network { .. })
+    ));
+    server.0.abort();
+    let _ = (&mut server.0).await;
+}
+
+#[tokio::test]
 async fn typed_decoding_and_debug_never_retain_invalid_bodies() {
     let router = Router::new()
         .route("/value", get(|| async { json(200, r#"{"value":"ok"}"#) }))

@@ -128,8 +128,11 @@ SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swif
 | 出口方案 | netmap 中的生效／请求／默认方案、锁定、auto 与允许方案摘要；`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示，生效仍等本机 netmap 与 applied |
 | 诊断与身份 | Netcheck、四次 ping 的流式本地判定／测量、取消 ping、RotateKey、带永久注销说明的 Logout 确认；身份操作先读 revision，不绕过 CAS |
 | 系统引导 | 读取 extension 属性与 VPN preferences，显示未安装／待批准／未启用／缺少配置；沿用 TunnelController 显式激活与创建 VPN。lab 命令与 Debug 菜单独立于正式主路径 |
+| 应用图标 | This Mac → Application icon 提供 Ink／Frost／Indigo／Graphite 四种缩略图，未接入时也可使用；默认 Frost（方案 2，浅色磨砂＋青绿）。选择提示占用固定空间，动画尊重减少动态效果 |
 
-`--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；窗口与面板明确标注 SAMPLE DATA，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--model-tests` 使用同一组桥接样例检查 Swift 呈现模型。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
+App target 的 `Assets.xcassets/AppIcon.appiconset` 提供完整 macOS 16／32／128／256／512 pt 的 1×／2×默认图标；四份处理后母版作为 `AppIconChoice-*` 普通图片资源打包。`IconPreferences` 以 `UserDefaults` 保存本机偏好，启动及选择时通过 `NSApplication.shared.applicationIconImage` 更新运行中的 Dock 图标。Finder／Launchpad 保持默认 Frost，选择器明确说明这一限制；不调用 `NSWorkspace.setIcon`，不修改已签名 App bundle。源图处理与全套资源由 `apps/meshway-apple/scripts/generate-icons.py` 生成：清除圆角外残留、保留比例，图块最大 824×824 居中于 1024×1024 透明画布，不增加外阴影。
+
+`--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；窗口与面板明确标注 SAMPLE DATA，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section device` 显示图标选择器，预览中的选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览。`--model-tests` 使用同一组桥接样例检查 Swift 呈现模型。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
 
 ## 复用白名单 {#reuse}
 
