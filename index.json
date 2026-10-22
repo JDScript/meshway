@@ -1,8 +1,208 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T16:15:26.919229+00:00",
+  "updatedAt": "2026-10-22T23:52:54.474662+00:00",
   "runs": [
+    {
+      "id": 39874212777,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "975e19b54c3b2536e371d5e79fd451332314a9ef",
+      "message": "validation: P2 decode waste fixed by RC-1 G16; cadences kept for v0.1.0",
+      "createdAt": "2026-10-22T23:48:48Z",
+      "updatedAt": "2026-10-22T23:50:05Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39874212777",
+      "jobs": [
+        {
+          "id": 120156084045,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T23:49:53Z",
+          "completedAt": "2026-10-22T23:50:05Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874212777/job/120156084045"
+        },
+        {
+          "id": 120156167105,
+          "name": "web",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-22T23:50:05Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874212777/job/120156167105"
+        },
+        {
+          "id": 120156169448,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T23:50:05Z",
+          "completedAt": "2026-10-22T23:50:05Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874212777/job/120156169448"
+        },
+        {
+          "id": 120156169461,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T23:50:05Z",
+          "completedAt": "2026-10-22T23:50:05Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874212777/job/120156169461"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39874153854,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "3e1848a37e2ab8a7e4aa45024849ba238cd6a539",
+      "message": "Merge branch 'x17/exit-stress'",
+      "createdAt": "2026-10-22T23:48:15Z",
+      "updatedAt": "2026-10-22T23:48:15Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39874153854",
+      "jobs": [
+        {
+          "id": 120155536271,
+          "name": "perf",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-22T23:48:15Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153854/job/120155536271"
+        },
+        {
+          "id": 120155536586,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-22T23:48:17Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153854/job/120155536586"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39874153723,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "3e1848a37e2ab8a7e4aa45024849ba238cd6a539",
+      "message": "Merge branch 'x17/exit-stress'",
+      "createdAt": "2026-10-22T23:48:14Z",
+      "updatedAt": "2026-10-22T23:49:51Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39874153723",
+      "jobs": [
+        {
+          "id": 120155535909,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T23:48:17Z",
+          "completedAt": "2026-10-22T23:48:29Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153723/job/120155535909"
+        },
+        {
+          "id": 120155617875,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-22T23:48:32Z",
+          "completedAt": "2026-10-22T23:49:50Z",
+          "seconds": 78.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153723/job/120155617875"
+        },
+        {
+          "id": 120155617883,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-22T23:48:29Z",
+          "completedAt": "2026-10-22T23:48:49Z",
+          "seconds": 20.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153723/job/120155617883"
+        },
+        {
+          "id": 120155620091,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T23:48:30Z",
+          "completedAt": "2026-10-22T23:48:29Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153723/job/120155620091"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39874153710,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "3e1848a37e2ab8a7e4aa45024849ba238cd6a539",
+      "message": "Merge branch 'x17/exit-stress'",
+      "createdAt": "2026-10-22T23:48:14Z",
+      "updatedAt": "2026-10-22T23:48:14Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39874153710",
+      "jobs": [
+        {
+          "id": 120155535694,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-22T23:48:16Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153710/job/120155535694"
+        },
+        {
+          "id": 120155535984,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-22T23:48:15Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39874153710/job/120155535984"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 39808346773,
       "attempt": 1,
