@@ -50,7 +50,6 @@ pub(super) fn finish_withdrawal(engine: &mut Engine<Plane>, reports: &Publisher,
         DataPlane::Suspended
     };
     report.problem = failed.then_some(Problem::Underlay);
-    report.persistent = failed && conflict(engine);
     // Why kernel ownership ended, while it stays ended: never an empty
     // detail over a known reason.
     report.problem_detail = engine
@@ -78,11 +77,11 @@ pub(super) fn withdrawing(
     reports: &Publisher,
     problem: Problem,
     detail: Option<String>,
-    persistent: bool,
+    apply: meshway_model::recovery::Health,
 ) -> super::super::Report {
     let mut report = reports.borrow().clone();
     report.plane = DataPlane::Failed;
-    report.persistent = persistent;
+    report.apply = apply;
     report.content = None;
     report.problem = Some(problem);
     report.problem_detail = detail;
@@ -95,32 +94,6 @@ pub(super) fn withdrawing(
     }
     reports.send_replace(report.clone());
     report
-}
-
-/// Kernel ownership ended in a proven conflict: it stays ended until restart.
-fn conflict(engine: &Engine<Plane>) -> bool {
-    matches!(
-        engine.components().host.ownership_ended(),
-        Some(meshway_underlay::OwnershipEnd::Conflict { .. })
-    )
-}
-
-/// Whether a failed plane has no automatic way back (Status `blocked`):
-/// kernel ownership ended in a proven conflict, or — ownership holding —
-/// nothing retries `problem`. An unavailable end is re-proved, a DNS fault
-/// re-proved by its owner, an overlap ends when the address leaves, and a
-/// `retrying` failure is retried by the worker: all transient.
-pub(super) fn persistent(
-    engine: &Engine<Plane>,
-    problem: Option<Problem>,
-    retrying: bool,
-    overlap: bool,
-) -> bool {
-    match engine.components().host.ownership_ended() {
-        Some(meshway_underlay::OwnershipEnd::Conflict { .. }) => true,
-        Some(meshway_underlay::OwnershipEnd::Unavailable { .. }) => false,
-        None => !(retrying || overlap || problem == Some(Problem::Dns)),
-    }
 }
 
 /// The receipt failure of a component's `problem`.

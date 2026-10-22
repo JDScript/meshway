@@ -28,9 +28,7 @@ use packets::{packet_pool, receive_packets};
 use peers::PeerChannels;
 use sample::{RoamEvidence, sample_host};
 use timing::{apply_failed, apply_recovery, apply_retry_at, lease_end, sleep_until};
-use withdrawal::{
-    Cause, Withdrawn, finish_withdrawal, persistent, shutdown, withdraw, withdrawing,
-};
+use withdrawal::{Cause, Withdrawn, finish_withdrawal, shutdown, withdraw, withdrawing};
 
 /// Exit replies taken in one turn, like one Mesh TUN read turn.
 const EXIT_REPLY_BATCH: usize = 32;
@@ -342,12 +340,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                                 && report.problem_detail != detail
                             {
                                 report.problem_detail = detail;
-                                report.persistent = persistent(
-                                    &engine,
-                                    report.problem,
-                                    apply_retry_at(&retry).is_some(),
-                                    false,
-                                );
+                                report.apply = retry.health().clone();
                                 report.observed_at = chrono::Utc::now();
                                 reports.send_replace(report);
                             }
@@ -375,12 +368,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         report.problem_detail =
                             plane.host.ownership_ended().map(|end| end.to_string());
                         report.observed_at = chrono::Utc::now();
-                        report.persistent = persistent(
-                            &engine,
-                            report.problem,
-                            apply_retry_at(&retry).is_some(),
-                            false,
-                        );
+                        report.apply = retry.health().clone();
                         reports.send_replace(report);
                         continue;
                     }
@@ -508,7 +496,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         }
                         let mut report = reports.borrow().clone();
                         report.plane = DataPlane::Failed;
-                        report.persistent = false;
+                        report.apply = retry.health().clone();
                         report.problem = Some(Problem::Underlay);
                         report.problem_detail = Some(super::pool_overlap_detail(&found));
                         report.completion = Some(Err(ApplyFailure::Underlay));
@@ -798,7 +786,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         // problem (a listener that bound on retry).
                         report.problem = None;
                         report.problem_detail = None;
-                        report.persistent = false;
+                        retry = apply_recovery();
+                        report.apply = meshway_model::recovery::Health::Healthy;
                         report.completion = Some(Ok(()));
                         report.content = Some(netmap.content.clone());
                         report.capture = capture;
@@ -833,12 +822,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             DataPlane::Failed
                         };
                         apply_failed(&mut retry, failure);
-                        report.persistent = persistent(
-                            &engine,
-                            Some(problem),
-                            apply_retry_at(&retry).is_some(),
-                            false,
-                        );
+                        report.apply = retry.health().clone();
                     }
                     Err(error) if plane.failure.is_none() && kept => {
                         // Rejected input (regressing reference or stale lease):
@@ -872,12 +856,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         report.problem_detail = plane.failure_detail.take();
                         report.plane = DataPlane::Failed;
                         apply_failed(&mut retry, failure);
-                        report.persistent = persistent(
-                            &engine,
-                            Some(problem),
-                            apply_retry_at(&retry).is_some(),
-                            false,
-                        );
+                        report.apply = retry.health().clone();
                     }
                 }
                 reports.send_replace(report);
@@ -913,7 +892,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         .host
                         .ownership_ended()
                         .map(|end| end.to_string()),
-                    persistent(&engine, Some(Problem::Underlay), true, false),
+                    retry.health().clone(),
                 );
                 withdrawn.get_or_insert(Withdrawn::now(Problem::Underlay));
                 diagnostics.stop().await;
@@ -985,17 +964,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     ended
                 };
                 apply_failed(&mut retry, withdrawal::failure(problem));
-                let mut report = withdrawing(
-                    &reports,
-                    problem,
-                    detail,
-                    persistent(
-                        &engine,
-                        Some(problem),
-                        apply_retry_at(&retry).is_some(),
-                        false,
-                    ),
-                );
+                let mut report = withdrawing(&reports, problem, detail, retry.health().clone());
                 withdrawn.get_or_insert(Withdrawn::now(problem));
                 // The decisions of every external ping go with the content.
                 diagnostics.withdraw().await;
@@ -1011,12 +980,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     report.problem = Some(Problem::Underlay);
                     report.problem_detail = Some(end.to_string());
                     report.completion = Some(Err(ApplyFailure::Underlay));
-                    report.persistent = persistent(
-                        &engine,
-                        report.problem,
-                        apply_retry_at(&retry).is_some(),
-                        false,
-                    );
+                    report.apply = retry.health().clone();
                     report.observed_at = chrono::Utc::now();
                     reports.send_replace(report.clone());
                 }

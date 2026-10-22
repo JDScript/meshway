@@ -130,6 +130,9 @@ impl Publisher {
         if report.control_relay.is_none() {
             report.control_relay = self.reports.borrow().control_relay.clone();
         }
+        if report.ownership.is_none() {
+            report.ownership = self.reports.borrow().ownership.clone();
+        }
         let key = Key::of(&report);
         let changed = **self.changes.borrow() != key;
         self.reports.send_replace(report);

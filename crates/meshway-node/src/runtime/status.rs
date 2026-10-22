@@ -65,6 +65,56 @@ impl Clock {
     }
 }
 
+/// The live owner facts a network report carries, as the tracker waits on
+/// them. Each is a view its holders only borrow, so its own seen version
+/// lags behind every send since the owner started: the tracker's clones are
+/// marked seen before the inputs are read, else `changed` stays ready and a
+/// turn never yields. A closed one is dropped (one more turn reads it).
+struct Owners {
+    dns: Option<watch::Receiver<super::network::DnsFact>>,
+    ownership: Option<watch::Receiver<meshway_model::recovery::Health>>,
+    relay: Option<watch::Receiver<Option<meshway_underlay::ControlRelayState>>>,
+    changes: Option<watch::Receiver<Option<meshway_underlay::KernelChangePending>>>,
+    cleanups: Option<watch::Receiver<Option<meshway_underlay::RetryPending>>>,
+}
+
+impl Owners {
+    fn of(network: &super::network::Report) -> Self {
+        fn seen<T>(receiver: &Option<watch::Receiver<T>>) -> Option<watch::Receiver<T>> {
+            let mut receiver = receiver
+                .clone()
+                .filter(|receiver| receiver.has_changed().is_ok())?;
+            receiver.mark_unchanged();
+            Some(receiver)
+        }
+        Self {
+            dns: seen(&network.dns_guard),
+            ownership: seen(&network.ownership),
+            relay: seen(&network.control_relay),
+            changes: seen(&network.kernel_changes),
+            cleanups: seen(&network.exit_cleanups),
+        }
+    }
+
+    async fn changed(mut self) {
+        async fn one<T>(receiver: &mut Option<watch::Receiver<T>>) {
+            match receiver {
+                Some(receiver) => {
+                    let _ = receiver.changed().await;
+                }
+                None => std::future::pending().await,
+            }
+        }
+        tokio::select! {
+            _ = one(&mut self.dns) => {},
+            _ = one(&mut self.ownership) => {},
+            _ = one(&mut self.relay) => {},
+            _ = one(&mut self.changes) => {},
+            _ = one(&mut self.cleanups) => {},
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct View {
     pub(super) desired: watch::Receiver<Desired>,
@@ -130,15 +180,7 @@ impl View {
     /// `changed` stays ready and the turn never yields.
     pub(super) async fn track(mut self, mut stop: watch::Receiver<bool>) {
         loop {
-            let mut guard = self
-                .network
-                .borrow()
-                .dns_guard
-                .clone()
-                .filter(|guard| guard.has_changed().is_ok());
-            if let Some(guard) = &mut guard {
-                guard.mark_unchanged();
-            }
+            let owners = Owners::of(&self.network.borrow());
             let derived = self.derive();
             self.observe(derived.plane);
             tokio::select! {
@@ -146,13 +188,7 @@ impl View {
                 changed = self.desired.changed() => if changed.is_err() { return },
                 changed = self.report.changed() => if changed.is_err() { return },
                 changed = self.network.changed() => if changed.is_err() { return },
-                _ = async {
-                    match guard {
-                        // Closed: one more turn reads it, then it is filtered out.
-                        Some(mut guard) => { let _ = guard.changed().await; }
-                        None => std::future::pending().await,
-                    }
-                } => {},
+                () = owners.changed() => {},
             }
         }
     }
@@ -224,19 +260,26 @@ impl View {
             {
                 phase = Phase::Running;
             } else if data_plane == DataPlane::Failed && phase == Phase::ControlReady {
-                // A failure that recovers by itself retries; only one with
-                // no automatic way back needs an operator.
-                phase = if network.recovering() {
-                    Phase::Retrying
-                } else {
-                    Phase::Blocked
-                };
+                // A failure its owner retries is `retrying`; `blocked` comes
+                // from an owner's proven inconsistency alone (below).
+                phase = Phase::Retrying;
             } else if !ready && phase == Phase::ControlReady {
                 phase = Phase::Synchronizing;
             }
         }
         if active && phase == Phase::ControlReady && lease.is_none() {
             phase = Phase::Synchronizing;
+        }
+        // `blocked` exactly while an owner holds a proven inconsistency (or
+        // a refused netmap), whatever else runs; it ends with that proof.
+        if active
+            && self.network_mode == NetworkMode::Tun
+            && !matches!(phase, Phase::Blocked | Phase::Leaving)
+            && owners(&network)
+                .iter()
+                .any(|owner| owner.health.is_blocked())
+        {
+            phase = Phase::Blocked;
         }
         Derived {
             plane: PlaneState {
@@ -341,11 +384,20 @@ impl View {
             })
             .unwrap_or_default();
         let sockets = sockets(content.and(network.facts.as_ref()), network.netmap);
-        // The DNS owner's fault the worker has not withdrawn for yet: the
-        // plane withdraws for it, so it is already the cause.
-        let network_failure = match network.problem {
-            Some(problem) => Some((problem, network.problem_detail.clone())),
-            None => network.dns_fault().map(|detail| (Problem::Dns, detail)),
+        // An owner's proven inconsistency, or the cause of a withdrawn
+        // plane (kernel ownership first, else the earliest), from the
+        // owners' own live facts; otherwise the worker's last outcome. The
+        // DNS owner's fault the worker has not withdrawn for yet is already
+        // the cause: the plane withdraws for it.
+        let owned = owners(&network);
+        let blocked = owned.iter().any(|owner| owner.health.is_blocked());
+        let owned = cause(&owned, blocked)
+            .filter(|_| blocked || data_plane == DataPlane::Failed)
+            .map(|owner| (owner.problem, owner.detail.clone()));
+        let network_failure = match (owned, network.problem) {
+            (Some(owned), _) => Some(owned),
+            (None, Some(problem)) => Some((problem, network.problem_detail.clone())),
+            (None, None) => network.dns_fault().map(|detail| (Problem::Dns, detail)),
         };
         let network_error = network_failure
             .filter(|_| active)
@@ -439,7 +491,10 @@ impl View {
                 .filter(|_| self.network_mode == NetworkMode::Tun)
                 .and_then(|relay| relay.borrow().clone())
                 .map(|state| match state {
-                    meshway_underlay::ControlRelayState::Retrying(retry) => {
+                    // Blocked shows as retrying: the owner reads it again
+                    // every 60 s; `reason` names the foreign cause.
+                    meshway_underlay::ControlRelayState::Retrying(retry)
+                    | meshway_underlay::ControlRelayState::Blocked(retry) => {
                         meshway_protocol::ipc::ControlRelay::retrying(retry_pending(retry))
                     }
                     meshway_underlay::ControlRelayState::AtCapacity { limit, refused } => {
@@ -453,6 +508,115 @@ impl View {
                 }),
         }
     }
+}
+
+/// One fail-closed owner's health, as Status reads it: the problem it is
+/// reported as and why. Read from the owners' own live facts (kernel
+/// ownership, the DNS owner, the Control relay, the listeners, the worker's
+/// own installation retry), never from a snapshot of them.
+struct Owned {
+    problem: Problem,
+    health: meshway_model::recovery::Health,
+    detail: Option<String>,
+    /// Kernel ownership: every other owner fails because it did.
+    kernel: bool,
+}
+
+/// Every owner that is not healthy now (see [`Owned`]).
+fn owners(network: &super::network::Report) -> Vec<Owned> {
+    use meshway_model::recovery::{Blocked, Health};
+    let mut owners = Vec::new();
+    let reason = |health: &Health| match health {
+        Health::Healthy => None,
+        Health::Retrying(retrying) => Some(retrying.reason.clone()),
+        Health::Blocked(blocked) => Some(blocked.reason.clone()),
+    };
+    if let Some(ownership) = network
+        .ownership
+        .as_ref()
+        .filter(|ownership| ownership.has_changed().is_ok())
+    {
+        let health = ownership.borrow().clone();
+        if !health.is_healthy() {
+            owners.push(Owned {
+                problem: Problem::Underlay,
+                detail: reason(&health),
+                health,
+                kernel: true,
+            });
+        }
+    }
+    if let Some(guard) = network
+        .dns_guard
+        .as_ref()
+        .filter(|guard| guard.has_changed().is_ok())
+    {
+        let fact = guard.borrow();
+        if fact.fault.is_some() && !fact.health.is_healthy() {
+            owners.push(Owned {
+                problem: Problem::Dns,
+                health: fact.health.clone(),
+                detail: fact.detail.as_ref().map(ToString::to_string),
+                kernel: false,
+            });
+        }
+    }
+    if let Some(Some(meshway_underlay::ControlRelayState::Blocked(pending))) = network
+        .control_relay
+        .as_ref()
+        .map(|relay| relay.borrow().clone())
+    {
+        owners.push(Owned {
+            problem: Problem::Underlay,
+            health: Health::Blocked(Blocked {
+                check: "relay_permission",
+                reason: pending.reason.clone(),
+                since: std::time::Instant::now(),
+                attempts: pending.attempts,
+                reread_at: None,
+            }),
+            detail: Some(format!("controlRelay: {}", pending.reason)),
+            kernel: false,
+        });
+    }
+    if let Some(facts) = &network.facts {
+        for listener in facts
+            .unavailable
+            .iter()
+            .filter(|listener| !listener.recoverable)
+        {
+            owners.push(Owned {
+                problem: Problem::Transport,
+                health: Health::Blocked(Blocked {
+                    check: "listener_permission",
+                    reason: listener.detail.clone(),
+                    since: std::time::Instant::now(),
+                    attempts: listener.attempts,
+                    reread_at: Some(listener.retry_at),
+                }),
+                detail: Some(listener.detail.clone()),
+                kernel: false,
+            });
+        }
+    }
+    if !network.apply.is_healthy() {
+        owners.push(Owned {
+            problem: network.problem.unwrap_or(Problem::Apply),
+            health: network.apply.clone(),
+            detail: network.problem_detail.clone(),
+            kernel: false,
+        });
+    }
+    owners
+}
+
+/// The cause Status shows among `owners`: kernel ownership first (every
+/// other owner failed because it did), else the earliest failure.
+fn cause(owners: &[Owned], blocked: bool) -> Option<&Owned> {
+    owners
+        .iter()
+        .filter(|owner| !blocked || owner.health.is_blocked())
+        .min_by_key(|owner| (!owner.kernel, owner.health.since()))
 }
 
 fn retry_pending(pending: meshway_underlay::RetryPending) -> meshway_protocol::ipc::RetryPending {
@@ -773,39 +937,124 @@ mod tests {
         );
     }
 
-    /// H4 decision 1: a failed plane whose failure recovers by itself is
-    /// `retrying`; `blocked` only when nothing brings it back (a proven
-    /// ownership conflict, retries spent), unless a kernel change or exit
-    /// cleanup is being retried right now.
+    fn retrying(reason: &str) -> meshway_model::recovery::Health {
+        meshway_model::recovery::Health::Retrying(meshway_model::recovery::Retrying {
+            check: "test",
+            reason: reason.into(),
+            since: std::time::Instant::now(),
+            attempts: 1,
+            retry_at: std::time::Instant::now() + std::time::Duration::from_secs(5),
+        })
+    }
+
+    fn blocked(reason: &str) -> meshway_model::recovery::Health {
+        meshway_model::recovery::Health::Blocked(meshway_model::recovery::Blocked {
+            check: "test",
+            reason: reason.into(),
+            since: std::time::Instant::now(),
+            attempts: 1,
+            reread_at: Some(std::time::Instant::now() + std::time::Duration::from_secs(60)),
+        })
+    }
+
+    /// RC-1 M8 (Q3, G1, G8, G12): `phase` follows every owner's live health.
+    /// A withdrawn plane whose owner retries is `retrying`, never running
+    /// out into `blocked`; `blocked` exactly while an owner holds a proven
+    /// inconsistency (kernel ownership's conflict, foreign DNS settings, a
+    /// foreign relay socket) or a refused netmap, read live, not from the
+    /// worker's last report; the cause is kernel ownership first (Q7).
     #[test]
-    fn a_transient_failure_retries_and_only_a_persistent_one_blocks() {
+    fn a_transient_failure_retries_and_only_a_proven_one_blocks() {
         let mut network = super::super::network::Report::stopped();
         network.plane = DataPlane::Failed;
-        network.problem = Some(Problem::Dns);
+        network.problem = Some(Problem::Tun);
+        network.apply = retrying("Tun");
+        let (ownership, ownerships) = watch::channel(meshway_model::recovery::Health::Healthy);
+        network.ownership = Some(ownerships);
+        let (dns, guard) = watch::channel(super::super::network::DnsFact::default());
+        network.dns_guard = Some(guard);
+        let (relay, relays) = watch::channel(None);
+        network.control_relay = Some(relays);
         let (view, reported, network, _desired) = view(network);
         reported.send_modify(|report| report.phase = Phase::ControlReady);
         let status = view.status();
         assert_eq!(
-            (status.phase, status.data_plane),
-            (Phase::Retrying, DataPlane::Failed)
+            (status.phase, status.data_plane, status.last_error),
+            (Phase::Retrying, DataPlane::Failed, Some(Problem::Tun)),
+            "retried without running out"
         );
+        // Kernel ownership ends unavailable, then is proven a conflict: the
+        // live health, not a report, makes it blocked.
+        ownership.send_replace(retrying(
+            "kernelOwnership: unavailable (monitor_unavailable)",
+        ));
+        dns.send_modify(|fact| {
+            fact.fault = Some(meshway_dns::SystemDnsError::Backend);
+            fact.health = retrying("anchor_ended");
+        });
+        let status = view.status();
+        assert_eq!(status.phase, Phase::Retrying);
+        assert_eq!(status.last_error, Some(Problem::Underlay), "kernel first");
+        ownership.send_replace(blocked("kernelOwnership: conflict (monitor)"));
+        let status = view.status();
+        assert_eq!(
+            (status.phase, status.last_error),
+            (Phase::Blocked, Some(Problem::Underlay))
+        );
+        assert!(
+            status
+                .last_error_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("conflict (monitor)")),
+            "{:?}",
+            status.last_error_detail
+        );
+        // The conflict read again and gone: retrying again; then foreign DNS
+        // link settings are proven on their own.
+        ownership.send_replace(meshway_model::recovery::Health::Healthy);
+        assert_eq!(view.status().phase, Phase::Retrying);
+        dns.send_modify(|fact| fact.health = blocked("DNS link_settings check failed"));
+        let status = view.status();
+        assert_eq!(
+            (status.phase, status.last_error),
+            (Phase::Blocked, Some(Problem::Dns))
+        );
+        dns.send_replace(super::super::network::DnsFact::default());
+        // A refused netmap blocks until another offer.
         network.send_modify(|report| {
-            report.problem = Some(Problem::Underlay);
-            report.persistent = true;
+            report.problem = Some(Problem::Apply);
+            report.apply = blocked("Validation");
         });
         assert_eq!(view.status().phase, Phase::Blocked);
-        let (cleanup, cleanups) = watch::channel(None);
-        network.send_modify(|report| report.exit_cleanups = Some(cleanups));
-        assert_eq!(view.status().phase, Phase::Blocked);
-        cleanup.send_replace(Some(meshway_underlay::RetryPending {
-            reason: "kernel netlink operation failed".into(),
-            attempts: 2,
-            retry_at: std::time::SystemTime::now(),
-        }));
+        // A running plane with a foreign socket on the relay path (Q9).
+        network.send_modify(|report| {
+            report.plane = DataPlane::Ready;
+            report.problem = None;
+            report.apply = meshway_model::recovery::Health::Healthy;
+        });
+        assert_ne!(view.status().phase, Phase::Blocked);
+        relay.send_replace(Some(meshway_underlay::ControlRelayState::Blocked(
+            meshway_underlay::RetryPending {
+                reason: "cannot listen: a socket on the relay path this owner cannot prove its own"
+                    .into(),
+                attempts: 1,
+                retry_at: std::time::SystemTime::now(),
+            },
+        )));
+        let status = view.status();
+        assert_eq!(status.phase, Phase::Blocked);
         assert_eq!(
-            view.status().phase,
-            Phase::Retrying,
-            "a cleanup being retried"
+            status.control_relay.map(|relay| relay.state),
+            Some(meshway_protocol::ipc::ControlRelayState::Retrying),
+            "the IPC shape is unchanged"
+        );
+        assert!(
+            status
+                .last_error_detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("controlRelay: ")),
+            "{:?}",
+            status.last_error_detail
         );
     }
 }

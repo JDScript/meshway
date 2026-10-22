@@ -84,10 +84,10 @@ pub(super) struct Report {
     /// Netmap whose installation this report describes.
     pub netmap: Option<NetmapRef>,
     pub completion: Option<Result<(), ApplyFailure>>,
-    /// A failed plane has no automatic way back: kernel ownership ended in a
-    /// proven conflict, or nothing retries the failure (validation, retries
-    /// spent). Status shows `blocked` for it, else `retrying`.
-    pub persistent: bool,
+    /// The worker's own recovery of a failed installation of this netmap
+    /// (retrying a transient failure; blocked on a refusal until another
+    /// offer). Status reads it with every other owner's health.
+    pub apply: meshway_model::recovery::Health,
     pub observed_at: DateTime<Utc>,
     pub facts_observed_at: DateTime<Utc>,
     pub facts: Option<meshway_connectivity::Snapshot>,
@@ -102,6 +102,9 @@ pub(super) struct Report {
     /// The Control relay's listener state, live; set once at Host start
     /// like `kernel_changes`.
     pub control_relay: Option<watch::Receiver<Option<meshway_underlay::ControlRelayState>>>,
+    /// Kernel ownership's health, live across terms; set once at Host start
+    /// like `kernel_changes`.
+    pub ownership: Option<watch::Receiver<meshway_model::recovery::Health>>,
     pub exit_flows: Option<u32>,
     /// The DNS owner's exit resolver fact of the installed content.
     pub exit_dns: Option<meshway_model::exit::ExitDns>,
@@ -151,7 +154,7 @@ impl Report {
             dns_guard: None,
             netmap: None,
             completion: None,
-            persistent: false,
+            apply: Default::default(),
             observed_at: Utc::now(),
             facts_observed_at: Utc::now(),
             facts: None,
@@ -159,6 +162,7 @@ impl Report {
             exit_cleanups: None,
             kernel_changes: None,
             control_relay: None,
+            ownership: None,
             exit_flows: None,
             exit_dns: None,
             generation: meshway_model::Sequence::MIN,
@@ -193,19 +197,6 @@ impl Report {
             return None;
         }
         Some(guard.borrow().detail.as_ref().map(ToString::to_string))
-    }
-    /// The failed plane recovers by itself: its failure is transient, or a
-    /// kernel change or exit cleanup is being retried right now.
-    pub fn recovering(&self) -> bool {
-        !self.persistent
-            || self
-                .kernel_changes
-                .as_ref()
-                .is_some_and(|changes| changes.borrow().is_some())
-            || self
-                .exit_cleanups
-                .as_ref()
-                .is_some_and(|cleanups| cleanups.borrow().is_some())
     }
     /// The netmap whose every required resource is installed.
     pub fn applied(&self) -> Option<NetmapRef> {
@@ -338,10 +329,12 @@ impl Handle {
             let kernel_changes = host.kernel_changes();
             let exit_cleanups = host.exit_cleanups();
             let control_relay = host.control_relay();
+            let ownership = host.ownership();
             reports.send_modify(|report| {
                 report.kernel_changes = kernel_changes;
                 report.exit_cleanups = exit_cleanups;
                 report.control_relay = control_relay;
+                report.ownership = ownership;
             });
             let (commands, received) = mpsc::channel(8);
             let (observation_plans, plans_rx) = watch::channel(None);

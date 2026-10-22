@@ -318,7 +318,7 @@ async fn recover(directory: &Directory, path: &std::path::Path, uid: u32) -> Res
     };
     let device = std::fs::metadata(directory.path())?.dev();
     if !matches(&metadata, record.as_ref(), uid, device) {
-        return Err(Error::Conflict);
+        return Err(foreign());
     }
     match tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(path)).await {
         Ok(Err(error)) if error.kind() == io::ErrorKind::ConnectionRefused => {}
@@ -326,7 +326,7 @@ async fn recover(directory: &Directory, path: &std::path::Path, uid: u32) -> Res
     }
     let current = std::fs::symlink_metadata(path)?;
     if !matches(&current, record.as_ref(), uid, device) || current.ino() != metadata.ino() {
-        return Err(Error::Conflict);
+        return Err(foreign());
     }
     if record.is_none() {
         tracing::warn!(
@@ -337,6 +337,17 @@ async fn recover(directory: &Directory, path: &std::path::Path, uid: u32) -> Res
     std::fs::remove_file(path)?;
     directory.sync()?;
     Ok(())
+}
+
+/// A socket on the relay's path this owner cannot prove its own (another
+/// type, owner, mode or inode than it bound and recorded): a permission it
+/// lacks, proven, never reclaimed. A live listener on the path is not proof
+/// (the ended term's own relay may still be closing): `Conflict`, retried.
+fn foreign() -> Error {
+    Error::Io(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "a socket on the relay path this owner cannot prove its own",
+    ))
 }
 
 fn matches(metadata: &std::fs::Metadata, record: Option<&Record>, uid: u32, device: u64) -> bool {
@@ -624,7 +635,11 @@ fn describe(error: &Error) -> String {
 /// The relay owner's current retry, as Status shows it.
 fn publish(state: &State, recovery: &meshway_model::recovery::Recovery) {
     if let Some(pending) = recovery.health().pending() {
-        state.send_replace(Some(crate::ControlRelayState::Retrying(pending)));
+        state.send_replace(Some(if recovery.health().is_blocked() {
+            crate::ControlRelayState::Blocked(pending)
+        } else {
+            crate::ControlRelayState::Retrying(pending)
+        }));
     }
 }
 

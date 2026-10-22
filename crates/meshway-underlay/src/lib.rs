@@ -99,13 +99,18 @@ pub use meshway_model::recovery::RetryPending;
 
 /// The Control relay's listener owner while it does not serve every new
 /// connection, published by `Host::control_relay` (`None` while it listens
-/// and accepts). Neither state ends kernel ownership; both end by themselves.
+/// and accepts). No state ends kernel ownership; each ends once the next
+/// attempt (or admitted connection) succeeds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ControlRelayState {
     /// The relay cannot listen on its socket, or its accept fails: the
     /// owner retries on the U1 cadence. `reason` names the operation and the
     /// last attempt's error.
     Retrying(RetryPending),
+    /// The relay cannot listen for a cause that needs an operator (a
+    /// permission, `EACCES`, or a socket on its path it cannot prove its
+    /// own): proven, read again every 60 s, never removing that socket.
+    Blocked(RetryPending),
     /// A connection or Host task limit (`limit`) is reached: new connections
     /// are refused (`refused` so far), current ones kept; the next admitted
     /// connection ends it.
