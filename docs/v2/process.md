@@ -54,7 +54,7 @@ v0.1.0 只含 Linux Node 与 Server：一个小团队能自行安装，在真实
 | --- | --- | --- |
 | A 还债 | 已登记缺陷（X16、R4、X17 及 `fault/throttle` 行暴露的问题）；恢复状态机收敛为一个共享框架；[验收范围](/v2/node/validation)改为对外参考格式 | 无未登记的矩阵失败签名；`fault/throttle` 行连续 3 轮全绿 |
 | B 交付件 | Server 存储迁移（schema 升级不 reset、不重新接入）；Server 部署形态（systemd unit、备份、远程升级）；含 compilerVersion 断网窗口的升级演练 | 在现场从上一版本按[安装](/v2/install)文档升级成功 |
-| C 现场 soak | 常驻六台连续 14 天 | 零人工重启；每次 `blocked` 都有已证实的原因；空闲 CPU 每线程 <5%（中继／出口节点按 [P2](/v2/node/validation#remaining-boundaries) 结论定义口径） |
+| C 现场 soak | 常驻六台连续 14 天 | 零人工重启；每次 `blocked` 都有已证实的原因；空闲 CPU 按 [60 秒口径](/v2/node/performance#idle-cpu)每线程 <5%；中继／出口节点进程合计 ≤ 固定周期开销 ＋ 每秒转发包数 × 29 µs，固定周期开销在 2 vCPU 的 it7 上 ≤ 8 %（P2 实测 7.0–7.3 %），出口节点的 `nft` 子进程另计 ≤ 5 %（实测约 4.2 %） |
 | D 审阅 | 威胁模型／安全审阅与最终代码审阅（只读，与 C 并行） | 无高危未修 |
 
 ## 分支与证据
