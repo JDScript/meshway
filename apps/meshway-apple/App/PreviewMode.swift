@@ -52,7 +52,10 @@ enum PreviewMode {
                     let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (dark ? "-dark" : "-light")
                     try await snapshot(main, to: directory.appendingPathComponent("\(stem)-main.png"))
                     try await snapshot(panel, to: directory.appendingPathComponent("\(stem)-panel.png"))
-                    try await snapshot(settings, to: directory.appendingPathComponent("\(stem)-settings.png"))
+                    let settingsPage: String
+                    if let index = args.firstIndex(of: "--preview-settings"), args.count > index + 1 { settingsPage = "-" + args[index + 1] }
+                    else { settingsPage = "" }
+                    try await snapshot(settings, to: directory.appendingPathComponent("\(stem)-settings\(settingsPage).png"))
                     print("Preview screenshots saved to \(directory.path)")
                     main.close(); panel.close(); settings.close(); exit(0)
                 }

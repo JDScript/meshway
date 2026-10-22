@@ -68,7 +68,32 @@ struct ConnectionPresentation {
                             approvalRequired: !model.sampleMode && model.tunnel.extensionState == "Approval required")
     }
     var reason: String? {
-        errors.first ?? (state == .error ? model.phase : nil)
+        if let issue = model.issue ?? model.ipcIssue { return issue }
+        if let error = model.status?.lastError { return problemTitle(error) }
+        if let error = model.status?.networkError { return problemTitle(error.problem) }
+        return errors.first ?? (state == .error ? model.phase : nil)
+    }
+}
+
+private func problemTitle(_ problem: ClientProblem) -> String {
+    switch problem {
+    case .network: "网络连接问题"
+    case .serverBusy: "Server 繁忙"
+    case .credentials: "凭据问题"
+    case .enrollmentExpired: "接入申请已过期"
+    case .enrollmentWithdrawn: "接入申请已撤回"
+    case .enrollmentCancelled: "接入申请已取消"
+    case .storage: "本地存储问题"
+    case .contract: "协议契约不一致"
+    case .configuration: "配置问题"
+    case .clock: "系统时间问题"
+    case .worker: "Node 任务问题"
+    case .unsupportedMode: "运行模式不受支持"
+    case .underlay: "底层网络问题"
+    case .tun: "TUN 问题"
+    case .dns: "DNS 问题"
+    case .transport: "承载问题"
+    case .apply: "配置应用问题"
     }
 }
 
@@ -97,7 +122,8 @@ struct StatusIsland: View {
                 .help(unavailableHelp(model, fallback: model.status == nil && model.server.isEmpty ? "打开 Meshway 输入 Server URL" : "连接或断开 Meshway"))
         }
         .font(.system(size: 12)).padding(.horizontal, 12).frame(height: toolbar ? 36 : 60)
-        .glassEffect(.regular.tint(presentation.state == .error ? .orange.opacity(0.15) : .clear), in: .rect(cornerRadius: toolbar ? 14 : 18))
+        .background(presentation.state == .error ? Color.orange.opacity(0.12) : .clear, in: .rect(cornerRadius: toolbar ? 14 : 18))
+        .glassEffect(.regular.tint(presentation.state == .error ? .orange.opacity(0.25) : .clear), in: .rect(cornerRadius: toolbar ? 14 : 18))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: presentation.state)
         .popover(isPresented: $expanded) {
             ScrollView {
@@ -122,7 +148,7 @@ struct StatusIsland: View {
     }
     @ViewBuilder private var address: some View {
         if let address = model.status?.node?.ipv4 { CopyText(value: address) }
-        else { Text(model.status?.node == nil ? "尚未接入" : "未分配 IPv4").font(.system(size: 11)).foregroundStyle(.secondary) }
+        else { Text(model.status?.node == nil ? "暂无 IPv4" : "未分配 IPv4").font(.system(size: 11)).foregroundStyle(.secondary) }
     }
 }
 

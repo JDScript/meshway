@@ -46,6 +46,7 @@ struct MainView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .navigation) { StatusIsland(model: model, toolbar: true).frame(width: 266) }.sharedBackgroundVisibility(.hidden)
+                ToolbarSpacer(.flexible, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) {
                     PagePicker(selection: Binding(get: { page }, set: { navigation.page = $0 }))
                 }.sharedBackgroundVisibility(.hidden)

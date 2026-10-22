@@ -6,8 +6,7 @@ struct DiagnosticsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var checking = false
     var body: some View {
-        Form {
-            Section("网络诊断") {
+        VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("Netcheck")
                     Spacer()
@@ -23,12 +22,12 @@ struct DiagnosticsView: View {
                     else {
                         placeholder(checking ? "正在检查网络…" : "尚未运行 Netcheck")
                     }
-                }.frame(height: 174)
+                }.frame(height: 154)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.netcheck != nil)
-            }
-            if !netcheckOnly { Section("Ping") {
+            if !netcheckOnly {
+                Divider()
                 HStack {
-                    TextField("节点名称、IP 或域名", text: $model.pingTarget).textFieldStyle(.roundedBorder).onSubmit { model.ping() }
+                    TextField("节点名称、IP 或域名", text: $model.pingTarget).textFieldStyle(.roundedBorder).labelsHidden().onSubmit { model.ping() }
                     ProgressView().controlSize(.small).opacity(model.pingRunning ? 1 : 0).frame(width: 16)
                     Button { if model.pingRunning { model.cancelPing() } else { model.ping() } } label: {
                         Text(model.pingRunning ? "取消" : "Ping").frame(width: 44)
@@ -47,8 +46,9 @@ struct DiagnosticsView: View {
                         placeholder(model.pingRunning ? "正在准备测量…" : "尚未运行 Ping")
                     }
                 }.frame(height: 136)
-            } }
-        }.formStyle(.grouped)
+            }
+            Spacer(minLength: 0)
+        }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func placeholder(_ title: String) -> some View {
