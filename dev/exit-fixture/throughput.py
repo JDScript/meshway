@@ -161,7 +161,7 @@ def run(ctx):
                 time.sleep(.1)
         for role in ("a", "e"):
             ctx.detached(role, "env", "STATUS=" + STATUS, "/bin/sh", "-c",
-                         sampler(role) + " > /evidence/phase16-samples.log 2>&1")
+                         "{\n" + sampler(role) + "} > /evidence/phase16-samples.log 2>&1")
 
     def stop_diagnostics():
         try:
