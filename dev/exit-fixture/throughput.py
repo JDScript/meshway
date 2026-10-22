@@ -27,6 +27,7 @@ exit, NAT or admission code lives here."""
 import collections
 from datetime import datetime
 import json
+import shlex
 import subprocess
 import time
 
@@ -140,26 +141,27 @@ def run(ctx):
     exit_tun = [name for name, addresses in e_tuns.items() if ctx.e_mesh not in addresses]
     if len(a_tuns) != 1 or len(exit_tun) != 1:
         raise RuntimeError(f"phase 16 capture interfaces not found: A {a_tuns}, E {e_tuns}")
-    captures = [("e", exit_tun[0], []),
-                ("a", next(iter(a_tuns)), ["not", "(", "host", ctx.e_mesh, "and", "tcp", "port", PORT, ")"])]
+    captures = [("e", exit_tun[0], ""),
+                ("a", next(iter(a_tuns)), f"not (host {ctx.e_mesh} and tcp port {PORT})")]
     result["diagnostics"] = {"captures": {role: "phase16-" + name + ".pcap" for role, name, _ in captures},
                              "snap": SNAP, "packetLimit": CAPTURE_PACKETS,
                              "samples": "phase16-samples.log"}
-    for role in ("a", "e"):
-        command(role, "rm", "-f", STOP)
-    for role, name, expression in captures:
-        ctx.detached(role, "/bin/sh", "-ec",
-                     f"echo $$ > /evidence/phase16-{name}.pid; exec /usr/bin/tcpdump -Z root -U -n -i {name} "
-                     f"-s {SNAP} -c {CAPTURE_PACKETS} -w /evidence/phase16-{name}.pcap " + " ".join(expression))
-    for role, name, _ in captures:
-        deadline = time.monotonic() + 10
-        while command(role, "test", "-s", f"/evidence/phase16-{name}.pcap", required=False)["exitCode"]:
-            if time.monotonic() >= deadline:
-                raise RuntimeError("phase 16 capture readiness failed: " + role + "/" + name)
-            time.sleep(.1)
-    for role in ("a", "e"):
-        ctx.detached(role, "env", "STATUS=" + STATUS, "/bin/sh", "-c",
-                     sampler(role) + " > /evidence/phase16-samples.log 2>&1")
+    def start_diagnostics():
+        for role in ("a", "e"):
+            command(role, "rm", "-f", STOP)
+        for role, name, expression in captures:
+            ctx.detached(role, "/bin/sh", "-ec",
+                         f"echo $$ > /evidence/phase16-{name}.pid; exec /usr/bin/tcpdump -Z root -U -n -i {name} "
+                         f"-s {SNAP} -c {CAPTURE_PACKETS} -w /evidence/phase16-{name}.pcap " + shlex.quote(expression))
+        for role, name, _ in captures:
+            deadline = time.monotonic() + 10
+            while command(role, "test", "-s", f"/evidence/phase16-{name}.pcap", required=False)["exitCode"]:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("phase 16 capture readiness failed: " + role + "/" + name)
+                time.sleep(.1)
+        for role in ("a", "e"):
+            ctx.detached(role, "env", "STATUS=" + STATUS, "/bin/sh", "-c",
+                         sampler(role) + " > /evidence/phase16-samples.log 2>&1")
 
     def stop_diagnostics():
         try:
@@ -207,6 +209,7 @@ def run(ctx):
             raise RuntimeError(f"iperf3 -t {seconds} to {target} did not end within {seconds + 30} s")
 
     try:
+        start_diagnostics()
         log_before = ctx.logs("e").count(QUEUE_FULL)
         runs = {}
         for name, server, target in (("mesh", "e", ctx.e_mesh), ("exit", "external", ctx.target)):
