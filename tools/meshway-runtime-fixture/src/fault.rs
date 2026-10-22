@@ -172,6 +172,8 @@ fn project(status: &Value) -> Value {
 /// One requested resolved restart in progress (B).
 struct Restart {
     number: u32,
+    /// The name answered just before the request.
+    answered_before: bool,
     requested: Instant,
     restarted: Option<Instant>,
 }
@@ -230,7 +232,8 @@ async fn observe(
             .await?
         {
             handled += 1;
-            restart = Some(request_restart(handled).await?);
+            let before = crate::dns::stub_answers(name).await.unwrap_or(false);
+            restart = Some(request_restart(handled, before).await?);
         }
         if let Some(pending) = &mut restart
             && let Some(result) = advance(cli, pending, name).await?
@@ -263,7 +266,7 @@ async fn observe(
 /// The actor's supervisor (`namespace.sh`) restarts resolved on SIGUSR1: a
 /// new process and D-Bus owner with the same configuration, as `systemctl
 /// restart` does; it writes `resolved-restarted-<n>.txt` once it serves.
-async fn request_restart(number: u32) -> Result<Restart> {
+async fn request_restart(number: u32, answered_before: bool) -> Result<Restart> {
     let supervisor = std::os::unix::process::parent_id().to_string();
     let status = tokio::process::Command::new("kill")
         .args(["-USR1", &supervisor])
@@ -274,6 +277,7 @@ async fn request_restart(number: u32) -> Result<Restart> {
     }
     Ok(Restart {
         number,
+        answered_before,
         requested: Instant::now(),
         restarted: None,
     })
@@ -288,7 +292,8 @@ async fn advance(cli: &Cli, pending: &mut Restart, name: &str) -> Result<Option<
                 .join(format!("resolved-restarted-{}.txt", pending.number));
             if !restarted(&marker).await? {
                 return Ok((pending.requested.elapsed() >= RESOLVED_LIMIT).then(|| {
-                    serde_json::json!({ "restarted": false, "resolved": false, "recoveredMs": null })
+                    serde_json::json!({ "restarted": false, "resolved": false, "recoveredMs": null,
+                        "answeredBefore": pending.answered_before })
                 }));
             }
             *pending.restarted.insert(Instant::now())
@@ -302,10 +307,12 @@ async fn advance(cli: &Cli, pending: &mut Restart, name: &str) -> Result<Option<
             "name": name,
             "recoveredMs": restarted.elapsed().as_millis() as u64,
             "resolvedAt": at as f64 / 1e9,
+            "answeredBefore": pending.answered_before,
         })));
     }
     Ok((restarted.elapsed() >= RESOLVED_LIMIT).then(|| {
-        serde_json::json!({ "restarted": true, "resolved": false, "name": name, "recoveredMs": null })
+        serde_json::json!({ "restarted": true, "resolved": false, "name": name, "recoveredMs": null,
+            "answeredBefore": pending.answered_before })
     }))
 }
 

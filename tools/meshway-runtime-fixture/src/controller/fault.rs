@@ -153,7 +153,8 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
             src: vec![node(FaultRole::A)],
             dst: vec![node(FaultRole::B)],
             ip: vec!["udp:42424".into(), "icmp:*".into()],
-            bidirectional: false,
+            // Both ways: B resolves A's Mesh name after each resolved restart.
+            bidirectional: true,
         },
         AccessRule {
             remark: "B's exit target".into(),

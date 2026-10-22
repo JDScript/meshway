@@ -237,6 +237,7 @@ def judge_stage(stage, by_role, echoes, logs, serials):
             restart["running"] = recovered[-1]
         checks["namesAnswered"] = len(stage["restarts"]) == 2 and all(
             (restart.get("result") or {}).get("resolved") is True
+            and restart["result"].get("answeredBefore") is True
             and (restart["result"].get("recoveredMs") or RESOLVED_LIMIT_MS + 1) <= RESOLVED_LIMIT_MS
             for restart in stage["restarts"])
         checks["recovered"] = len(recovered) == 2 and all(value is not None and value <= RECOVERY_LIMIT

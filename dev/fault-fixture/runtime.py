@@ -188,7 +188,15 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         end = cpu_all()
         return {role: (begin[role], end[role]) for role in NODES}
 
+    def last_echo():
+        result = command("a", "/bin/sh", "-c", "grep '^e ' /evidence/probe/client.log | tail -n 1", required=False)
+        fields = result.stdout.split()
+        return int(fields[1]) / 1e9 if len(fields) == 3 and fields[1].isdigit() else None
+
     def idle(stage):
+        # The window measures the Nodes after recovery: B serves again and
+        # A's flow is answered again (the gates time both from the samples).
+        stage["liveFlowRecovered"] = wait_for(lambda: (last_echo() or 0) > stage["restoredAt"], 30)
         pause(IDLE_DELAY)
         stage["idleCpuStartedAt"] = clock()
         stage["idleCpu"] = window(IDLE_WINDOW)

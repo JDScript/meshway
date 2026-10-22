@@ -62,8 +62,8 @@ class Report:
         stages["cpu-short"] = self.throttle(1300.0, 30)
         stages["resolved-restart"] = {
             "kind": "resolved", "node": "b", "injectedAt": 1450.0, "restoredAt": 1462.0,
-            "restarts": [{"requestedAt": 1450.0, "result": {"resolved": True, "recoveredMs": 600}},
-                         {"requestedAt": 1462.0, "result": {"resolved": True, "recoveredMs": 700}}],
+            "restarts": [{"requestedAt": 1450.0, "result": {"resolved": True, "answeredBefore": True, "recoveredMs": 600}},
+                         {"requestedAt": 1462.0, "result": {"resolved": True, "answeredBefore": True, "recoveredMs": 700}}],
             "faultCpu": quiet(1450.0, 24.0), "idleCpuStartedAt": 1480.0, "idleCpu": quiet(1480.0), "endedAt": 1540.0}
         for at in (1450.0, 1462.0):
             self.withdraw("b", at + 0.5, at + 2.0)
@@ -226,7 +226,12 @@ class GateTests(unittest.TestCase):
 
     def test_resolved_restarts_must_answer_within_five_seconds(self):
         report = Report()
-        report.manifest["stages"]["resolved-restart"]["restarts"][1]["result"] = {"resolved": True, "recoveredMs": 5200}
+        report.manifest["stages"]["resolved-restart"]["restarts"][1]["result"] = {
+            "resolved": True, "answeredBefore": True, "recoveredMs": 5200}
+        self.failed(report, "resolved-restart", "namesAnswered")
+        # A name that did not answer before the restart proves nothing.
+        report = Report()
+        report.manifest["stages"]["resolved-restart"]["restarts"][0]["result"]["answeredBefore"] = False
         self.failed(report, "resolved-restart", "namesAnswered")
         report = Report()
         report.manifest["stages"]["resolved-restart"]["restarts"][0]["result"] = None
