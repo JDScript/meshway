@@ -129,15 +129,19 @@ async fn echoes(path: &std::path::Path) -> Option<UnixStream> {
 
 #[test]
 fn listener_retries_follow_the_u1_cadence() {
+    let delays = |error: &Error, attempts: usize| -> Vec<u64> {
+        let mut recovery = relay_recovery();
+        (0..attempts)
+            .map(|_| failed(&mut recovery, "cannot listen", error).as_secs())
+            .collect()
+    };
     let busy = Error::Io(io::ErrorKind::AddrInUse.into());
-    let delays: Vec<_> = (1..=8)
-        .map(|attempt| retry_delay(&busy, attempt).as_secs())
-        .collect();
-    assert_eq!(delays, [1, 2, 4, 8, 16, 32, 60, 60]);
-    assert_eq!(retry_delay(&Error::Conflict, 1), Duration::from_secs(1));
+    let mut waits = delays(&busy, 40);
+    assert_eq!(waits[..8], [1, 2, 4, 8, 16, 32, 60, 60]);
+    assert_eq!(waits.pop(), Some(60));
+    assert_eq!(delays(&Error::Conflict, 1), [1]);
     let denied = Error::Io(io::ErrorKind::PermissionDenied.into());
-    assert_eq!(retry_delay(&denied, 1), Duration::from_secs(60));
-    assert_eq!(retry_delay(&busy, u32::MAX), Duration::from_secs(60));
+    assert_eq!(delays(&denied, 3), [60, 60, 60]);
 }
 
 /// X15/H4: a relay whose socket is still held (here a live listener on its

@@ -69,11 +69,30 @@ fn recoverable(error: &Error) -> bool {
     )
 }
 
-fn delay(recoverable: bool, attempts: u32) -> Duration {
-    if !recoverable {
-        return MAX;
+/// One unbound listener's recovery: a cause that can end on its own is
+/// retried after 1 s, doubling to 60 s, without a total limit; one that
+/// needs an operator is proven and read (bound) again every 60 s.
+pub(super) fn recovery() -> meshway_model::recovery::Recovery {
+    meshway_model::recovery::Recovery::new(meshway_model::recovery::Policy {
+        backoff: meshway_model::Backoff::new(FIRST, MAX),
+        horizon: meshway_model::recovery::Horizon::Unbounded,
+        reread_blocked: Some(MAX),
+    })
+}
+
+/// Record one failed bind: when it runs again.
+fn delay(recovery: &mut meshway_model::recovery::Recovery, error: &Error) -> Duration {
+    let observation = if recoverable(error) {
+        meshway_model::recovery::Observation::unknown("listener_unavailable", error)
+    } else {
+        meshway_model::recovery::Observation::proven("listener_permission", error)
+    };
+    let now = std::time::Instant::now();
+    match recovery.observe(observation, now) {
+        meshway_model::recovery::Step::RetryAt(at)
+        | meshway_model::recovery::Step::Block(Some(at)) => at.saturating_duration_since(now),
+        _ => MAX,
     }
-    meshway_model::Backoff::new(FIRST, MAX).delay(attempts)
 }
 
 /// Bind one listener of the current content. Native UDP binds as a
@@ -157,18 +176,18 @@ pub(super) async fn bind(
 }
 
 impl Shared {
-    /// `step` counts the failures since the backoff last started over;
-    /// `attempts` all of them.
+    /// `recovery` holds the failures since the backoff last started over;
+    /// `attempts` counts all of them.
     fn record_unbound(
         &self,
         token: u64,
         key: &str,
         error: &Error,
         attempts: u32,
-        step: u32,
+        recovery: &mut meshway_model::recovery::Recovery,
     ) -> Duration {
         let recoverable = recoverable(error);
-        let wait = delay(recoverable, step);
+        let wait = delay(recovery, error);
         let report = ListenerUnavailable {
             key: key.to_owned(),
             address: match error {
@@ -203,11 +222,10 @@ async fn retry(
     traversal: bool,
     token: u64,
     key: String,
-    mut wait: Duration,
+    (mut wait, mut recovery): (Duration, meshway_model::recovery::Recovery),
     rebound: mpsc::Sender<Rebound>,
 ) {
     let mut attempts = 1;
-    let mut step = 1;
     let mut roams = shared.roams.subscribe();
     roams.borrow_and_update();
     loop {
@@ -216,7 +234,8 @@ async fn retry(
             _ = tokio::time::sleep(wait) => {}
             Ok(()) = roams.changed() => {
                 roams.borrow_and_update();
-                step = 0;
+                // An address may have come back: the backoff starts over.
+                recovery = self::recovery();
             }
         }
         match bind(&shared, &factory, traversal, &key).await {
@@ -232,8 +251,7 @@ async fn retry(
             }
             Err(error) => {
                 attempts += 1;
-                step += 1;
-                wait = shared.record_unbound(token, &key, &error, attempts, step);
+                wait = shared.record_unbound(token, &key, &error, attempts, &mut recovery);
             }
         }
     }
@@ -244,13 +262,24 @@ impl Manager {
     pub(super) fn retry_listener(&mut self, key: String, error: &Error) -> Result<(), Error> {
         self.rebind_tokens = self.rebind_tokens.checked_add(1).ok_or(Error::Capacity)?;
         let token = self.rebind_tokens;
-        let wait = self.shared.record_unbound(token, &key, error, 1, 1);
+        let mut recovery = recovery();
+        let wait = self
+            .shared
+            .record_unbound(token, &key, error, 1, &mut recovery);
         let factory = self.factory.clone();
         let traversal = self.traversal.is_some();
         let sender = self.rebound_sender.clone();
         let owner_key = key.clone();
         self.spawn_owner(resources::Key::Listener(owner_key), None, |shared| {
-            retry(shared, factory, traversal, token, key, wait, sender)
+            retry(
+                shared,
+                factory,
+                traversal,
+                token,
+                key,
+                (wait, recovery),
+                sender,
+            )
         });
         Ok(())
     }
@@ -373,9 +402,12 @@ mod tests {
 
     #[test]
     fn retries_back_off_from_one_second_to_a_minute() {
-        let waits: Vec<_> = (1..=9).map(|n| delay(true, n).as_secs()).collect();
-        assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60, 60]);
-        assert_eq!(delay(false, 1), MAX);
+        let waits = |error: &Error, n: usize| -> Vec<u64> {
+            let mut recovery = recovery();
+            (0..n)
+                .map(|_| delay(&mut recovery, error).as_secs())
+                .collect()
+        };
         let busy = Error::Bind {
             key: "k".into(),
             address: "0.0.0.0:35000".parse().unwrap(),
@@ -386,6 +418,8 @@ mod tests {
             address: "0.0.0.0:443".parse().unwrap(),
             source: std::io::ErrorKind::PermissionDenied.into(),
         };
+        assert_eq!(waits(&busy, 9), [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+        assert_eq!(waits(&denied, 2), [60, 60]);
         assert!(recoverable(&busy));
         assert!(!recoverable(&denied));
         assert!(recoverable(&Error::Underlay));

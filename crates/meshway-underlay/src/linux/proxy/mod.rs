@@ -415,15 +415,42 @@ impl Socket {
     }
 }
 
-/// When the relay's socket tries again after `attempts` failures, the U1
-/// listener cadence: a cause that can clear by itself (`EADDRINUSE`, a live
-/// or not yet reclaimable socket, a stalled accept) 1 s doubling to 60 s; a
-/// permission (`EACCES`) every 60 s.
-fn retry_delay(error: &Error, attempts: u32) -> Duration {
+/// The relay listener's recovery, the U1 listener cadence: a cause that can
+/// clear by itself (`EADDRINUSE`, a live or not yet reclaimable socket, a
+/// stalled accept) is retried 1 s after it, doubling to 60 s, without a
+/// total limit; one that needs an operator (a permission, `EACCES`) is
+/// proven and read again every 60 s.
+fn relay_recovery() -> meshway_model::recovery::Recovery {
     const LIMIT: Duration = Duration::from_secs(60);
+    meshway_model::recovery::Recovery::new(meshway_model::recovery::Policy {
+        backoff: meshway_model::Backoff::new(Duration::from_secs(1), LIMIT),
+        horizon: meshway_model::recovery::Horizon::Unbounded,
+        reread_blocked: Some(LIMIT),
+    })
+}
+
+/// The relay owner's judgement of a failed listen or accept.
+fn judged(operation: &'static str, error: &Error) -> meshway_model::recovery::Observation {
+    let reason = format!("{operation}: {}", describe(error));
     match error {
-        Error::Io(error) if error.kind() == io::ErrorKind::PermissionDenied => LIMIT,
-        _ => meshway_model::Backoff::new(Duration::from_secs(1), LIMIT).delay(attempts),
+        Error::Io(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            meshway_model::recovery::Observation::proven("relay_permission", reason)
+        }
+        _ => meshway_model::recovery::Observation::unknown("relay_unavailable", reason),
+    }
+}
+
+/// Record one failed listen or accept: how long the owner waits.
+fn failed(
+    recovery: &mut meshway_model::recovery::Recovery,
+    operation: &'static str,
+    error: &Error,
+) -> Duration {
+    let now = std::time::Instant::now();
+    match recovery.observe(judged(operation, error), now) {
+        meshway_model::recovery::Step::RetryAt(at)
+        | meshway_model::recovery::Step::Block(Some(at)) => at.saturating_duration_since(now),
+        _ => Duration::from_secs(60),
     }
 }
 
@@ -501,7 +528,7 @@ where
 }
 
 /// The relay's listener owner. A socket that cannot listen and a failed
-/// accept are retried on [`retry_delay`], logged once per distinct error and
+/// accept are retried on [`relay_recovery`], logged once per distinct error and
 /// published at every attempt; neither ends kernel ownership (the relay's
 /// connections already end with it). Returns once the Host's tasks stop or
 /// the Proxy closes.
@@ -513,7 +540,7 @@ async fn serve<R, F>(
     R: Fn(UnixStream) -> F,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    let mut failures = 0u32;
+    let mut recovery = relay_recovery();
     let mut reported: Option<String> = None;
     let mut next = first;
     let listener = loop {
@@ -521,36 +548,44 @@ async fn serve<R, F>(
             Ok(listener) => break listener,
             Err(Error::Worker) => return,
             Err(error) => {
-                failures = failures.saturating_add(1);
+                let delay = failed(&mut recovery, "cannot listen", &error);
                 report(
                     &mut reported,
                     &error,
-                    failures,
+                    recovery.attempts(),
+                    delay,
                     "Protected control relay cannot listen; retrying, kernel ownership kept",
                 );
-                let delay = retry_delay(&error, failures);
-                publish(&connections.state, "cannot listen", &error, failures, delay);
+                publish(&connections.state, &recovery);
                 tokio::time::sleep(delay).await;
                 next = socket.bind().await;
             }
         }
     };
+    let failures = recovery.attempts();
     if failures > 0 {
         tracing::info!(
             attempts = failures + 1,
             "Protected control relay listening again"
         );
-        failures = 0;
         reported = None;
     }
+    recovery.observe(
+        meshway_model::recovery::Observation::Holds,
+        std::time::Instant::now(),
+    );
     connections.state.send_replace(None);
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
+                let failures = recovery.attempts();
                 if failures > 0 {
                     tracing::info!(failures, "Protected control relay accepting again");
-                    failures = 0;
                     reported = None;
+                    recovery.observe(
+                        meshway_model::recovery::Observation::Holds,
+                        std::time::Instant::now(),
+                    );
                     connections.state.send_replace(None);
                 }
                 if let Admission::Stopped = connections.admit(stream) {
@@ -558,16 +593,16 @@ async fn serve<R, F>(
                 }
             }
             Err(error) => {
-                failures = failures.saturating_add(1);
                 let error = Error::Io(error);
+                let delay = failed(&mut recovery, "accept failed", &error);
                 report(
                     &mut reported,
                     &error,
-                    failures,
+                    recovery.attempts(),
+                    delay,
                     "Protected control relay accept failed; retrying, kernel ownership kept",
                 );
-                let delay = retry_delay(&error, failures);
-                publish(&connections.state, "accept failed", &error, failures, delay);
+                publish(&connections.state, &recovery);
                 tokio::time::sleep(delay).await;
             }
         }
@@ -586,21 +621,23 @@ fn describe(error: &Error) -> String {
     }
 }
 
-/// The retry of `operation` after `attempts` failures, the last `error`.
-fn publish(state: &State, operation: &str, error: &Error, attempts: u32, delay: Duration) {
-    state.send_replace(Some(crate::ControlRelayState::Retrying(
-        crate::RetryPending {
-            reason: format!("{operation}: {}", describe(error)),
-            attempts,
-            retry_at: std::time::SystemTime::now() + delay,
-        },
-    )));
+/// The relay owner's current retry, as Status shows it.
+fn publish(state: &State, recovery: &meshway_model::recovery::Recovery) {
+    if let Some(pending) = recovery.health().pending() {
+        state.send_replace(Some(crate::ControlRelayState::Retrying(pending)));
+    }
 }
 
-fn report(reported: &mut Option<String>, error: &Error, attempts: u32, message: &'static str) {
+fn report(
+    reported: &mut Option<String>,
+    error: &Error,
+    attempts: u32,
+    delay: Duration,
+    message: &'static str,
+) {
     let text = describe(error);
     if reported.as_ref() != Some(&text) {
-        tracing::warn!(error = %text, attempts, retry_ms = retry_delay(error, attempts).as_millis() as u64, "{message}");
+        tracing::warn!(error = %text, attempts, retry_ms = delay.as_millis() as u64, "{message}");
         *reported = Some(text);
     }
 }
