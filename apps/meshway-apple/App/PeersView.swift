@@ -210,13 +210,12 @@ struct ProfileRows: View {
                 }.buttonStyle(MenuRowStyle())
                     .disabled(!model.canRequestSelection || selection.locked || model.busy || model.sampleMode)
                     .help(unavailableHelp(model, fallback: selectHelp))
-            }
-            if !compact || selection.requestedProfile != nil {
-                Button { Task { await model.perform(.clearProfile) } } label: {
-                    HStack { Text("使用默认方案"); Spacer(); Text(selection.defaultProfile).font(.system(size: 11)).opacity(0.55) }
-                }.buttonStyle(MenuRowStyle())
-                    .disabled(!model.canRequestSelection || model.busy || model.sampleMode || selection.requestedProfile == nil)
-                    .help(unavailableHelp(model, fallback: !model.canRequestSelection ? "需要有效身份、netmap 和运行 instance" : (selection.requestedProfile == nil ? "已跟随默认方案" : "清除持久方案请求")))
+                if profile.name == selection.appliedProfile && selection.appliedProfile != selection.defaultProfile {
+                    Button("恢复默认（\(selection.defaultProfile)）") { Task { await model.perform(.clearProfile) } }
+                        .buttonStyle(.link).font(.system(size: 11)).padding(.leading, 30).frame(height: 20)
+                        .disabled(!model.canRequestSelection || model.busy || model.sampleMode || selection.requestedProfile == nil)
+                        .help(unavailableHelp(model, fallback: !model.canRequestSelection ? "需要有效身份、netmap 和运行 instance" : (selection.requestedProfile == nil ? "已跟随默认方案" : "清除持久方案请求")))
+                }
             }
             if !model.netmapApplied || model.notice != nil || selection.requestedUnavailable != nil {
                 Text(model.notice ?? selection.requestedUnavailable.map(human) ?? "等待本机应用方案")

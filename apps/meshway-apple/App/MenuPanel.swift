@@ -13,11 +13,14 @@ struct MenuPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             StatusIsland(model: model).padding(.bottom, 6)
             sectionLabel("出口")
+            ScrollView {
             if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(2, model.selection?.profiles.count ?? 2)) }
             else if let selection = model.selection { ProfileRows(model: model, selection: selection, compact: true) }
-            else { Text("尚无可用方案").font(.system(size: 12)).foregroundStyle(.secondary).padding(10) }
+            else { Text("安装配置后显示出口方案").font(.system(size: 12)).foregroundStyle(.secondary).padding(10) }
+            }.scrollIndicators(.hidden).frame(height: 96, alignment: .top)
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
             sectionLabel("设备")
+            Group {
             if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(3, min(peers.count, 5))) }
             else if peers.isEmpty {
                 EmptyStateView(kind: serverEmptyState(model) ?? .devices, compact: true)
@@ -28,12 +31,13 @@ struct MenuPanel: View {
                             CompactPeerRow(model: model, peer: peer).contextMenu { PeerCopyActions(peer: peer) }.transition(.opacity)
                         }
                     }
-                }.scrollIndicators(.hidden).frame(height: CGFloat(min(expandedPeers ? peers.count : 5, peers.count, 10)) * 30)
+                }.scrollIndicators(.hidden)
                 if peers.count > 5 {
                     Button(expandedPeers ? "收起设备" : "还有 \(peers.count - 5) 台…") { expandedPeers.toggle() }
                         .buttonStyle(MenuRowStyle()).font(.system(size: 12))
                 }
             }
+            }.frame(height: expandedPeers ? 300 : 150, alignment: .top)
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
             Button("打开 Meshway") { openWindow(id: "main"); NSApp.activate() }.buttonStyle(MenuRowStyle())
             Button { openSettings(); NSApp.activate() } label: {

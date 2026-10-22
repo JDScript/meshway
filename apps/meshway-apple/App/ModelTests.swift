@@ -57,11 +57,47 @@ enum ModelTests {
                 precondition(IslandState.resolve(phase: .blocked, vpn: .connected, hasError: false, approvalRequired: true) == .error)
                 precondition(IslandState.resolve(phase: .stopping, vpn: .connected, hasError: false, approvalRequired: false) == .stopping)
                 precondition(IslandState.resolve(phase: .leaving, vpn: .connected, hasError: false, approvalRequired: false) == .leaving)
+                presentationTests()
                 print("PASS Swift model: codec fixtures, search, idle/relay paths, missing RTT, selection, approval, independent errors")
                 exit(0)
             } catch { print("FAIL Swift model: \(error)"); exit(1) }
         }
         dispatchMain()
+    }
+    private static func presentationTests() {
+        precondition(ConnectionStep.resolve(phase: .starting, plane: .stopped) == .authenticate)
+        precondition(ConnectionStep.resolve(phase: .synchronizing, plane: .preparing) == .synchronize)
+        precondition(ConnectionStep.resolve(phase: .controlReady, plane: .preparing) == .apply)
+        precondition(ConnectionStep.resolve(phase: .running, plane: .preparing) == .apply)
+        precondition(ConnectionStep.resolve(phase: .running, plane: .ready) == .ready)
+        precondition(ConnectionStep.resolve(phase: .running, plane: .suspended) == nil)
+        precondition(IslandState.resolve(phase: .running, vpn: .connected, hasError: false, approvalRequired: false, plane: .preparing) == .connecting)
+        precondition(IslandState.resolve(phase: .running, vpn: .connected, hasError: false, approvalRequired: false, plane: .suspended) == .error)
+        let now = Date()
+        let expiry = now.addingTimeInterval(60)
+        precondition(EmptyStateKind.server(sync: .reconnecting, issue: .network, ready: true, applied: true, expires: expiry, now: now) == .serverCached(expiry))
+        precondition(EmptyStateKind.server(sync: .reconnecting, issue: .network, ready: true, applied: false, expires: expiry, now: now) == .serverUnavailable)
+        precondition(EmptyStateKind.server(sync: .reconnecting, issue: .credentials, ready: true, applied: true, expires: expiry, now: now) == nil)
+        precondition(EmptyStateKind.server(sync: .disconnected, issue: nil, ready: true, applied: true, expires: now, now: now) == .serverUnavailable)
+        precondition(EmptyStateKind.devices(query: "missing", count: 0, server: .serverUnavailable) == .search("missing"))
+        precondition(EmptyStateKind.devices(query: "", count: 0, server: nil) == .devices)
+        precondition(EmptyStateKind.devices(query: "", count: 1, server: .serverUnavailable) == nil)
+        // Unit inputs test the projection; they are never offered as codec preview fixtures.
+        func echo(_ sequence: UInt16, _ outcome: ClientEchoOutcome, _ duration: UInt64?, setup: Bool = false) -> ClientPingEvent {
+            .echo(echo: ClientEcho(sequence: sequence, outcome: outcome, from: nil, error: nil, durationUs: duration, setup: setup, path: []))
+        }
+        let measurements = PingPresentation(events: [echo(1, .reply, 1000), echo(2, .reply, 3000), echo(3, .timeout, nil), echo(4, .reply, 100000, setup: true)])
+        precondition(measurements.median == 2)
+        precondition(measurements.readings.count == 4 && measurements.readings[2].duration == nil)
+        precondition(measurements.counts?.timeout == 1 && measurements.counts?.success == 3)
+        precondition(PingPresentation(events: []).median == nil && PingPresentation(events: []).counts == nil)
+        precondition(PingPresentation(events: [echo(1, .reply, 1000), echo(1, .reply, 2000)]).readings.count == 1)
+        precondition(PingPresentation(events: [.failed(code: .unsupported)]).failure == "macOS 版暂不支持直连外部目标的 ping")
+        let decision = ClientDecision(destination: nil, node: nil, resolution: nil, profile: nil, rule: nil, action: .denied(reason: .noPath), path: [])
+        precondition(PingPresentation(events: [.decision(decision: decision), .failed(code: .permissionDenied)]).failure == "策略拒绝：没有可用路径")
+        let unavailable = ClientNetcheck(observedAt: now, server: "https://mesh.example", serverReachable: nil, serverRttUs: nil, unavailable: .notRunning, ipv4: false, ipv6: false, udp: false, sockets: [], observers: [])
+        precondition(NetcheckPresentation(report: unavailable).facts.first(where: { $0.id == "UDP" })?.value == "未测")
+        print("PASS presentation: connection steps, cache lease boundaries, empty states, RTT/setup/loss and missing netcheck")
     }
 }
 #endif

@@ -76,6 +76,8 @@ struct ConnectionPresentation {
         if let issue = model.issue ?? model.ipcIssue { return issue }
         if let error = model.status?.lastError { return problemTitle(error) }
         if let error = model.status?.networkError { return problemTitle(error.problem) }
+        if model.status?.dataPlane == .failed { return "数据面失败" }
+        if model.status?.dataPlane == .suspended { return "数据面已暂停" }
         return errors.first ?? (state == .error ? model.phase : nil)
     }
 }
