@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T05:23:38.497621+00:00",
+  "updatedAt": "2026-10-22T05:32:46.080104+00:00",
   "runs": [
+    {
+      "id": 39728391411,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "0da6abf8ff39f28427d875248c4987be24d467ea",
+      "message": "Merge branch 'migd/storage-migration-design'",
+      "createdAt": "2026-10-22T05:30:15Z",
+      "updatedAt": "2026-10-22T05:31:45Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39728391411",
+      "jobs": [
+        {
+          "id": 119657535859,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T05:30:16Z",
+          "completedAt": "2026-10-22T05:30:20Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39728391411/job/119657535859"
+        },
+        {
+          "id": 119657558846,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T05:30:21Z",
+          "completedAt": "2026-10-22T05:31:44Z",
+          "seconds": 83.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39728391411/job/119657558846"
+        },
+        {
+          "id": 119657560867,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T05:30:20Z",
+          "completedAt": "2026-10-22T05:30:20Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39728391411/job/119657560867"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 39727181714,
       "attempt": 1,
