@@ -115,8 +115,12 @@ fn answer(
     Ok((response, encoded))
 }
 
+/// Records the question and writes the whole log before the caller answers:
+/// a reader that saw the answer finds its question (N6: evidence written
+/// after the reply raced the fixture's read).
 fn record(
     log: &std::sync::Mutex<Vec<Question>>,
+    path: &std::path::Path,
     bytes: &[u8],
     response: &Message,
     protocol: &'static str,
@@ -141,6 +145,9 @@ fn record(
         peer,
         truncated: response.metadata.truncation,
     });
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, serde_json::to_vec_pretty(&*log)?)?;
+    std::fs::rename(temporary, path)?;
     Ok(())
 }
 
@@ -165,9 +172,9 @@ pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
     let udp = UdpSocket::bind("0.0.0.0:53").await?;
     let tcp = TcpListener::bind("0.0.0.0:53").await?;
     let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Question>::new()));
+    let path = cli.evidence.join("dns-queries.json");
     let mut connections = JoinSet::new();
     let mut buffer = [0; 4096];
-    let mut written = 0;
     let result = async {
         loop {
             if tokio::fs::try_exists(cli.signals.join("exit-stop")).await? {
@@ -177,12 +184,13 @@ pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
                 received = udp.recv_from(&mut buffer) => {
                     let (size, peer) = received?;
                     let Ok((response, bytes)) = answer(role, service, &buffer[..size], Some(4096)) else { continue };
-                    record(&log, &buffer[..size], &response, "udp", peer)?;
+                    record(&log, &path, &buffer[..size], &response, "udp", peer)?;
                     let _ = udp.send_to(&bytes, peer).await;
                 }
                 accepted = tcp.accept(), if connections.len() < 32 => {
                     let (mut stream, peer) = accepted?;
                     let log = log.clone();
+                    let path = path.clone();
                     connections.spawn(async move {
                         let exchange = async {
                             let size = usize::from(stream.read_u16().await?);
@@ -192,7 +200,7 @@ pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
                             let mut bytes = vec![0; size];
                             stream.read_exact(&mut bytes).await?;
                             let (response, encoded) = answer(role, service, &bytes, None)?;
-                            record(&log, &bytes, &response, "tcp", peer)?;
+                            record(&log, &path, &bytes, &response, "tcp", peer)?;
                             stream.write_u16(encoded.len().try_into()?).await?;
                             stream.write_all(&encoded).await?;
                             Ok(())
@@ -204,16 +212,6 @@ pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
                 }
                 Some(done) = connections.join_next(), if !connections.is_empty() => { done??; }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-            }
-            let current = log.lock().map_err(|_| "DNS log poisoned")?.len();
-            if current != written {
-                let snapshot = serde_json::to_vec_pretty(
-                    &*log.lock().map_err(|_| "DNS log poisoned")?,
-                )?;
-                let path = cli.evidence.join("dns-queries.json");
-                tokio::fs::write(path.with_extension("tmp"), snapshot).await?;
-                tokio::fs::rename(path.with_extension("tmp"), path).await?;
-                written = current;
             }
         }
         Ok::<(), crate::Error>(())

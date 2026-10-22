@@ -189,6 +189,8 @@ pub(super) async fn run_server(cli: &Cli) -> Result<()> {
             exit::coordinate(cli, &availability).await
         } else if cli.traversal == crate::TraversalMode::Roam {
             roam::coordinate(cli).await
+        } else if cli.traversal == crate::TraversalMode::Fault {
+            fault::coordinate(cli).await
         } else {
             coordinate(cli, &audit, &availability, &server).await
         }
@@ -218,7 +220,10 @@ pub(super) async fn run_server(cli: &Cli) -> Result<()> {
     result??;
     if matches!(
         cli.traversal,
-        crate::TraversalMode::Exit | crate::TraversalMode::Exit6 | crate::TraversalMode::Roam
+        crate::TraversalMode::Exit
+            | crate::TraversalMode::Exit6
+            | crate::TraversalMode::Roam
+            | crate::TraversalMode::Fault
     ) {
         return Ok(());
     }

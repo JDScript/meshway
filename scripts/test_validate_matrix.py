@@ -163,9 +163,11 @@ class MatrixTests(unittest.TestCase):
             with support.build_lock():
                 self.assertTrue((Path(temporary) / "build.lock").exists())
 
-    def test_rows_are_twenty_two_and_filter_keeps_order_without_duplicates(self):
-        self.assertEqual(len(matrix.DEFAULT_ROWS), 24)
-        self.assertEqual(len(matrix.ROWS), 24)
+    def test_rows_are_twenty_five_and_filter_keeps_order_without_duplicates(self):
+        self.assertEqual(len(matrix.DEFAULT_ROWS), 25)
+        self.assertEqual(len(matrix.ROWS), 25)
+        self.assertIn("fault/throttle", matrix.DEFAULT_ROWS)
+        self.assertEqual(matrix.bridges("fault/throttle"), 1)
         self.assertEqual([name for name in matrix.DEFAULT_ROWS if name.startswith("roam/")],
                          ["roam/direct", "roam/nat", "roam/relay", "roam/flap", "roam/exit"])
         self.assertIn("nat/relay", matrix.DEFAULT_ROWS)
@@ -226,10 +228,27 @@ class MatrixTests(unittest.TestCase):
                 code = matrix.main(["--parallel", "4", "--short", "--run", "run"])
             report = json.loads((root / ".meshway/validation/matrix/run/matrix.json").read_text())
             self.assertEqual(code, 1)
-            self.assertEqual(len(report["rows"]), 24)
+            self.assertEqual(len(report["rows"]), 25)
+            self.assertEqual([row["row"] for row in report["rows"]], list(matrix.DEFAULT_ROWS))
             self.assertEqual(len(builds), 3)
             self.assertTrue(all("--build-only" in command for command in builds))
             self.assertEqual(report["scope"], "diagnostic-short")
+
+    def test_the_longest_rows_start_first_and_the_rest_keep_their_order(self):
+        rows = ["udp/off", "exit/off", "tcp/off", "fault/throttle", "roam/exit"]
+        self.assertEqual(matrix.schedule(rows), ["exit/off", "fault/throttle", "udp/off", "tcp/off", "roam/exit"])
+        self.assertEqual(matrix.schedule(["tcp/off", "udp/off"]), ["tcp/off", "udp/off"])
+
+    def test_fault_row_is_its_own_topology(self):
+        command = matrix.row_command("fault/throttle", Path("/report"), {"runtime": Path("/artifacts")},
+                                     {"runtime": Path("/image")}, False)
+        self.assertEqual(command[command.index("--traversal") + 1], "fault")
+        self.assertEqual(command[command.index("--dns-backend") + 1], "off")
+        for options in (("--dns-backend", "resolved"), ("--netmap-scenario", "offline"), ("--only", "main")):
+            result = subprocess.run([sys.executable, str(matrix.ROOT / "scripts/verify_runtime.py"),
+                                     "--transport", "native-udp", "--traversal", "fault", *options],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2, options)
 
     def test_roam_rows_never_run_at_once(self):
         import threading

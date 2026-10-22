@@ -12,7 +12,7 @@ TREES = (
     "crates", "apps/meshway-server", "apps/meshway-daemon", "apps/meshway-cli",
     "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture", "tools/meshway-test-server",
     "tools/meshway-desired-fixture",
-    "dev/dns-fixture", "dev/traversal-fixture", "dev/roam-fixture", "dev/node-lab",
+    "dev/dns-fixture", "dev/traversal-fixture", "dev/roam-fixture", "dev/fault-fixture", "dev/node-lab",
 )
 FILES = (
     "Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock",

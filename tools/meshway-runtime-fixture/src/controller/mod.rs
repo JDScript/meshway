@@ -25,6 +25,7 @@ use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 use tokio::{net::TcpListener, sync::watch, task::JoinSet};
 
 mod exit;
+mod fault;
 mod interface_change;
 mod lifecycle;
 mod links;
