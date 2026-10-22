@@ -41,7 +41,7 @@ Manager 是 listener 生命周期的唯一 owner。安装内容时先绑定全�
 - 本地 Status 为 `lastError: transport`，`lastErrorDetail` 给出 bind 错误、占用端口的进程与临时端口范围提示，见[运行状态](/v2/node/runtime)；绑定后 daemon 以同一内容再 apply，二者清空。
 - WARN 日志 `Listener unavailable; retrying its bind`（`key`、`error`、`recoverable`、`attempts`、`retry_ms`），绑定后 INFO `Listener bound after retry`。
 
-Linux 默认临时端口范围（`net.ipv4.ip_local_port_range`，32768–60999）内的 listener 端口可能在某一刻被任意进程的出站 socket 占用；配置校验对已启用 listener 的此类端口给出警告 `ephemeral_listener_port`，节点在启动邻接时按本机实际范围记 WARN。建议选用范围外的端口（或调整该 sysctl）。实测（U1 lab，alpha.6，容器重建后 `up`）约三分之一的启动得到 `EADDRINUSE`，1 s 后重试成功；失败前数毫秒同一 daemon 在该端口绑定过一个 socket，失败约 200 ms 后已没有进程持有该端口。见[验收范围](/v2/node/validation)中该项的结论。
+Linux 默认临时端口范围（`net.ipv4.ip_local_port_range`，32768–60999）内的 listener 端口可能在某一刻被任意进程的出站 socket 占用；配置校验对已启用 listener 的此类端口给出警告 `ephemeral_listener_port`，节点在启动邻接时按本机实际范围记 WARN。建议选用范围外的端口（或调整该 sysctl）。绑定失败时 listener 每秒重试，成功后以同一内容重新 apply 并清空 `lastError`，无需重启（`udp/off` 行与[真机证据](/v2/node/validation#u1-startup-self-heal)）。
 
 ## Provider 的连接需求
 
@@ -268,7 +268,7 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 
 **限制：中途剥离 DF 的路径。** 中途 NAT 剥离 DF 并在更窄的链路上分片、且远端在报文到达对端节点前重组时，认证探测无法发现分片：对端收到的是完整、长度正确的 Probe，结果偏大（最大为路由 MTU）。症状是该方向外层报文大量乱序（重组顺序），内层 TCP 窗口被压低、单流吞吐远低于同路径其他 TCP；ping 与健康检查不受影响。节点不做"DF 被剥离"的启发式判定；处置是在宿主侧把通往该路径的路由 MTU 限到窄链路的大小，通道即按[结果](#path-mtu)规则立即取较小值，数据面与 TCP MSS 随之收窄。实例：OrbStack machine 的出网 NAT 不保留 DF，Mac 经 Cloudflare WARP（MASQUE，utun MTU 1,300）出网，见[常驻 systemd 验收 VM](/v2/install#orbstack-warp)。
 
-实测（2026-10-13，`f1aa2250`）：us-lax-it7（公网）→ meshway-vm（WARP）通道搜索得 `1444/1330`，内层 DF ping `-s 1302`（外层 1444）5/5 回复、`-s 1303`（外层 1445）0/5；反方向当时报 `1500/1386`，实为上述 DF 剥离造成的偏大结果（2026-10-15 M5 定位），宿主限路由 MTU 后为 `1300/1186`。证据 `.meshway/node-lab/n2a/`、`.meshway/validation/m5/`。
+真机上搜索结果与实际路径一致（us-lax-it7 → WARP 后的 meshway-vm 为 `1444/1330`，外层 1,444 B 通过、1,445 B 不通）；不保留 DF 的 NAT 会使结果偏大，处置见 [OrbStack 与 WARP](/v2/install#orbstack-warp)，证据见[真机证据](/v2/node/validation#real-nat)。
 
 ### 持续 STUN 观测 {#continuous-stun}
 
@@ -325,7 +325,7 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 
 拨号方每次获取使用新的本地 socket，因此重建后的通道在监听端表现为新的源端口；源端口持续变化说明通道在反复失效，不是刷新本身引起的。
 
-实测（2026-10-11，F3，`v0.1.0-alpha.1-14-g5b67b257`）：在常驻 systemd VM 内用 network namespace 与端口保持型 masquerade 构造只能单向拨入的 Native UDP 边（监听端 dialers 关闭），100 次 `meshway ping` 与 100 次 OS ping 全部回复，100 个样本使用同一 link ID 与源端口，拨号侧 102 秒内（跨越多个 STUN 节拍与健康探测周期）没有通道转移。同一 VM 与 OrbStack Docker 容器之间的边当时每 6–17 秒重建，原因是 OrbStack 2.2.4 之前容器→machine 的 UDP 路径在同一流上每隔一个报文丢弃一个（无 Meshway 时同样存在），健康 Pong 因而确定性丢失，属于真实承载失败；OrbStack 2.2.4 已修复（2026-10-12 实测 `meshway ping` 0.3–1.0 ms 零丢包），见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)。
+只能单向拨入的 Native UDP 边（监听端 dialers 关闭）上，100 次 `meshway ping` 全部回复且同一 link ID 与源端口，跨多个 STUN 节拍与健康周期没有通道转移。承载本身每隔一个报文丢弃时（OrbStack 2.2.4 之前容器→machine 的 UDP 路径）健康 Pong 确定性丢失、通道按健康窗口正确退役，这是真实承载失败，见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)。
 
 ## 路径选择
 
@@ -354,7 +354,7 @@ Policy 给出候选集合，源节点按本机已知的连通事实排序：
 
 `meshway status` 对经中继的 peer 显示 `relay … via <R>`；有邻接需求、当前没有通道也没有 circuit，但按上述排序的第一条中继路径首跳有通道、且其上每个中继在最后已知事实中都与下一节点有通道时状态为 `relay (idle)`（`SecureNode::relay_route`），`unreachable` 只用于没有任何可用路径；任一无通道、无 circuit 的 peer 另显示新 circuit 会走的路径（`direct (idle)`／`relay (idle) via <R>`／`no path`，`SecureNode::idle_route`，与首包同一选择；`unreachable`／`offline` 的 peer 没有可走的路径，总是 `no path`），见[运行状态](/v2/node/runtime)。`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
 
-实测（N4，2026-10-13）：6 节点 lab 中 lax、sha、nyc、meshway-vm 都到不了 meshway-planck（NAT 后的容器），只有 us-lax-it7（节点 ID 最大）与两端都有通道；此前四路径截断恰好去掉 it7，lax→planck ping 超时。现在四个源 `meshway ping meshway-planck` 各 10/10 `via relay us-lax-it7`，经 Mesh 的 HTTP 请求 200；见[验收范围](/v2/node/validation#n4-real-network)。
+真机上两端都在端点相关映射 NAT 后时，流量经唯一与两端都有通道的节点中继，见[真机证据](/v2/node/validation#n4-real-network)。
 
 已实际选定的流式通道结束后，拨号 owner 经原重试间隔重新按候选来源优先级获取连接，不继续此前候选列表尚未尝试的后缀。因此已认证的 configured TCP 退路短暂断开后，会先重试该来源，再考虑本机候选；未完成认证或未获选的尝试仍继续当前候选轮次。对端仍健康的更优通道不会因此被替换。
 

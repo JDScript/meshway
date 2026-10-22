@@ -277,7 +277,7 @@ Planck使用旧`5a30247d`及1 worker，L3 direct／relay RTT4.3／2.9 ms、重�
 
 本工作包构建／检查退出后测量，所有样本使用共享锁。此前连续高load超过10分钟的等待证据使本轮可用<8例外；实际首尾一分钟load **3.92–5.37**，Manager两次TCP分别在<4的准入窗口开始。`results[].measurementGate` 保存门槛／连续高负载证据／等待历史，原始`hostUptimeInitial/Final`保存实际值；未获得独占CPU。
 
-指定默认batch `[1,32]`的完整system矩阵`20261007t200717z-b0529f91`为14/16，另有UDP账本不一致与TCP超时；其batch32 TCP四个样本均成功，L4/L3为**0.982×**。改动前同allocator的配对`20261007t194733z-3512cfe3`为**0.677×**（947.86／1400.59 Mbps），首尾load7.22–7.55；改后该组为6.70–7.07，不能将全部差值归于代码。mimalloc完整两batch矩阵仍出现严格UDP账本／readiness `Context`失败；最终8格报告是独立的batch32完整配对，未拼接或替换这些失败。
+改动前同 allocator 的配对 `20261007t194733z-3512cfe3` 为 **0.677×**（947.86／1400.59 Mbps，首尾 load 7.22–7.55；改后 6.70–7.07，差值不能全部归于代码）。含 batch 1 的完整矩阵仍有严格 UDP 账本／readiness 失败，上述结论只取独立的 batch32 完整配对，未拼接失败样本。
 
 ### Manager 队列归因
 
@@ -429,7 +429,6 @@ fixture 前后对照，口径与上节相同（`exit/off` 第 16 阶段，Planck
 | 本阶段 `Exit queue full` 告警（次） | 12（每次） | **0（每次）** |
 
 - E 在出口正向时的线程 CPU（`watch/`，6 秒采样）：改前包处理 owner 线程 84.5%、两个 Tokio worker（driver 与出口 I/O owner）各约 53%；改后 owner 线程 93.8%（Mesh 正向时同为 94%，即同一瓶颈），两个 worker 各约 18%。出口正向剩余的差距是每包多出的出口准入与一次包复制。
-- 中间候选（证据中保留）：只改直写、I/O owner 逐包入队时出口正向 1,216（0.61，`Exit queue full` 11 次）；改为每轮一批入队后 1,670／1,697（0.82／0.85），但写队列（8 批）在突发时仍满，本阶段告警 5／3 次；队列加深到 32 批并去掉直写包的逐包投影驱动与一次多余的 scope 检查后为上表结果。
 - 出口反向不受本项影响，E 的出口 TUN TX 丢包前后均为 0。压力步 echo 最小 RTT 中位数 26.2 → 30.2 ms：同一时间出口 TCP 流的速率翻倍，路径上的排队随之增加。
 
 报告：`.meshway/validation/x11/`（`rows/` 每次运行的第 16 阶段 JSON，`extract.py`／`summary.txt` 汇总，`watch/` 每次 iperf 的线程 CPU）。

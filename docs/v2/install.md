@@ -375,32 +375,23 @@ tag `v*` 触发 `.github/workflows/release.yml`：
 
 ## 验收记录
 
-2026-10-11，OrbStack Ubuntu 24.04 machine（aarch64，systemd 255，安装 systemd-resolved 并使用其动态 stub），程序先为本分支本地 release 构建，后为 Release `v0.1.0-alpha.1` 的 aarch64 产物。OrbStack 对所有服务注入关闭沙箱的 drop-in，验收时以更高优先级 drop-in 恢复本 unit 的沙箱取值，`systemctl show` 确认 `ProtectSystem=strict`、`NoNewPrivileges=yes` 与四项 capability 实际生效。machine 重启产生新的 `boot_id` 与 network namespace，但与宿主共享 OrbStack 内核，不等同物理机冷启动。节点以 Tag 接入密钥加入开发网络，对端为常驻 lab 的 `meshway-lax`。
+Node 系统服务在 OrbStack Ubuntu 24.04 machine（aarch64，systemd 255，systemd-resolved 动态 stub；常驻 `meshway-vm`，见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)）上实测，程序为 Release aarch64 产物或同源本地 release 构建。OrbStack 对所有服务注入关闭沙箱的 drop-in，验收时以更高优先级 drop-in 恢复本 unit 的取值，`systemctl show` 确认 `ProtectSystem=strict`、`NoNewPrivileges=yes` 与四项 capability 生效。machine 重启产生新的 `boot_id` 与 network namespace，但与宿主共享内核，不等同物理机冷启动。
 
 | 场景 | 结果 |
 | --- | --- |
-| `install.sh --artifact` 首次安装 | 0.9 s 完成；daemon 启动到 `READY=1` 20 ms；目录 `/var/lib/meshway`、`/run/meshway` 均为 0700，socket 0600 |
-| `install.sh --version v0.1.0-alpha.1`（GitHub API＋`GITHUB_TOKEN`） | 8.6 s（含下载）；校验 `SHA256SUMS` 后升级本地构建，保留身份；`meshway version` 报 `v0.1.0-alpha.1` |
+| `install.sh --artifact` 首次安装 | 0.9 s；daemon 启动到 `READY=1` 20 ms；`/var/lib/meshway`、`/run/meshway` 为 0700，socket 0600 |
+| `install.sh --version`（GitHub API＋`GITHUB_TOKEN`） | 8.6 s（含下载）；校验 `SHA256SUMS` 后升级并保留身份 |
 | 重复运行／错误校验和 | 内容相同不替换、不重启（MainPID 不变）；`SHA256SUMS` 不符时拒绝安装 |
 | `meshway up --enrollment-key @file` | 约 3 s 后 `running`／`dataPlane=ready`／applied；Mesh 名称经 resolved 解析 |
-| 重启（Server 可达，三次） | 开机到 daemon 就绪 1.4–1.8 s；首个状态读取即为 `running`（缓存 netmap 已安装）；首次控制请求在网络就绪前失败并按 1 s 退避，sync 在启动后 2.5–27 s 连接；无需 `up`；旧 journal 以 `changed_namespace` 归档 |
-| 重启（Server 不可达，hosts 指向黑洞地址） | 开机到就绪 1.6 s，`running`／`ready`／applied 来自 `netmap.json`，`sync=disconnected`；Mesh 名称解析、系统解析和 `meshway ping` 均可用 |
+| 重启（Server 可达，三次） | 开机到就绪 1.4–1.8 s，首个状态读取即 `running`（缓存 netmap 已安装）；首次控制请求在网络就绪前失败并按 1 s 退避；无需 `up`；旧 journal 以 `changed_namespace` 归档 |
+| 重启（Server 不可达） | 开机到就绪 1.6 s，`running`／`ready`／applied 来自 `netmap.json`，`sync=disconnected`；Mesh 名称、系统解析与 `meshway ping` 可用 |
 | `systemctl restart meshwayd` | 1.3 s 内重新 sync，DNS 归属记录跨重启保留 |
-| `systemctl restart systemd-resolved`（`v0.1.0-alpha.1`） | 系统解析不中断；Mesh 名称与 Mesh IP 立即失败且不恢复（D-Bus 唯一名归属，已由下一轮替代） |
-| `systemctl stop systemd-resolved`（`v0.1.0-alpha.1`） | 系统与 Mesh 解析均失败（fail closed），数据面撤回；`start` 后不恢复，重启机器后恢复 |
-| `--uninstall`（保留身份）／`--purge` | `down` 后停止并删除服务；无 meshwayd 进程、TUN、DNS 锚点、私有 RPDB 规则或 resolved 链路，`/run/meshway`、unit 与二进制删除，`/var/lib/meshway` 与 `/etc/meshway` 保留；`--purge` 后上述目录与 unit drop-in 均不存在 |
+| `systemctl restart systemd-resolved`（五次） | 四次无失败采样；一次 Mesh 名称中断 0.6 s 后恢复，期间 `synchronizing`／`suspended` |
+| `systemctl stop systemd-resolved`，随后 `start` | 0.3 s 内 `blocked`／`dataPlane=failed`／`lastError=dns`，系统与 Mesh 解析均失败；`start` 后 1.1 s Mesh 解析恢复、`running`／`ready`，无需 `up` |
+| `SIGKILL` 后改写记录的 socket device | systemd 5 s 后重启，两个 stale socket 按 inode 回收并重新绑定，记录更新为当前 device |
+| `--uninstall`（保留身份）／`--purge` | 无 meshwayd 进程、TUN、DNS 锚点、私有 RPDB 规则或 resolved 链路；`/run/meshway`、unit 与二进制删除，保留 `/var/lib/meshway` 与 `/etc/meshway`；`--purge` 后这些目录与 drop-in 均不存在 |
 
-lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 NAT），只能由 lax 拨入；该边上 lax 每 4–9 s 换一个源端口重新建立 Native UDP 通道，`meshway ping` 与 OS ping 有 60–80% 丢包。原因是当时 OrbStack（< 2.2.4）的容器→machine UDP 路径本身：不运行 Meshway 时，同一 UDP 流的第 3 个起每隔一个报文在到达 machine 前被丢弃（每个报文换新 socket 则全部到达），因此监听端的健康 Pong 被确定性丢弃，通道按[健康窗口](/v2/node/transport#邻接管理)正确退役。同一单向拓扑在 machine 内用 network namespace 与端口保持型 masquerade 重建后无此现象；OrbStack 2.2.4 修复了该路径（2026-10-12 实测零丢包），见[通道稳定性](/v2/node/connectivity#channel-stability)。原始记录位于仓库私有目录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。
-
-2026-10-11 第二轮（F3，分支 `f3/service-fixes`，本地构建 `v0.1.0-alpha.1-14-g5b67b257`，`install.sh --artifact` 原地升级，保留身份；machine 为常驻 `meshway-vm`，见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)）：
-
-| 场景 | 结果 |
-| --- | --- |
-| `systemctl restart systemd-resolved`（五次） | 四次无失败采样；一次 Mesh 名称解析中断 0.6 秒后恢复，期间 `synchronizing`／`suspended` |
-| `systemctl stop systemd-resolved` | 0.3 秒内 `blocked`／`dataPlane=failed`／`lastError=dns`，系统与 Mesh 解析均失败 |
-| 随后 `start` | 1.1 秒后 Mesh 名称解析恢复，`running`／`ready`，无需 `up` |
-| `SIGKILL` 后改写 `daemon.json`／`underlay-bootstrap.json` 记录的 socket device | systemd 5 秒后重启，两个 stale socket 按 inode 回收并重新绑定（新 inode），`running`／`ready`，记录更新为当前 device |
-| 单向 NAT 后的第二个 Node 经 Native UDP 拨入（machine 内 namespace，dialers 关闭的监听端） | `meshway ping -c 100` 与 OS ping 各 100/100；100 个样本同一 link ID 与源端口；拨号侧 102 秒内无通道转移 |
+原始记录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。
 
 ### Server（MIG-2） {#server-validation}
 

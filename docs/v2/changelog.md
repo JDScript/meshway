@@ -14,6 +14,15 @@ Server 部署形态（MIG-2，`mig2/server-deploy`）：wire、IPC、`compilerVe
 
 验证：`meshway-vm` 独立实例上的安装、沙箱、升级（9 → 9、8 → 9）、迁移失败／`READY` 超时／启动失败三种自动回退与 sync 之后拒绝回退、1.3 GiB 库在 3 s 启动超时下的迁移、备份与恢复、卸载，见[安装 · 验收记录](/v2/install#server-validation)；`release.yml` 在分支上的 `workflow_dispatch` 演练（run `39769183040`）产出六个资产与 `SHA256SUMS`，门槛以 alpha.21 tag 构建的 Server 升级到本构建的 x86_64 程序通过，aarch64 Server 资产在 VM 上经 `install.sh` 安装；Planck 25 行矩阵 `20261022T111544Z-81951f2c`（`126a4a5b`）全部通过；私有证据 `.meshway/validation/mig2/`。
 
+外部压力验收行（F7，`f7/fault-row`）：产品代码、wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
+
+- 验收：新增默认矩阵行 `fault/throttle`（25 行）——B 限额 0.02 核 90／30 秒、B 的 resolved 重启两次、Controller 侧丢弃 B 的 Server 连接 100 秒、E 限额 12 秒；全程无 `blocked`、撤回期间 `retrying`＋原因、≤ 10 秒以同一 netmap 与包流恢复，基线与每段恢复后各 meshwayd 最忙线程 < 5 %、进程 < 10 %。门槛唯一实现 `dev/fault-fixture/evidence.py`，离线正负例 `scripts/test_fault_fixture.py`。见 [fault/throttle 行](/v2/node/validation#fault-row)。
+- 判别力：同一 fixture 摘入 `a41791bf`（alpha.19，X18 之前）在每个 CPU 窗口失败（一线程约 100 %）；摘入 `54f37b29`（alpha.15）与 `34987b0d`（alpha.14）在撤回期间 `lastError` 为 null 失败（H4 之前）；X15 的忙循环与 X13 的不自愈需要宿主内核归属结束，本行未触发。
+- 发现、未修复：B 恢复后包流晚 5–9.5 秒（R 因 B 换 boot 退役 circuit，A 等自己约 10 秒的 `maintain`）；限额解除瞬间多一次约 150 ms 的撤回／重装；`exit/off` 第 12 阶段一次出口 UDP 流未开始（未定位）。见[剩余边界](/v2/node/validation#remaining-boundaries)。
+- fixture：`exit/off` 的 resolver 先写查询记录再回答（第 11 阶段 split resolver 误报）；矩阵让 `fault/throttle` 先启动。
+
+验证：单行连续 3 轮 `20261022T043027Z-96eb8bd6`、`20261022T044612Z-32dd1aa0`、`20261022T045759Z-bcdbb8b6`（`ecadabab`）全部门槛通过，最忙线程 2.24–2.31 %；Planck 25 行矩阵 `20261022T080007Z-a6709a82`（`f994fe45`，并行 8）全部通过；证据 `.meshway/validation/f7/`。
+
 ## v0.1.0-alpha.21
 
 范围：MIG-1 Server schema 9 与单向存储迁移（从 alpha.20 的 schema 8 自动迁移，不 reset、不重新接入；迁移承诺自本版本起）；S5 换 `compilerVersion` 后旧编译器 delta 基准视为没有基准；X16 同一 netlink socket 的 rtnetlink dump 串行＋有界重读。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6 与 HTTP 契约均不变；Server schema 8 → 9 只涉及 Server，Node 无感，按先 Node 后 Server 普通升级（无断网窗口；Server 停机含一次迁移）。
@@ -22,14 +31,14 @@ Server 部署形态（MIG-2，`mig2/server-deploy`）：wire、IPC、`compilerVe
 
 - 修复（不变量：Server 只拒绝当前无法证明合法的 State，自己读不懂的旧编译产物不是节点的错误；owner：`store::netmap::load_earlier`，delta 基准与重编译前当前 netmap 的唯一读者）：`compilerVersion` 升级后的 Server 启动把旧编译器的当前 netmap 留作 delta 基准，State 准入每次解码它而全部 503（OPS18 202 次），持有它的节点 `sync` 也会 503，已应用 `auto` 的网络启动重编译失败。另一 `compilerVersion` 写成的基准现在视为没有基准：`sync` 回 full，准入只含当前 netmap，`auto` 按新解析记录；无法解密或声称当前版本却解码失败的内容仍是存储错误。升级不再需要改一次配置。
 
-验证：见 [S5](/v2/node/validation#s5)；Planck 24 行矩阵通过。
+验证：见 [S5](/v2/node/validation#s5)；Server 单测按 `meshway-netmap-3` 形状写入旧基准后重开进程，改回按当前格式解码时两条测试以 `Decode("node_netmaps.payload")` 失败；Planck 24 行矩阵 `20261022T024402Z-a8ecf31f`（`cce3cf9b`）全部通过；证据 `.meshway/validation/s5/`。
 
 被中断的 netlink dump（X16，`x16/exit-ebusy`）：wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
 
 - 修复（不变量：没有完成的读取不证明任何事，失败的读取是未知而不是安装失败；owner：`meshway-underlay` `kernel/rtnl.rs`，规则、路由、地址与链路 dump 的唯一读取层）：出口为新 (源, 远端) 对安装回程规则时的规则 dump 与 Host 或 egress capture owner 在同一 netlink socket 上的 dump 同时开始，内核以 `EBUSY` 拒绝，投影安装失败、首包丢弃（`exit/off` 第 15 阶段 echo 299／300，约每 10 轮全量一次）。现在同一 socket 的 dump 逐个执行并读到结束消息；`EBUSY` 或 `NLM_F_DUMP_INTR`（含只标在结束消息上的）立即重读，至多 4 次，仍中断才按读取失败处理；期限仍为 5 秒。
 - fixture：外部服务的 IPv6 访问也在回复前记录（`exit6/off` 按名称连接的误报）。
 
-验证：见 [X16](/v2/node/validation#x16-dump)。
+验证：见 [X16](/v2/node/validation#x16-dump)；隔离测试中同一 socket 同时 16 个 dump 时 rtnetlink 自身每次有 1 个 `EBUSY`、经读取层 16 个全部完整；Planck `exit/off` 五轮（含与其他行并行 4）第 15 阶段 echo 全部 300／300、E 日志无 `errno 16`；24 行矩阵 `20261022T052624Z-929bea24`（`6ead4394`）21／24，三行失败与 X16 无关（`exit6/off` fixture 记录晚于回复，已修；R4；`roam/exit` State 重试 5 秒），复跑通过；证据 `.meshway/validation/x16/`。
 
 Server 存储迁移（MIG-1，`mig1/storage-migration`）：Server schema 8 → 9（自动迁移，不 reset、不重新接入）；wire、IPC、`compilerVersion` 与 HTTP 契约均不变，Node 与 Server 可按任意顺序普通升级。迁移承诺自本版本起：每个发布版本可从上一发布版本迁移，最低可迁移版本为 schema 8；新库不能由旧版本 Server 打开（拒绝启动、不修改文件）。
 
@@ -299,7 +308,7 @@ OPS8 后续三项（H2，`h2/ops8-followups`）：wire 6、IPC 12、`compilerVer
 - 容量依据：活投影 128 同时是成对回程规则槽位（257 个 RPDB 优先级，位于 512 个保留优先级内）；nft 集合与 journal 历史 4096；现状保持 128；journal 增量记录与活投影 1024（对数 ≤ 128）为后续 X9。见 [Exit 设计 · 安全边界与限制清单](/v2/node/exit-design#安全边界与限制清单)。
 - 验收：`exit/off` 新增第 15 阶段（5 次／秒 ping 60 秒加 traceroute 时投影峰值 ≤ 32 且零丢失；echo 条目两次删除后角色保持；删除出口回程路由后只撤角色并自动重装，期间 E 保持 applied 与 connected，A 的 MagicDNS 与经 E 的普通名称每 0.5 秒解析成功）；组件测试 `exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role`（main 上在 CT 换代后第 3 个序号安装即失败；仅去掉 monitor 分类时 Host 新 serial 安装 `Conflict`）。见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。
 
-- 发现、未修复：节点持有的 peer 事实可早于其租约到期（Server 只为内容变化唤醒 hold），HTTP 中断或 hold 期间新出口流可在租约到期前被本地拒绝；第 15 阶段结束前等 A 在角色重装之后取得一次 sync，见[剩余边界](/v2/node/validation#remaining-boundaries)。
+- 发现、未修复：节点持有的 peer 事实可早于其租约到期（Server 只为内容变化唤醒 hold），HTTP 中断或 hold 期间新出口流可在租约到期前被本地拒绝；第 15 阶段结束前等 A 在角色重装之后取得一次 sync（alpha.12 的 P1 已修复，见[已修复问题索引](/v2/node/validation#fixed)）。
 
 验证：合入 H2 后 Planck 18 行矩阵 `20261014T233036Z-e7000147`（`909f2fd6`）全部通过，`exit/off` 行 `20261014T233523Z-9bb7fd1e`；合入前 18 行矩阵 `20261014T220407Z-2c791342`（`09bc15ad`）全部通过，`exit/off` 行 `20261014T221147Z-ccff6958`（第 15 阶段 300／300 回复、投影峰值 26；main 上 120／300、峰值 128）；OPS8 全链在 main 上的复现行 `20261014T200754Z-13ebca51`；证据 `.meshway/validation/x8/`。
 
@@ -489,7 +498,7 @@ E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVers
 - runtime fixture：`netmap/expiry` 在 Status 去掉租约后 2 秒内要求 TUN 删除并记录延迟，不再与 daemon 的撤回竞争；根因见[租约到期撤回](/v2/node/validation#lease-expiry-withdrawal)。
 - `validation.md` 补齐 R2a、X6、R3、F4a 的矩阵行与证据位置。
 
-验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）、`20261012T232408Z-75436f19`（`b4fe0619`）与合入 main（含 S3、C3）后的 `20261013T015222Z-59ebfafc`（`861d58d3`）全部通过；高负载下的未通过矩阵与签名见[验收范围](/v2/node/validation#netmap-rows)；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
+验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）、`20261012T232408Z-75436f19`（`b4fe0619`）与合入 main（含 S3、C3）后的 `20261013T015222Z-59ebfafc`（`861d58d3`）全部通过；高负载下的未通过矩阵与签名在私有证据中；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
 
 出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
 
@@ -501,7 +510,7 @@ E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVers
 - Console 仅补齐新增枚举的映射。
 - `exit/off` 第 11 阶段：真实 CLI 切换后旧选择的 TCP／UDP 流结束、新流经出口，`exit off` 后无外部捕获。
 
-验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
+验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap（alpha.6 的 M1 已修复，见[已修复问题索引](/v2/node/validation#fixed)）。
 
 此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。
 
@@ -539,7 +548,7 @@ Console 提出的 Server 侧欠账（S3）：
 - 配置校验：`edge_transport_unavailable` 一次报出全部受影响的（Mesh 路由规则，边），一条路由要经过的每条无承载边各一条，上限 64 条；block 组网规则写了 `transports` 或 `keepalive: true` 时接受并给出警告 `ineffective_block_option`（`params.field`）。见[配置问题](/v2/api/problems#configuration-issue)。
 - 批量路径检测（一个来源到所有节点）未做，仍按目的地逐个调用 `evaluateConfiguration`。
 
-验证：Planck 16 行矩阵 `20261012T220402Z-33d41c74` 14 行通过（含新的 State 路径检查）；`exit/off`、`netmap/expiry` 失败，同一窗口 main `1852b477` 复跑这两行（`20261012T224249Z-0dc077d7`）同样失败，见[验收范围](/v2/node/validation#traffic-anchor)。
+验证：Planck 16 行矩阵 `20261012T220402Z-33d41c74` 14 行通过（含新的 State 路径检查）；`exit/off`、`netmap/expiry` 失败，同一窗口 main `1852b477` 复跑这两行（`20261012T224249Z-0dc077d7`）同样失败（共享主机高负载，未归因于 S3）；证据 `.meshway/validation/s3/`。
 
 ## v0.1.0-alpha.4
 
