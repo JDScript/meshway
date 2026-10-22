@@ -33,6 +33,7 @@ enum PreviewMode {
                 default: throw IPCFailure.result
                 }
                 let model = try await model(sample)
+                if let index = args.firstIndex(of: "--preview-search"), args.count > index + 1 { model.search = args[index + 1] }
                 let dark = args.contains("--dark")
                 NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 if let index = args.firstIndex(of: "--preview-section"), args.count > index + 1 {
@@ -40,7 +41,7 @@ enum PreviewMode {
                     model.previewSection = args[index + 1]
                 }
                 let main = window(MainView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 820, height: 520), title: "Meshway")
-                let panel = window(MenuPanel(model: model), size: NSSize(width: 316, height: 420), title: "Meshway menu panel", panel: true)
+                let panel = window(MenuPanel(model: model), size: NSSize(width: 316, height: 500), title: "Meshway menu panel", panel: true)
                 let settings = window(SettingsView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 580, height: 510), title: "Meshway 设置")
                 windows = [main, panel, settings]
                 main.setFrameOrigin(NSPoint(x: 60, y: 80)); panel.setFrameOrigin(NSPoint(x: 950, y: 160))
@@ -49,7 +50,7 @@ enum PreviewMode {
                     try await Task.sleep(for: .seconds(2))
                     let directory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (dark ? "-dark" : "-light")
+                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (args.contains("--preview-search") ? "-search" : "") + (dark ? "-dark" : "-light")
                     try await snapshot(main, to: directory.appendingPathComponent("\(stem)-main.png"))
                     try await snapshot(panel, to: directory.appendingPathComponent("\(stem)-panel.png"))
                     let settingsPage: String
@@ -73,6 +74,7 @@ enum PreviewMode {
         host.sizingOptions = []
         window.contentViewController = host
         window.setContentSize(size)
+        if panel { window.setContentSize(host.view.fittingSize) }
         return window
     }
     @MainActor private static func snapshot(_ window: NSWindow, to url: URL) async throws {
