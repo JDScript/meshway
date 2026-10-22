@@ -271,6 +271,16 @@ class SampleTests(unittest.TestCase):
         self.assertEqual((measured["processPercent"], measured["busiestThread"]["percent"]), (6.0, 5.0))
         self.assertIsNone(evidence.cpu(start, copy.deepcopy(start)))
 
+    def test_the_exit_role_reads_both_status_shapes(self):
+        ready = {"family": "ipv4", "status": {"status": "ready"}, "installed": True}
+        self.assertTrue(evidence.exit_ready({"exit": {"capability": {"families": [ready]}}}))
+        self.assertFalse(evidence.exit_ready({"exit": {"capability": {"families": [dict(ready, installed=False)]}}}))
+        self.assertFalse(evidence.exit_ready({"exit": {"capability": {"families": []}}}))
+        old = {"status": {"status": "ready"}, "installedFamilies": ["ipv4"]}
+        self.assertTrue(evidence.exit_ready({"exit": {"capability": old}}))
+        self.assertFalse(evidence.exit_ready({"exit": {"capability": dict(old, installedFamilies=[])}}))
+        self.assertFalse(evidence.exit_ready({}))
+
     def test_gaps_count_the_window_edges(self):
         self.assertEqual(evidence.longest_gap([1.0, 2.0], 0.0, 5.0), 3.0)
         self.assertEqual(evidence.longest_gap([], 0.0, 5.0), 5.0)

@@ -108,7 +108,12 @@ def exit_status(family):
 
 
 def exit_ready(sample):
-    families = (((sample.get("exit") or {}).get("capability") or {}).get("families")) or []
+    capability = (sample.get("exit") or {}).get("capability") or {}
+    families = capability.get("families")
+    if families is None and "status" in capability:
+        # IPC 12 and before (the old builds a regression run uses): one
+        # status and the installed families.
+        return exit_status(capability) == "ready" and bool(capability.get("installedFamilies"))
     return bool(families) and all(exit_status(item) == "ready" and item.get("installed") for item in families)
 
 
