@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.21
+
+范围：MIG-1 Server schema 9 与单向存储迁移（从 alpha.20 的 schema 8 自动迁移，不 reset、不重新接入；迁移承诺自本版本起）；S5 换 `compilerVersion` 后旧编译器 delta 基准视为没有基准；X16 同一 netlink socket 的 rtnetlink dump 串行＋有界重读。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6 与 HTTP 契约均不变；Server schema 8 → 9 只涉及 Server，Node 无感，按先 Node 后 Server 普通升级（无断网窗口；Server 停机含一次迁移）。
 
 旧编译器留下的 delta 基准（S5，`s5/delta-baseline`）：wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
 
