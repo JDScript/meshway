@@ -1,8 +1,154 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T05:32:46.080104+00:00",
+  "updatedAt": "2026-10-22T06:49:55.602602+00:00",
   "runs": [
+    {
+      "id": 39735513051,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "d04443504f848f2c790f999ac27153450fa9f644",
+      "message": "Merge branch 'x16/exit-ebusy'",
+      "createdAt": "2026-10-22T06:41:22Z",
+      "updatedAt": "2026-10-22T06:44:53Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39735513051",
+      "jobs": [
+        {
+          "id": 119680144832,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T06:41:25Z",
+          "completedAt": "2026-10-22T06:41:37Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39735513051/job/119680144832"
+        },
+        {
+          "id": 119680227344,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T06:41:40Z",
+          "completedAt": "2026-10-22T06:44:50Z",
+          "seconds": 190.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39735513051/job/119680227344"
+        },
+        {
+          "id": 119680227464,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-22T06:44:53Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39735513051/job/119680227464"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39735513050,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "d04443504f848f2c790f999ac27153450fa9f644",
+      "message": "Merge branch 'x16/exit-ebusy'",
+      "createdAt": "2026-10-22T06:41:22Z",
+      "updatedAt": "2026-10-22T06:48:34Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39735513050",
+      "jobs": [
+        {
+          "id": 119680145013,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T06:41:23Z",
+          "completedAt": "2026-10-22T06:45:06Z",
+          "seconds": 223.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39735513050/job/119680145013"
+        },
+        {
+          "id": 119680145273,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T06:45:06Z",
+          "completedAt": "2026-10-22T06:48:33Z",
+          "seconds": 207.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39735513050/job/119680145273"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12407497134,
+          "name": "node-x86_64-unknown-linux-musl-d04443504f848f2c790f999ac27153450fa9f644",
+          "bytes": 11799193,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39735513050/artifacts/12407497134",
+          "jobId": 119680145273,
+          "runner": "planck",
+          "seconds": 207.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 20576872,
+              "sha256": "3bd84c626be4b12529c9d7ad71ecf01fa46b7c946ba140f3ea3b7dad08e42e25"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2216872,
+              "sha256": "23bb546b75fef98939d591651dd7e2a5ceba4cb24be64573dfac42b233db688b"
+            }
+          ]
+        },
+        {
+          "id": 12406714396,
+          "name": "node-aarch64-unknown-linux-musl-d04443504f848f2c790f999ac27153450fa9f644",
+          "bytes": 11018454,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39735513050/artifacts/12406714396",
+          "jobId": 119680145013,
+          "runner": "planck",
+          "seconds": 223.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1946528,
+              "sha256": "8ac6e66f59b4401659ac6e310a59bc803ac877ff152ae2fd380ad86de1eec5ae"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16948088,
+              "sha256": "6a57958bdd532980a7ad9c6196dc10acf3c405758fed3b4889dbe2fc39f98de1"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 39728391411,
       "attempt": 1,
