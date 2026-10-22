@@ -286,6 +286,10 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | <a id="x18-tracker-spin"></a>X18 | 每台 TUN 节点一个线程 100 % CPU | Status 跟踪任务克隆的 DNS guard 未 `mark_unchanged`，`changed()` 永远立即返回 | alpha.20 | `the_tracker_is_not_woken_by_a_dns_guard_send_it_has_seen`；`fault/throttle` CPU 门槛 |
 | <a id="x16-dump"></a>X16 | `exit/off` 第 15 阶段 echo 299／300（约每 10 轮一次） | 同一 netlink socket 上的并发 dump 被内核以 `EBUSY` 拒绝，出口投影安装失败、首包丢弃 | alpha.21 | `dumps_of_one_socket_are_taken_one_at_a_time`；`exit/off` 组件 `dumps-exit` |
 | <a id="s5"></a>S5 | `compilerVersion` 升级后全部 State 503 | 旧编译器的 delta 基准按当前格式解码 | alpha.21 | `a_base_another_compiler_wrote_is_no_base_for_state_or_sync`、`a_start_after_a_compiler_upgrade_compiles_auto_again` |
+| <a id="rc1-recovery"></a>RC-1 | 暂态安装失败约 20 秒后 `blocked`；已证实的 DNS／中继／出口不一致显示 `retrying` 并被自动越过；持久冲突需要重启；Status 读 worker 快照（G1–G13，[恢复语义](/v2/node/runtime#recovery)） | 各 owner 各写一份分类、期限与 Status 拼合 | 未发布（`rc1/recovery`） | `recovery::tests::*`、`kernel::tests::classification`、`lifecycle::tests::*`、`status::tests::a_transient_failure_retries_and_only_a_proven_one_blocks`；`fault/throttle` |
+| R5 | `roam/exit` soft 格 `exitReadyAgain`：出口能力 6–7 秒才回 `ready` | 路径变化时在途的 State 报告以网络错误失败后按 5 秒重试 | 未发布（RC-1 M9） | `a_network_failure_right_after_a_path_change_is_retried_at_once_once`；`roam/exit` |
+| G14 | `fault/throttle`：B 限额解除后 running，A→B 回显 5.3–9.5 秒后才恢复 | 中继对下一跳换 boot 时仍在握手的 circuit 留下死 CID，源端每 250 ms 的 INIT 重试被当作重放，直到源端约 10 秒的期限 | 未发布（RC-1） | `a_restarted_terminal_lets_a_handshaking_origin_retry_through_the_relay_at_once`；`fault/throttle` 包流 ≤ 0.3 秒 |
+| G15 | `fault/throttle`：限额解除瞬间多一次约 150 ms 撤回／重装 | 重装的 hold 之后、install 之前观察失败的故障在成功的 install 之后仍在 | 未发布（RC-1） | `a_successful_installation_supersedes_an_earlier_fault`；`fault/throttle` `withdrawalsAtRestore` 0 |
 
 ## 剩余边界 {#remaining-boundaries}
 
@@ -294,12 +298,10 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | 跟踪 | 症状 | 频率 | 证据 |
 | --- | --- | --- | --- |
 | R4 | `roam/relay`：重新穿透已开始而新直连通道尚未认证时发出的单报文新流没有回复（同时经 R 的中继流正常），`newFlowsThroughR` 失败 | 约每 10 轮一次 | `.meshway/validation/h4/matrix10/`（行 `20261017T090359Z-49e94e80`）；`.meshway/validation/x16/`（`20261022T052624Z-929bea24` hard 格） |
-| R5 | `roam/exit` soft 格 `exitReadyAgain`：A 路径变化时在途的 State 报告以网络错误失败、按 5 秒重试，出口能力 6–7 秒才回 `ready`（门槛 5 秒），数据面各项达标 | 近两周两次 | `.meshway/validation/x18/`（`20261019T081744Z-73fe0943`）、`.meshway/validation/x16/`；随 RC-1 M9 修复（未合入 main） |
 | I6-2 | IPv6 出口前缀变化不退役旧流；出口不对外部超限回包合成 packet too big | 未实现（v0.1.0 后，已知限制） | [IPv6 出口设计](/v2/node/ipv6-exit-design) |
 | 未定位 | `exit/off` 第 12 阶段 `A live UDP flow through the exit did not start`：20 个报文 0 回显，E 两次 `Exit forwarding refused by the kernel route decision`；单行复跑通过 | 一次 | `.meshway/validation/f7/`（`20261022T065619Z-34e5d00e`） |
+| 未定位 | `exit/off` 组件 `recovery`（`netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role`）：重装后的第 4 个 echo 投影 `ConfirmFailed`；同一测试本机 5 次与下一轮 `exit/off` 通过 | 一次 | `.meshway/validation/rc1/remote/`（`20261022T104457Z-5d2b3308`） |
 | X17 | `exit/off` 第 16 阶段压力步 iperf3 50 秒未结束；E 角色一直保持、无内核失败日志，抓包在该阶段前已停止 | 两次（N6 第 5 轮同机无其他吞吐阶段；P1 时与另一出口行的吞吐阶段并发） | `.meshway/validation/n6/`（矩阵 `20261018T044655Z-89ef1b80`，行 `20261018T045847Z-d65d2124`）、`.meshway/validation/p1/`（`20261015T065357Z-b98749cc`） |
-| RC-1 G14 | `fault/throttle`：B 限额解除后 0.3–0.6 秒 running，A→B 回显却 5.3–9.5 秒后才恢复（门槛 10 秒）：R 因 B 换 boot 退役 circuit，A 在 B 重装前新发起的 circuit 仍在握手，直到 A 约 10 秒的 `maintain` 才重建 | 每段 | `.meshway/validation/f7/`（行 `20261022T080248Z-8f1ca896` `cpu-short`）；修复在 `rc1/recovery`，未合入 main |
-| RC-1 G15 | `fault/throttle`：限额解除瞬间 worker 先以 offer 重装，随后处理已自行重证的故障边沿，再撤回约 150 ms 并重装（成对、有界，不影响门槛） | 每段 1 次 | 同上；修复在 `rc1/recovery`，未合入 main |
 | OPS14 | 真机漫游 it7→VM 中断 0.61–0.83 秒（5/s ping 丢 2–3 个），高于 0.5 秒预期；sha→VM 与 VM→it7 达标 | 每次地址变化 | `.meshway/node-lab/ops14/r3-vm/` |
 | P2 | it7 空闲时 meshwayd 最忙线程 3.8–7.6 %、进程 10.6–11.4 %，高于 lab（1.0–2.0 %）、VM（0.4–0.6 %）与 Planck（0.4 %）及里程碑 C 的 5 % 门槛。it7 为 2 vCPU，承担四条中继边与出口角色；待查是真实的中继／keepalive 工作还是浪费 | 每次空闲采样 | `.meshway/node-lab/ops20/cpu-idle/`、`cpu-idle-2/` |
 | R1 | 一次 path 变化约 2 秒后 Manager apply 返回 `transport operation cancelled or timed out`（某 owner 未经请求结束），具体 owner 未定位；现由 WARN 的 `owner` 字段给出 | 两次（矩阵、lab），此后未见 | `.meshway/validation/r1/`（`20261015T172722Z-c3cc3381`） |
@@ -307,7 +309,7 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 
 设计上的边界（不是缺陷，行为定义在引用页）：
 
-- **长于 30 秒的内核停顿 fail closed**：变更与回读失败共用 30 秒上限；停顿期间回读全部失败满 30 秒时出口审计停止角色、egress capture 以暂态阻断结束宿主内核归属，Host 每 1–8 秒重证，停顿结束后自动重装；控制中继监听失败与容量耗尽不结束归属。见[归属的结束与重证](/v2/node/runtime#ownership-end)、[内核变更失败](/v2/node/runtime#kernel-change)。
+- **长于 30 秒的内核停顿 fail closed**：变更与回读失败共用 30 秒上限；停顿期间回读全部失败满 30 秒时出口审计停止角色、egress capture 以暂态阻断结束宿主内核归属，Host 每 1–8 秒重证，停顿结束后自动重装；控制中继监听失败与容量耗尽不结束归属；已证实的冲突每 60 秒只读重证，证据消失即恢复。见[归属的结束与重证](/v2/node/runtime#ownership-end)、[内核变更失败](/v2/node/runtime#kernel-change)。
 - **Planck 宿主 Wi-Fi 周期停顿**是宿主问题，产品侧只保证自动恢复（[真机证据](#d3-dns-health)）。
 
 ## macOS 实验验收 {#macos}
