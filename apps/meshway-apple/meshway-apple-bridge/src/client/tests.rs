@@ -221,3 +221,100 @@ async fn netcheck_keeps_unknown_mapping_and_unmeasured_latency_distinct() {
         ClientEndpointMapping::Unknown
     );
 }
+
+#[tokio::test]
+async fn every_preview_sample_decodes_through_the_production_client() {
+    use super::samples::{ClientDiagnosticSample, client_sample_diagnostic_frames};
+    for sample in [
+        ClientSample::Unenrolled,
+        ClientSample::AwaitingApproval,
+        ClientSample::Running,
+        ClientSample::Error,
+        ClientSample::ConnectingAuthentication,
+        ClientSample::ConnectingSync,
+        ClientSample::ConnectingApply,
+        ClientSample::ConnectingPlane,
+        ClientSample::NoPeers,
+        ClientSample::MeshOnly,
+        ClientSample::ServerUnavailable,
+        ClientSample::LeaseUnavailable,
+    ] {
+        let frame = client_sample_frame(sample, ID.into()).await.unwrap();
+        let ClientResult::Status { status } =
+            request(ClientCommand::Status).decode(frame).await.unwrap()
+        else {
+            panic!()
+        };
+        match sample {
+            ClientSample::Running => {
+                let states: Vec<_> = status.peers.iter().map(|peer| &peer.state).collect();
+                assert!(states.len() >= 6);
+                for state in [
+                    ClientPeerState::Direct,
+                    ClientPeerState::Relay,
+                    ClientPeerState::Idle,
+                    ClientPeerState::Offline,
+                ] {
+                    assert!(states.contains(&&state));
+                }
+            }
+            ClientSample::NoPeers => assert!(status.peers.is_empty() && status.node.is_some()),
+            ClientSample::MeshOnly => {
+                let routing = status.netmap.unwrap().routing.unwrap();
+                assert_eq!(routing.profiles.len(), 1);
+                assert_eq!(routing.applied_profile, "mesh");
+            }
+            ClientSample::ServerUnavailable => {
+                assert_eq!(status.sync, ClientSync::Reconnecting);
+                assert!(status.netmap.is_some() && status.applied.is_some());
+            }
+            ClientSample::LeaseUnavailable => {
+                assert!(status.netmap.is_none() && status.peers.is_empty());
+            }
+            _ => {}
+        }
+    }
+    for sample in [
+        ClientDiagnosticSample::Ping,
+        ClientDiagnosticSample::PingExit,
+        ClientDiagnosticSample::PingDenied,
+        ClientDiagnosticSample::PingUnsupported,
+    ] {
+        let client = request(ClientCommand::Ping {
+            target: "studio-nas".into(),
+            count: 4,
+        });
+        let frames = client_sample_diagnostic_frames(sample, ID.into())
+            .await
+            .unwrap();
+        let count = frames.len();
+        let mut events = Vec::new();
+        for frame in frames {
+            let ClientResult::Ping { event, .. } = client.decode(frame).await.unwrap() else {
+                panic!()
+            };
+            events.push(event);
+        }
+        assert!(matches!(events[0], ClientPingEvent::Decision { .. }));
+        assert!(matches!(
+            events[count - 1],
+            ClientPingEvent::Completed { .. } | ClientPingEvent::Failed { .. }
+        ));
+    }
+    let mut frames = client_sample_diagnostic_frames(ClientDiagnosticSample::Netcheck, ID.into())
+        .await
+        .unwrap();
+    assert_eq!(frames.len(), 1);
+    let ClientResult::Netcheck { report } = request(ClientCommand::Netcheck)
+        .decode(frames.remove(0))
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(!report.ipv6 && report.ipv4);
+    assert_eq!(
+        report.sockets[0].endpoint_mapping,
+        ClientEndpointMapping::Dependent
+    );
+}
