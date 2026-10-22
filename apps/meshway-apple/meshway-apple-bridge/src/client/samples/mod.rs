@@ -300,8 +300,11 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
                     status.data_plane = ipc::DataPlane::Preparing;
                     status.applied = None;
                 }
-                ClientSample::NoPeers => status.peers.clear(),
-                ClientSample::MeshOnly => {
+                // Without peers no exit exists, so only the Mesh profile remains.
+                ClientSample::NoPeers | ClientSample::MeshOnly => {
+                    if matches!(sample, ClientSample::NoPeers) {
+                        status.peers.clear();
+                    }
                     let routing = status
                         .netmap
                         .as_mut()
@@ -316,14 +319,11 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
                     routing.requested_profile = None;
                 }
                 ClientSample::ServerUnavailable | ClientSample::LeaseUnavailable => {
+                    // A failed sync alone stays in sync state: the installed
+                    // netmap keeps running inside its lease with no lastError.
                     status.sync = ipc::SyncState::Reconnecting;
                     status.sync_error = Some(ipc::SyncError::Network);
                     status.last_sync_at = Some(now - Duration::minutes(5));
-                    status.last_error = Some(ipc::Problem::Network);
-                    status.last_error_detail = Some(
-                        "Preview Server is temporarily unreachable; Control will retry.".into(),
-                    );
-                    status.retry_at = Some(now + Duration::seconds(5));
                     if matches!(sample, ClientSample::LeaseUnavailable) {
                         status.netmap = None;
                         status.applied = None;
@@ -331,6 +331,8 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
                         status.phase = ipc::Phase::Retrying;
                         status.node = None;
                         status.peers.clear();
+                        status.last_error = Some(ipc::Problem::Network);
+                        status.retry_at = Some(now + Duration::seconds(5));
                     }
                 }
                 _ => {}

@@ -155,9 +155,9 @@ SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swif
 
 App target 的 `Assets.xcassets/AppIcon.appiconset` 提供完整 macOS 16／32／128／256／512 pt 的 1×／2×默认图标；四份处理后母版作为 `AppIconChoice-*` 普通图片资源打包。`IconPreferences` 以 `UserDefaults` 保存本机偏好，启动及选择时通过 `NSApplication.shared.applicationIconImage` 更新运行中的 Dock 图标。Finder／Launchpad 保持默认 Frost，选择器明确说明这一限制；不调用 `NSWorkspace.setIcon`，不修改已签名 App bundle。源图处理与全套资源由 `apps/meshway-apple/scripts/generate-icons.py` 生成：清除圆角外残留、保留比例，图块最大 824×824 居中于 1024×1024 透明画布，不增加外阴影。
 
-`--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；主窗口、面板和设置窗口都有小型 SAMPLE 角标，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section peers|exit|diagnostics` 选择主窗口页面，`--preview-selected` 展开第一台设备详情，`--preview-settings general|account|details|diagnostics` 选择设置页面；预览中的图标选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览。`--model-tests` 检查同一组桥接样例、Node／NE 状态岛映射、缺测与就绪条件。现有 running 样例含三台设备，没有 Netcheck／Ping 测量结果；截图不伪造更多设备或测量。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
+`--preview unenrolled|approval|running|error|connecting-auth|connecting-sync|connecting-apply|connecting-plane|no-peers|mesh-only|server-cached|lease-expired --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；主窗口、面板和设置窗口都有小型 SAMPLE 角标，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section peers|exit|diagnostics` 选择主窗口页面，`--preview-selected` 展开第一台设备详情，`--preview-settings general|account|details|diagnostics` 选择设置页面；预览中的图标选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览。`--model-tests` 检查同一组桥接样例、Node／NE 状态岛映射、缺测与就绪条件。running 样例含六台设备（直连、中继、空闲直连、空闲中继、离线）；`--preview-diagnostics ping|ping-exit|ping-denied|ping-unsupported|netcheck`（逗号分隔可组合）把 Rust 按 Node 流序生成的 Ping 事件帧和 Netcheck 报告逐帧经同一请求解码后填入诊断页。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
 
-`--preview-search QUERY` 对既有样例执行真实搜索过滤。现有 core 未提供 connecting、离线 peer、仅 Mesh 分配、有效离线缓存或诊断结果样例；补齐这些画面需要扩展 Rust 样例生成器并重建 core。Swift 模型测试以独立类型化单元输入验证连接阶段、缓存租约边界、空状态选择、含建连 RTT／丢包与 Netcheck 缺测；这些单元输入不作为预览协议数据。
+`--preview-search QUERY` 对样例执行真实搜索过滤。`server-cached` 只有 sync 失败（`reconnecting`＋`network`，无 `lastError`），已应用的 netmap 仍在租约内；`lease-expired` 无 netmap、phase `retrying`、数据面暂停。样例只填 IPC 已有字段，Release core 不含样例值。Swift 模型测试另以类型化单元输入验证连接阶段、缓存租约边界、空状态选择、含建连 RTT／丢包与 Netcheck 缺测；这些单元输入不作为预览协议数据。
 
 ## 复用白名单 {#reuse}
 
