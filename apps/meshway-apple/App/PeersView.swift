@@ -45,6 +45,8 @@ struct DevicesView: View {
                 }.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 30)
                 ScrollView {
                     LazyVStack(spacing: 1) {
+                        if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(3, model.peers.count), addresses: true) }
+                        else {
                         ForEach(model.peers, id: \.nodeId) { peer in
                             Button { selected = peer.nodeId } label: {
                                 HStack(spacing: 10) {
@@ -61,10 +63,11 @@ struct DevicesView: View {
                                 .accessibilityAddTraits(selected == peer.nodeId ? .isSelected : [])
                                 .contextMenu { PeerCopyActions(peer: peer) }.transition(.opacity)
                         }
+                        }
                     }.padding(4)
                 }.scrollIndicators(.hidden)
                     .overlay {
-                        if let kind = EmptyStateKind.devices(query: model.search, count: model.peers.count, server: serverEmptyState(model)) {
+                        if ConnectionPresentation(model: model).state != .connecting, let kind = EmptyStateKind.devices(query: model.search, count: model.peers.count, server: serverEmptyState(model)) {
                             EmptyStateView(kind: kind)
                         }
                     }

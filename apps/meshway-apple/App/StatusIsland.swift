@@ -25,12 +25,16 @@ enum IslandState: Equatable {
         default: .secondary
         }
     }
-    static func resolve(phase: ClientPhase?, vpn: NEVPNStatus?, hasError: Bool, approvalRequired: Bool) -> Self {
+    static func resolve(phase: ClientPhase?, vpn: NEVPNStatus?, hasError: Bool, approvalRequired: Bool, plane: ClientPlane? = nil) -> Self {
         if hasError || phase == .blocked || phase == .retrying { return .error }
         if phase == .awaitingApproval || approvalRequired { return .approval }
         if let phase {
             switch phase {
-            case .running: return .connected
+            case .running:
+                if plane == .ready { return .connected }
+                if plane == .preparing { return .connecting }
+                if plane == .failed || plane == .suspended { return .error }
+                return .unknown
             case .starting, .synchronizing, .controlReady: return .connecting
             case .blocked, .retrying: return .error
             case .down: return .disconnected
@@ -65,8 +69,9 @@ struct ConnectionPresentation {
         IslandState.resolve(phase: model.status?.phase,
                             vpn: model.sampleMode || !model.tunnel.preferencesLoaded ? nil : model.tunnel.vpnStatus,
                             hasError: !errors.isEmpty,
-                            approvalRequired: !model.sampleMode && model.tunnel.extensionState == "Approval required")
+                            approvalRequired: !model.sampleMode && model.tunnel.extensionState == "Approval required", plane: model.status?.dataPlane)
     }
+    var step: ConnectionStep? { ConnectionStep.resolve(phase: model.status?.phase, plane: model.status?.dataPlane) }
     var reason: String? {
         if let issue = model.issue ?? model.ipcIssue { return issue }
         if let error = model.status?.lastError { return problemTitle(error) }
@@ -106,18 +111,22 @@ struct StatusIsland: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Circle().fill(presentation.state.color).frame(width: 8, height: 8)
+            ConnectionDot(color: presentation.state.color, connecting: presentation.state == .connecting)
             if toolbar {
-                statusText.frame(maxWidth: 170, alignment: .leading)
-                address
+                VStack(alignment: .leading, spacing: 4) {
+                    statusText
+                    if presentation.state == .connecting { ConnectionSteps(step: presentation.step) }
+                }.fixedSize(horizontal: presentation.state != .error, vertical: false)
+                if presentation.state != .connecting { address }
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     statusText
-                    address
+                    if presentation.state == .connecting { ConnectionSteps(step: presentation.step) }
+                    else { address }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             Toggle("连接 Meshway", isOn: Binding(get: { model.status?.desiredUp ?? false }, set: { value in Task { await model.connect(value) } }))
-                .labelsHidden().toggleStyle(.switch).tint(.teal).controlSize(.small)
+                .labelsHidden().toggleStyle(ConnectionSwitchStyle()).tint(.teal).controlSize(.small)
                 .disabled(model.busy || model.sampleMode || (model.status == nil && model.server.isEmpty))
                 .help(unavailableHelp(model, fallback: model.status == nil && model.server.isEmpty ? "打开 Meshway 输入 Server URL" : "连接或断开 Meshway"))
         }
@@ -140,10 +149,10 @@ struct StatusIsland: View {
     }
     private var statusText: some View {
         Button { expanded = true } label: {
-            Text(presentation.reason.map { "出错 · " + $0 } ?? presentation.state.title)
+            Text(presentation.reason.map { "出错 · " + $0 } ?? (presentation.state == .connecting ? presentation.step?.title ?? "连接中" : presentation.state.title))
                 .fontWeight(.semibold).lineLimit(1).truncationMode(.tail)
                 .contentTransition(reduceMotion ? .identity : .numericText())
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: toolbar ? nil : .infinity, alignment: .leading)
         }.buttonStyle(.plain).help(presentation.reason ?? "查看连接详情")
     }
     @ViewBuilder private var address: some View {

@@ -16,7 +16,7 @@ struct MainView: View {
     @Bindable var model: AppModel
     @Bindable private var navigation = AppNavigation.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var needsEnrollment: Bool { model.status?.identity == nil || model.status?.phase == .awaitingApproval }
+    private var needsEnrollment: Bool { model.status?.phase == .awaitingApproval || (model.status?.identity == nil && ConnectionPresentation(model: model).state != .connecting) }
     private var page: AppPage { navigation.page ?? .peers }
 
     var body: some View {
@@ -30,7 +30,8 @@ struct MainView: View {
                             switch page {
                             case .peers: DevicesView(model: model)
                             case .exit:
-                                if let selection = model.selection { ProfilesView(model: model, selection: selection).padding(12) }
+                                if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: 3).frame(maxHeight: .infinity, alignment: .top).padding(12) }
+                                else if let selection = model.selection { ProfilesView(model: model, selection: selection).padding(12) }
                                 else { EmptyStateView(kind: .profiles) }
                             case .diagnostics: DiagnosticsView(model: model)
                             }
@@ -45,7 +46,7 @@ struct MainView: View {
                 if model.sampleMode { SampleBanner().padding(7).allowsHitTesting(false) }
             }
             .toolbar {
-                ToolbarItem(placement: .navigation) { StatusIsland(model: model, toolbar: true).frame(width: 266) }.sharedBackgroundVisibility(.hidden)
+                ToolbarItem(placement: .navigation) { StatusIsland(model: model, toolbar: true).frame(maxWidth: 280) }.sharedBackgroundVisibility(.hidden)
                 ToolbarSpacer(.flexible, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) {
                     PagePicker(selection: Binding(get: { page }, set: { navigation.page = $0 }))
