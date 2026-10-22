@@ -15,6 +15,7 @@ mod node;
 pub use node::*;
 pub mod networks;
 mod numbers;
+pub mod recovery;
 mod socket_address;
 pub use networks::{MemberActions, MemberSummary, NetworkActions, NetworkSummary};
 pub mod observations;

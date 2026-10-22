@@ -95,14 +95,7 @@ pub struct PoolOverlap {
 /// not an absence proof, the role installs again once it completed), or a
 /// [`KernelChangePending`]. The owner reads the kernel again before each
 /// attempt.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RetryPending {
-    /// The last attempt's error.
-    pub reason: String,
-    /// Attempts so far, the first one included.
-    pub attempts: u32,
-    pub retry_at: std::time::SystemTime,
-}
+pub use meshway_model::recovery::RetryPending;
 
 /// The Control relay's listener owner while it does not serve every new
 /// connection, published by `Host::control_relay` (`None` while it listens
