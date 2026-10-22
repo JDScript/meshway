@@ -2,6 +2,14 @@
 
 `meshway-mac-vm` 是 [macOS App 设计](/v2/node/apple-design)的独立 Tart 验收机。App 在宿主 Xcode 构建，在 VM 内安装、激活与运行；网络使用 Tart 默认 NAT。VM 的 SIP／AMFI 开发设置只用于无 provisioning profile 的平台实验，不是发布方式。
 
+## 当前状态
+
+VM 已注销隔离 Server 上的节点，并以全新状态目录接入开发 Server（`https://meshway-dev-api.jdscript.dev/`，批准经本机 Console），运行于开发网络。Server origin 固定保存在 Node 存储中，换 Server 不是受支持的“切网”：注销后须在 tunnel 停止时移走只剩空身份的状态目录，再以新 origin 启动。
+
+下文 A3／B1／C1 的隔离 Server、Linux peer、出口 E、隔离目标及其 bridge、状态卷、测试 CA／leaf 与密钥、来宾内的测试 CA 信任和回滚文件均已删除；各节只作为对应验收的环境说明，证据日志保留在 `.meshway/macos-lab/{a3,b1,c1}/`，不能据此重放。
+
+GUI 人工验收用 `tart run meshway-mac-vm --vnc-experimental`：Virtualization.framework 在宿主 loopback 提供带口令的 VNC，不开 Tart 窗口，来宾保有显示器。`--no-graphics` 没有显示器，来宾的屏幕共享只能看到黑屏；关闭 Tart 窗口会停止 VM。
+
 ## C1 合并后冒烟
 
 当前 VM 为 **0.1/10** App／extension（`c0aacd66`），基于 A3＋B1＋B2 合并 `3f9dce34`，经 0.1/9→0.1/10 同身份替换，固定 VPN UUID 不变、无 GUI 再批准。App 消费后先 ACK，再关闭短请求连接；provider 取消时立即唤醒等待回调并 join Rust transport。合并后 Mesh／出口冒烟及收尾的精确结论见 [macOS 验收行](/v2/node/validation#macos)，私有证据与有界编排位于仓库公共根 `.meshway/macos-lab/c1/`。构建、部署和 probe 命令沿用下文。
@@ -115,7 +123,7 @@ DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认
 | 网络 | Tart 默认 shared NAT；不传 `--net-bridged`、`--net-softnet`，不修改宿主 DNS／路由／防火墙 |
 | 构建 | `apps/meshway-apple/build/DerivedData`，macOS 26+、arm64、Swift 6 严格并发 |
 | 安装 | VM 的 `/Applications/Meshway.app`；extension 位于 App 的 `Contents/Library/SystemExtensions` |
-| 当前程序 | C1 0.1/10 App／extension；已批准固定 UUID 的 VPN 配置，须保留 |
+| 当前程序 | C1 0.1/10 App／extension，接入开发 Server；已批准固定 UUID 的 VPN 配置，须保留 |
 
 当前 VM IP 为 `192.168.64.2`，SSH 专用密钥可用；显示状态见上节。SIP disabled、AMFI 开发参数、developer mode 与虚拟机标记的 A2 读回见下文。A2 的薄壳实验与 A3 的真实 Node 结果分别保留；下文历史操作不用于移除当前固定 VPN。
 
