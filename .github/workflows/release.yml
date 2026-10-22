@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A dry run on any branch: the same build, gate and packaging; the assets
+  # are a workflow artifact, and nothing is published.
+  workflow_dispatch:
 
 # Runners may carry a personal global mise config; the project lockfile is the only tool source.
 env:
@@ -20,59 +23,120 @@ jobs:
     timeout-minutes: 5
     outputs:
       prerelease: ${{ steps.check.outputs.prerelease }}
+      tag: ${{ steps.check.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - id: check
         env:
           TAG: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -eu
           version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
           test -n "$version" || { echo "no [workspace.package] version in Cargo.toml"; exit 1; }
-          test "$TAG" = "v$version" || { echo "tag $TAG does not match workspace version $version (expected v$version)"; exit 1; }
-          grep -qxF "## $TAG" docs/v2/changelog.md || { echo "docs/v2/changelog.md has no '## $TAG' section"; exit 1; }
+          if [ "$EVENT" = push ]; then
+            test "$TAG" = "v$version" || { echo "tag $TAG does not match workspace version $version (expected v$version)"; exit 1; }
+            grep -qxF "## $TAG" docs/v2/changelog.md || { echo "docs/v2/changelog.md has no '## $TAG' section"; exit 1; }
+          else
+            TAG=v$version
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           case $version in *-*) echo prerelease=true ;; *) echo prerelease=false ;; esac >> "$GITHUB_OUTPUT"
 
   build:
     needs: version
     uses: ./.github/workflows/build.yml
 
-  publish:
+  server-upgrade:
+    # Release gate: the previous release's Server (its asset, or built from
+    # its tag when it published none) is upgraded to this build's x86_64
+    # program with a control-only Node of this build; see
+    # scripts/ci/server-upgrade.py.
     needs: [version, build]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: "0"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-x86_64-unknown-linux-musl-${{ github.sha }}"
+          path: artifacts
+      - name: Upgrade from the previous release
+        run: |
+          set -eu
+          node=artifacts/node-x86_64-unknown-linux-musl-$GITHUB_SHA
+          server=artifacts/server-x86_64-unknown-linux-musl-$GITHUB_SHA
+          chmod 0755 "$node/meshwayd" "$node/meshway" "$server/meshway-server"
+          mise exec -- python3 scripts/ci/server-upgrade.py --current-server "$server/meshway-server" \
+            --node-bin "$node" --report server-upgrade.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-upgrade-${{ github.sha }}
+          path: server-upgrade.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    needs: [version, build, server-upgrade]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     permissions:
       contents: write
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: node-*-${{ github.sha }}
+          pattern: "*-${{ github.sha }}"
           path: artifacts
       - name: Package release assets
         run: |
           set -eu
           mkdir -p release
+          mtime="@$(git log -1 --format=%ct)"
           for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
             stage=$(mktemp -d)
             cp "artifacts/node-$target-$GITHUB_SHA/meshwayd" "artifacts/node-$target-$GITHUB_SHA/meshway" "$stage/"
             cp dist/systemd/meshwayd.service "$stage/"
             chmod 0755 "$stage/meshwayd" "$stage/meshway"
             chmod 0644 "$stage/meshwayd.service"
-            tar --owner=0 --group=0 --numeric-owner --sort=name --mtime="@$(git log -1 --format=%ct)" \
+            tar --owner=0 --group=0 --numeric-owner --sort=name --mtime="$mtime" \
               -C "$stage" -czf "release/meshway-$target.tar.gz" meshwayd meshway meshwayd.service
+            rm -rf "$stage"
+            stage=$(mktemp -d)
+            for program in meshway-server ip-datasets reset-password; do
+              cp "artifacts/server-$target-$GITHUB_SHA/$program" "$stage/"
+              chmod 0755 "$stage/$program"
+            done
+            cp dist/systemd/meshway-server.service "$stage/"
+            chmod 0644 "$stage/meshway-server.service"
+            tar --owner=0 --group=0 --numeric-owner --sort=name --mtime="$mtime" \
+              -C "$stage" -czf "release/meshway-server-$target.tar.gz" ip-datasets meshway-server meshway-server.service reset-password
             rm -rf "$stage"
           done
           cp dist/install.sh release/install.sh
           (cd release && sha256sum -- * > SHA256SUMS)
-          # The x86_64 CLI runs here: its reported version must be the tag.
+          # The x86_64 CLI and Server run here: their reported version must be the tag.
           dir=$(mktemp -d)
           tar -xzf release/meshway-x86_64-unknown-linux-musl.tar.gz -C "$dir" meshway
           reported=$("$dir/meshway" version | sed -n '1s/^meshway \([^ ]*\) .*/\1/p')
           test "v$reported" = "$TAG" || { echo "built CLI reports $reported, tag is $TAG"; exit 1; }
           "$dir/meshway" version
+          tar -xzf release/meshway-server-x86_64-unknown-linux-musl.tar.gz -C "$dir" meshway-server
+          reported=$("$dir/meshway-server" --version | sed -n '1s/^meshway-server \([^ ]*\) .*/\1/p')
+          test "v$reported" = "$TAG" || { echo "built Server reports $reported, tag is $TAG"; exit 1; }
+          "$dir/meshway-server" --version
           rm -rf "$dir"
           {
             echo "## Release assets"
@@ -80,7 +144,14 @@ jobs:
             cat release/SHA256SUMS
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ github.sha }}
+          path: release/
+          retention-days: 14
       - name: Release notes from the changelog
+        if: github.event_name == 'push'
         run: |
           set -eu
           awk -v heading="## $TAG" '$0 == heading { keep = 1; next } keep && /^## / { exit } keep' docs/v2/changelog.md > release-notes.md
@@ -88,7 +159,8 @@ jobs:
           # Site-relative doc links point at the tagged sources on GitHub.
           sed -i -E "s|\]\(/v2/([^)#]*)(#[^)]*)?\)|](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/v2/\1.md\2)|g" release-notes.md
           printf '\nInstall: see `docs/v2/install.md`. Verify assets with `sha256sum -c SHA256SUMS`.\n' >> release-notes.md
-      - uses: softprops/action-gh-release@v2
+      - if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
@@ -99,6 +171,8 @@ jobs:
           files: |
             release/meshway-x86_64-unknown-linux-musl.tar.gz
             release/meshway-aarch64-unknown-linux-musl.tar.gz
+            release/meshway-server-x86_64-unknown-linux-musl.tar.gz
+            release/meshway-server-aarch64-unknown-linux-musl.tar.gz
             release/install.sh
             release/SHA256SUMS
 
@@ -106,6 +180,7 @@ jobs:
     # meshway-org/meshway-rules runs this converter from its own release
     # `cli-<tag>` (this repository is private). The push token lives only in
     # environment Production.
+    if: github.event_name == 'push'
     needs: [version, build, publish]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
