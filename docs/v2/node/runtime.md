@@ -191,6 +191,8 @@ owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2
 
 确定性的拒绝（执行已失效、目标不符、容量）不涉及内核结果，不重试。重试期间 owner 的请求按序等待（Host 的 suspend／install 随之等待，网络 worker 不处理新内容），出口其他流的已安装写路径不受影响；WARN `Egress capture change failed; read back, retrying`／`Exit role change failed; read back, retrying`（`operation`、`attempts`、`error`、`reread`、`retry_ms`，第 1、2、4… 次），完成后 INFO `… change completed after retrying`（`attempts`、`elapsed_ms`），放弃时为原来的 stopping 日志并带 `check`。IPC Status `changePending` 给出正在重试的变更。egress 门在替换待提交记录前，先移除上一次未完成变更留下、现门与新门都不保留的自有路由（此前部分提交的 `switch` 之后的 `pause` 会因“外来路由”冲突而结束归属）。出口 `renew` 的原子批失败时重读元素：仍在则同一批再执行一次（无论新旧期限都设为新期限），否则关闭该投影；conntrack 确认期间一次查询失败为未知，继续查到截止，不当作不存在。
 
+**被中断的 dump 不是失败的读取**。规则、路由、地址与链路的 netlink dump 只有一份读取层 `kernel/rtnl.rs`。内核在同一 socket 已有 dump 进行时拒绝新的 dump（`EBUSY`），dump 期间被读的表发生变化时在其消息或结束消息（`NLMSG_DONE`）上标 `NLM_F_DUMP_INTR`；两者都只说明这次读取没有完成，不说明表里有什么。同一期的 Host、egress capture owner 与出口 owner 共用一个请求 socket：读取层把同一 socket 的 dump 逐个执行，每次读到结束消息；被中断的 dump 立即重读，连同第一次至多 4 次，仍被中断才算读取失败，由调用方按原规则处理（上表“读取失败”、审计未知等）；全部尝试与等待 socket 共用原来的 5 秒期限。observer 与 DNS 锚点健康检查各有自己的 socket，同样逐个执行。其余错误（拒绝、结束消息带其他 errno、超出对象上限）照旧是失败，不重读。ctnetlink dump 的 `NLM_F_DUMP_INTR` 见 [Exit 设计](/v2/node/exit-design)的 conntrack 精确删除。
+
 #### 宿主内核归属的结束与重证 {#ownership-end}
 
 宿主内核归属（Host 的唯一 Kernel owner：capture RPDB 与私有表、Mesh TUN、egress capture、出口角色、DNS 锚点、受保护 socket 与控制中继）结束时，所有 owner 一起 fail closed：撤回执行与全部描述符，不安装新内容，控制中继拒绝连接，DNS 锚点报 `anchor_ended`。结束按原因分两类，由 `Shared::end` 记录（`meshway_underlay::OwnershipEnd`）：
