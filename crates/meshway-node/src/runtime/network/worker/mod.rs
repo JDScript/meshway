@@ -308,6 +308,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         } else {
             work
         };
+        // An owner's edge first becomes the one action `decide` gives for
+        // the current snapshot; that action is handled below like any work.
         let work = match work {
             Work::Lifecycle(lifecycle::Edge::Reinstall(trigger)) => match trigger {
                 "exitRecovered" => Work::ExitRecovered,
@@ -349,6 +351,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     }
                 }
             }
+            work => work,
+        };
+        let work = match work {
             Work::HostRecovery => {
                 let plane = engine.components_mut();
                 match plane.host.recover().await {
