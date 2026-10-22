@@ -52,6 +52,7 @@ impl<P> std::error::Error for ClientError<P> {}
 fn network<P>(error: &(dyn std::error::Error + 'static), status: Option<u16>) -> ClientError<P> {
     let mut stage = "other";
     let mut io = None;
+    let mut os_error = None;
     let mut current = Some(error);
     while let Some(error) = current {
         if let Some(error) = error.downcast_ref::<reqwest::Error>() {
@@ -69,10 +70,11 @@ fn network<P>(error: &(dyn std::error::Error + 'static), status: Option<u16>) ->
         }
         if let Some(error) = error.downcast_ref::<std::io::Error>() {
             io = Some(error.kind());
+            os_error = error.raw_os_error();
         }
         current = error.source();
     }
-    tracing::debug!(stage, io = ?io, status, "Control HTTP transport failed");
+    tracing::debug!(stage, io = ?io, os_error, status, "Control HTTP transport failed");
     ClientError::Network { status }
 }
 
@@ -170,6 +172,7 @@ impl Client {
         match futures_util::future::select(Box::pin(operation), interrupt.interrupted()).await {
             futures_util::future::Either::Left((result, _)) => result,
             futures_util::future::Either::Right(((), _)) => {
+                tracing::debug!(stage = "host_interrupt", "Control HTTP transport interrupted");
                 Err(ClientError::Network { status: None })
             }
         }
