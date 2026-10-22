@@ -213,7 +213,7 @@ async fn netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role() {
     }
     assert!(role.is_active());
     drop(slots);
-    println!("X8_EXIT_ECHO_RECONNECT=old={old},current={current},role-kept");
+    println!("X8_EXIT_ECHO_RECONNECT=old={old},current={current},sequences={sequence},role-kept");
 
     // Someone deletes the source's return route: only the role stops, and
     // its exact cleanup completes.
@@ -235,10 +235,14 @@ async fn netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role() {
         .await
         .expect("Host protection survives the exit role's failure");
     // And the role installs again on the same content at once: a removed
-    // object of its own leaves nothing foreign after its cleanup.
+    // object of its own leaves nothing foreign after its cleanup. Its echo
+    // is a new sequence: every one above (1 to `sequence`, up to 6, and 10)
+    // was retired into the quarantine the role restores, which drops that
+    // echo's packets as the stale flow's they are.
     let again = host.install_netmap_exit_role(&role_plan).await.unwrap();
-    let renewed = exchange(&again, &scope, 4).await;
-    again.retire_flow(incarnation(4)).await.unwrap();
+    let fresh = 11;
+    let renewed = exchange(&again, &scope, fresh).await;
+    again.retire_flow(incarnation(fresh)).await.unwrap();
     assert!(again.is_active());
     println!("X8_EXIT_ROUTE_LOSS=role-stopped,cleanup-exact,host-kept,reinstalled,ct={renewed}");
 
