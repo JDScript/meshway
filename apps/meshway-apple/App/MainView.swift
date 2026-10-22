@@ -45,10 +45,10 @@ struct MainView: View {
                 if model.sampleMode { SampleBanner().padding(7).allowsHitTesting(false) }
             }
             .toolbar {
-                ToolbarItem(placement: .navigation) { StatusIsland(model: model, toolbar: true).frame(width: 286) }
+                ToolbarItem(placement: .navigation) { StatusIsland(model: model, toolbar: true).frame(width: 266) }.sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .primaryAction) {
                     PagePicker(selection: Binding(get: { page }, set: { navigation.page = $0 }))
-                }
+                }.sharedBackgroundVisibility(.hidden)
             }
             .toolbarBackground(.hidden, for: .windowToolbar)
         }

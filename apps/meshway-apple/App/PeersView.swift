@@ -6,21 +6,27 @@ func peerSummary(_ peer: ClientPeer, model: AppModel) -> String {
     case .direct: return peer.rtt.map { milliseconds($0.durationUs) } ?? "直连"
     case .relay: return peer.via.isEmpty ? "中继" : "经 " + peer.via.map(model.name).joined(separator: " → ")
     case .idle, .relayIdle: return "空闲"
-    default: return human(peer.state)
+    case .offline: return "离线"
+    case .unreachable: return "不可达"
     }
 }
 
 struct PeerDot: View {
     let peer: ClientPeer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var color: Color {
         switch peer.state {
         case .direct: .green
         case .relay: .indigo
         case .idle, .relayIdle: .gray
-        default: .gray.opacity(0.35)
+        case .offline: .gray.opacity(0.35)
+        case .unreachable: .orange
         }
     }
-    var body: some View { Circle().fill(color).frame(width: 7, height: 7).accessibilityLabel(human(peer.state)) }
+    var body: some View {
+        Circle().fill(color).frame(width: 7, height: 7).accessibilityLabel(human(peer.state))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: peer.state)
+    }
 }
 
 struct DevicesView: View {
@@ -47,7 +53,8 @@ struct DevicesView: View {
                                     Text(peer.node.ipv4 ?? peer.node.ipv6 ?? "未分配地址")
                                         .font(.system(size: 11, design: .monospaced)).opacity(0.55).frame(width: 110, alignment: .leading).lineLimit(1)
                                     Text(peerSummary(peer, model: model)).font(.system(size: 11)).opacity(0.55)
-                                        .frame(width: 95, alignment: .trailing).lineLimit(1)
+                                        .frame(width: 125, alignment: .trailing).lineLimit(1)
+                                        .help(model.path(peer))
                                 }
                             }.buttonStyle(MenuRowStyle())
                                 .background(selected == peer.nodeId ? Color.accentColor.opacity(0.12) : .clear, in: .rect(cornerRadius: 6))

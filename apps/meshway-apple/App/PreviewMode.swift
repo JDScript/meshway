@@ -65,7 +65,11 @@ enum PreviewMode {
         window.isReleasedWhenClosed = false
         if panel { window.isOpaque = false; window.backgroundColor = .clear }
         window.title = title
-        window.contentViewController = NSHostingController(rootView: view)
+        window.titleVisibility = .hidden
+        let host = NSHostingController(rootView: view)
+        host.sizingOptions = []
+        window.contentViewController = host
+        window.setContentSize(size)
         return window
     }
     @MainActor private static func snapshot(_ window: NSWindow, to url: URL) async throws {

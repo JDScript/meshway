@@ -24,6 +24,7 @@ struct MeshwayApp: App {
                 .task { model.startPolling() }
         }
         .defaultSize(width: 820, height: 520)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             #if DEBUG
             CommandMenu("Debug") {

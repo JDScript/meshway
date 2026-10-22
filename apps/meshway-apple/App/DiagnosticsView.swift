@@ -7,12 +7,12 @@ struct DiagnosticsView: View {
     @State private var checking = false
     var body: some View {
         Form {
-            Section("Network check") {
+            Section("网络诊断") {
                 HStack {
-                    Label("Reachability & NAT", systemImage: "network")
+                    Text("Netcheck")
                     Spacer()
                     ProgressView().controlSize(.small).opacity(checking ? 1 : 0).frame(width: 16)
-                    Button("Run netcheck") {
+                    Button("运行 Netcheck") {
                         checking = true
                         Task { await model.perform(.netcheck); checking = false }
                     }.disabled(model.busy || model.sampleMode)
@@ -21,17 +21,17 @@ struct DiagnosticsView: View {
                 ScrollView {
                     if let report = model.netcheck { netcheckReport(report) }
                     else {
-                        placeholder("network", title: checking ? "Checking your network…" : "See how this Mac reaches your network", subtitle: "Server reachability, UDP and address mappings.", active: checking)
+                        placeholder(checking ? "正在检查网络…" : "尚未运行 Netcheck")
                     }
                 }.frame(height: 174)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.netcheck != nil)
             }
             if !netcheckOnly { Section("Ping") {
                 HStack {
-                    TextField("Node name, IP or domain", text: $model.pingTarget).textFieldStyle(.roundedBorder).onSubmit { model.ping() }
+                    TextField("节点名称、IP 或域名", text: $model.pingTarget).textFieldStyle(.roundedBorder).onSubmit { model.ping() }
                     ProgressView().controlSize(.small).opacity(model.pingRunning ? 1 : 0).frame(width: 16)
                     Button { if model.pingRunning { model.cancelPing() } else { model.ping() } } label: {
-                        Text(model.pingRunning ? "Cancel" : "Ping").frame(width: 44)
+                        Text(model.pingRunning ? "取消" : "Ping").frame(width: 44)
                     }.disabled(!model.pingRunning && (model.sampleMode || model.pingTarget.isEmpty))
                         .help(unavailableHelp(model, fallback: model.pingTarget.isEmpty ? "Enter a name, IP or domain" : "Measure four probes, or cancel the current measurement"))
                 }
@@ -44,20 +44,16 @@ struct DiagnosticsView: View {
                             }
                         }.animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.pingEvents.count)
                     } else {
-                        placeholder("waveform.path.ecg", title: model.pingRunning ? "Preparing measurement…" : "Follow a packet's path", subtitle: "Local routing decision and measured replies appear here.", active: model.pingRunning)
+                        placeholder(model.pingRunning ? "正在准备测量…" : "尚未运行 Ping")
                     }
                 }.frame(height: 136)
             } }
         }.formStyle(.grouped)
     }
 
-    private func placeholder(_ symbol: String, title: String, subtitle: String, active: Bool) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol).font(.title).foregroundStyle(.tertiary)
-                .symbolEffect(.pulse, isActive: active && !reduceMotion)
-            Text(title).foregroundStyle(.secondary)
-            Text(subtitle).font(.caption).foregroundStyle(.tertiary)
-        }.frame(maxWidth: .infinity).frame(height: 152)
+    private func placeholder(_ title: String) -> some View {
+        Text(title).font(.system(size: 12)).foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity).frame(height: 120)
     }
 
     private func netcheckReport(_ report: ClientNetcheck) -> some View {
