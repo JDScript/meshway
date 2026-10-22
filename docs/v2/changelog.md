@@ -10,6 +10,14 @@
 
 验证：见 [S5](/v2/node/validation#s5)；Planck 24 行矩阵通过。
 
+Server 存储迁移（MIG-1，`mig1/storage-migration`）：Server schema 8 → 9（自动迁移，不 reset、不重新接入）；wire、IPC、`compilerVersion` 与 HTTP 契约均不变，Node 与 Server 可按任意顺序普通升级。迁移承诺自本版本起：每个发布版本可从上一发布版本迁移，最低可迁移版本为 schema 8；新库不能由旧版本 Server 打开（拒绝启动、不修改文件）。
+
+- 功能（不变量：普通启动不清库、不猜测修复，迁移后的库与新建库不可区分，任一时刻 `controller.sqlite` 是完整旧库或完整新库；owner：`store::schema::migrate`，唯一读取旧版本形态的代码）：服务启动遇到 schema 8 的库时先证明它与 v8 规范 schema 一致，再在 data-dir 内 staging 文件中按 v9 规范 schema 新建并逐表复制、同一事务完整检查，原子替换后把旧库保留为 `controller.sqlite.v8-<Unix 毫秒>`（最新 3 份）；密文、netmap 与签发钥逐字节复制，serial 与 AUTOINCREMENT 高水位不降。schema 9 唯一的结构变化是只追加的 `schema_migrations` 审计表。见 [Server · 存储迁移](/v2/server#存储迁移)、[Schema 版本与迁移](/v2/storage/database#migration)。
+- 运维：`meshway-server migrate`（只迁移＋启动重编译，不监听）；其他离线命令遇旧库拒绝并提示先迁移；存储持久阻断以退出状态 78 结束，其余失败为 1。`dev.py update server` 在停旧启新之间运行迁移并打印备份路径；`reset server` 仍为显式开发工具。
+- 制度：改 SQL 必须同一提交升 `VERSION`、加不可修改的 `history/v<N>.sql` 快照与迁移级（测试固定快照摘要、版本连续、迁移级声明与快照差异一致）；新 NOT NULL 列必须能由已有数据推出。`meshway-private-storage` 增加硬链接、别名识别、整文件替换与可用空间查询。[持久数据库字段](/v2/storage/database)改为现行表（netmap、规则集、签发钥），移除已退出的 execution 发布／回执／需求表描述。
+
+验证：T1 迁移测试（快照守卫、每表 fixture、链式、中断／磁盘满／验证失败、旧库 WAL）与 App 级迁移后业务读写；现场 dev 库副本（143 MiB）迁移 1.1 s，除新表外 44 张表行数不变、原密码登录、配置原文与 revision 不变、serial 不降，`kill -9` 后重启完成，alpha.20 Server 拒绝新库（私有证据 `.meshway/validation/mig1/`）。
+
 ## v0.1.0-alpha.20
 
 范围：X18 Status 跟踪任务 DNS guard 电平分支修复，以及 daemon lifecycle watch 关闭后分支禁用；契约不变——`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 8 与 HTTP 契约均不变，Node 与 Server 可按任意顺序普通升级（无断网窗口）。

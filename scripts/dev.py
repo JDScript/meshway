@@ -390,6 +390,26 @@ class LocalServices:
         print("server: building locked service and dataset binaries…", flush=True)
         run(["cargo", "build", "--locked", "-p", "meshway-server", "--bin", "meshway-server", "--bin", "ip-datasets"], cwd=self.root, timeout=None, env=env)
 
+    def migrate(self):
+        # The stopped Server's database is brought to this build's schema
+        # before it starts again; the old file stays in the data directory.
+        data = self.root / ".meshway/server"
+        if not (data / "controller.sqlite").exists():
+            return
+        private_tree(data)
+        if self.data_users(data):
+            raise DevError("server: data directory still active before migration")
+        result = run([str(self.root / "target/debug/meshway-server"), "migrate", "--data-dir", str(data)],
+                     cwd=self.root, check=False, timeout=None)
+        log = self.directory / "meshway-server.log"
+        private(log, create=True)
+        with open(log, "a") as handle:
+            handle.write(result.stderr)
+        if result.returncode:
+            kind = "persistent storage block" if result.returncode == 78 else "transient failure"
+            raise DevError(f"server: migration failed ({kind}, exit {result.returncode}); the database is unchanged; inspect private service log")
+        print(result.stdout.strip(), flush=True)
+
     def start(self, service, log_filter=None):
         pane = self.pane(service)
         self.port(service, pane)
@@ -635,6 +655,8 @@ def main(argv=None):
         for service in reversed(selected) if args.action == "stop" else selected:
             if args.action in ("stop", "restart", "update"):
                 local.stop(service)
+            if args.action == "update" and service == "server":
+                local.migrate()
             if args.action in ("start", "restart", "update"):
                 local.start(service, args.log_filter)
             if service == "server" and args.action != "stop":

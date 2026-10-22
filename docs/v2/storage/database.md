@@ -1,10 +1,10 @@
 # 持久数据库字段
 
-Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和历史。下表使用实际 SQL 列名，描述存储职责；它们不是 HTTP DTO，也不提供直接修改数据库的接口。对外字段以[生成契约](/v2/contracts/openapi.json)为准。
+Server 使用 SQLite 保存私有身份、完整配置、netmap 与历史。下表使用实际 SQL 列名，描述存储职责；它们不是 HTTP DTO，也不提供直接修改数据库的接口。对外字段以[生成契约](/v2/contracts/openapi.json)为准。
 
 账户与执行表的 UUID 使用 16-byte BLOB，部分观测／资源表使用规范文本 UUID；时间使用 UTC Unix 毫秒 INTEGER，对外编码为 RFC 3339。秘密原文与完整配置使用认证加密，认证 token 保存摘要。主键、外键和不可逆约束由 schema 共同验证。
 
-当前只接受空库或精确等于当前版本的库；schema 升级迁移与 Server 部署形态的设计（未实现）见[存储迁移与部署形态设计](/v2/storage/migration-design)。
+当前 schema 版本为 9（`PRAGMA user_version`，`application_id` 为 `MSHW`）。运行时只接受空库或与当前版本规范 schema 完全一致的库；较早版本的库在打开前单向迁移，见[Schema 版本与迁移](#migration)。Server 部署形态的设计（未实现）见[存储迁移与部署形态设计](/v2/storage/migration-design)。
 
 ## User
 
@@ -32,6 +32,7 @@ Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和�
 | `created_at`／`expires_at`／`revoked_at` | 签发、绝对到期、单会话撤销 |
 | `last_used_at` | 可空实际使用时间，不等于用户交互时间 |
 | `client_label` | 可空安全客户端摘要，不参与认证 |
+| `delegation_client` | 可空：经[委托授权码](#delegationcode)签发给该客户端的会话，不能管理账户或其他会话 |
 
 认证同时检查账户、版本与期限；会话失效也终止相应 SSE 和诊断订阅。
 
@@ -51,7 +52,7 @@ Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和�
 | `creation_request_id`／`creation_request_digest` | 建网幂等键与原请求绑定 |
 | `deleted_at` | 可空内部生命周期标记，不代表公开网络删除 API |
 | `current_revision` | 当前期望配置，不是全网 applied |
-| `publication_sequence` | 本网络执行发布的单调上界 |
+| `publication_sequence` | 保留列，恒为 0（已退出的执行发布序号，不再读取） |
 
 网络、Owner membership 和初始配置同事务创建。地址池唯一来自配置，不在 Network 保存可写副本。
 
@@ -81,7 +82,7 @@ Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和�
 
 `nodes` 保存 `id`、`network_id`、`registered_at`、`credentials_revoked_at`。它不保存 owner、subject、tags、enabled、hostname、地址或运行状态副本。
 
-有效身份与静态设置从当前配置读取，运行事实从 State 读取。永久删除同事务吊销接入、移除配置、记录地址退出并撤回执行；最小记录保留以拒绝旧凭据和历史恢复。
+有效身份与静态设置从当前配置读取，运行事实从 State 读取。永久删除同事务吊销接入、移除配置、记录地址退出并撤回其 netmap；最小记录保留以拒绝旧凭据和历史恢复。
 
 ## AddressRetirement
 
@@ -125,11 +126,11 @@ control 固定 Ed25519，dataplane 固定 X25519；公钥唯一，用途与代�
 | `created_by`／`created_by_email` | 提交用户 ID 与可空历史邮箱快照 |
 | `created_at`／`cause`／`request_id` | 时间、触发来源与请求关联 |
 | `rollback_from` | 可空恢复来源；本行仍是新 revision |
-| `execution_targets` | 本次 apply 固定 NodeId → ConfigurationRef，按实际切片填入并封存 |
+| `execution_targets` | 本次 apply 固定 NodeId → NetmapRef（该版本编译出的各节点 netmap），提交时填入并封存 |
 
 完整历史不可覆盖。原文和规范值都可能含秘密，必须同样保护。读取旧版本不重新运行当前默认补全；Node identity、enabled、地址和协议参数没有另一份可编辑源。
 
-execution_targets 不随后续 demand／refresh 扩大分母；删除节点不列为等待其 ACK 的目标。进度根据这些引用读取真实回执，并另算 freshness。
+execution_targets 不随后续重编译或规则集刷新扩大分母；删除节点不列为等待其回执的目标。应用进度根据这些引用读取真实 `netmap_receipts`，并另算 freshness。
 
 ### ConfigurationBindings
 
@@ -142,7 +143,7 @@ execution_targets 不随后续 demand／refresh 扩大分母；删除节点不�
 
 UserBinding 包含 userId 和 membershipId。策略 users 与设备 nodeUsers 分开：旧关系 M1 失效后，新接入设备建立 M2 不会重新激活旧策略引用。原样保存保留旧绑定，历史恢复检查原 membership，不将同邮箱新主体当成原主体。
 
-listener 同名重建使用新创建 revision；socket 另有运行 generation。协议材料直接保存在 configuration，规则集刷新固定到新 publication，不改写源历史。
+listener 同名重建使用新创建 revision；socket 另有运行 generation。协议材料直接保存在 configuration；规则集刷新写入 `rule_set_bindings`，不改写源历史。
 
 ### ConfigurationCommit
 
@@ -156,11 +157,22 @@ listener 同名重建使用新创建 revision；socket 另有运行 generation�
 
 ## DatasetArtifact
 
-`dataset_artifacts` 保存 id、可空 network_id、kind、source、format、data、digest、created_at。kind 为 ruleSet／geoip／asn；规范化内容经过完整校验后不可变保存，原始下载为有界临时输入。
+`dataset_artifacts` 保存 id、可空 network_id、kind、source、format、data、digest、created_at。kind 为 geoip／asn（规则集不在此表，见 [RuleSet](#ruleset)）；内容经过完整校验后不可变保存，原始导入为有界临时输入。
 
 资源引用精确 ArtifactId，不能重新下载最新 URL 冒充历史内容。来源与摘要不包含凭据。
 
 `ip_dataset_heads` 以 kind 为主键，保存 GeoIP／ASN 的当前 artifact_id；与导入同事务更新。引用必须对应同 kind 的全局 MMDB artifact；缺失或错误 head 阻断完整性检查，不在启动时猜测修复。
+
+## RuleSet {#ruleset}
+
+| 表 | 字段与用途 |
+| --- | --- |
+| `rule_set_artifacts` | digest、data、created_at；全局 `MWRS` 内容寻址（digest 为 data 的 SHA-256），各网络共享、不可修改；没有可恢复配置版本、也没有仍在租约内的 netmap 引用时连同记录回收 |
+| `rule_set_records` | source、digest、record、created_at；某来源（远程 URL＋格式，或目录集合）首次产生该 artifact 的来源与转换报告，不可修改 |
+| `rule_set_record_heads` | source、digest、record、updated_at；该来源最近一次成功准备得到该 digest 的记录（目录 sequence、上游、held 与报告），刷新得到同一 digest 时替换 |
+| `rule_set_catalogs` | catalog、trust、sequence、verified_at、document、signature；每个签名目录在一组信任钥下已接受的最高 sequence 及验证过的 `index.json`／`index.json.sig` 原文；sequence 不可下降，更低的目录不再使用 |
+| `rule_set_catalog_checks` | catalog、trust、problem、checked_at、failures；Server 对每个生效目录的最近一次获取，决定下次获取与退避；失败保留已接受目录 |
+| `rule_set_bindings` | network_id、revision、bindings、bound_at；某配置版本初始绑定被刷新后的当前 ruleSet key → digest；不存在时用版本自身的 bindings |
 
 ### RuleSetCheck
 
@@ -168,7 +180,7 @@ listener 同名重建使用新创建 revision；socket 另有运行 generation�
 
 `rule_set_refreshes` 以 network_id、user_id、request_id 为键，保存手动刷新命名的 rule_set_key 和 created_at；用于刷新的请求 ID 幂等，写入时清理超过 24 小时的行。
 
-检查记录拥有刷新结果与退避，不拥有当前内容；实际 artifact 绑定来自配置／执行发布。失败保留最后成功内容和成功时间，validate 不保存检查结果。
+检查记录拥有刷新结果与退避，不拥有当前内容；实际 artifact 绑定来自配置版本的 bindings 与 `rule_set_bindings`。失败保留最后成功内容和成功时间，validate 不保存检查结果。
 
 ## EnrollmentRequest {#enrollmentrequest}
 
@@ -194,42 +206,30 @@ listener 同名重建使用新创建 revision；socket 另有运行 generation�
 
 tags 是本次接入输入，注册后当前身份只来自 Configuration。模板支持 hostname 与 listeners；自动材料在真实注册时生成。消费重检签发资格与当前配置，列表仅返回安全摘要。
 
-## ExecutionPublication
-
-`execution_publications`：
-
-| 字段 | 含义 |
-| --- | --- |
-| `id`／`network_id`／`sequence` | 不可变发布 ID、网络及单调顺序 |
-| `revision`／`cause` | 源配置与 configuration／demand／refresh 来源 |
-| `supersedes` | 更早的被替代发布 |
-| `rule_set_bindings` | 本次精确 artifact map |
-| `dependency_digest` | 可信编译输入摘要 |
-| `payload` | 加密完整发布内容，包含实际节点切片 |
-| `created_at`／`withdrawn_at` | 创建与可空撤回时间 |
-
-同 revision 的新发布可改变动态依赖，不覆盖原 publication ID 下的内容。重启还原确切绑定；历史恢复使用源初始绑定或明确的同源历史发布，不猜用最新数据。
-
-### ExecutionReceipt
-
-`execution_receipts` 保存 network_id、publication_id、node_id、instance_id、generation、attempt、sequence、digest、phase、reported_at、received_at、failure。
-
-主键固定网络／发布／节点／实例／attempt／sequence。phase 为 saved／applied／failed，failure 为明确组件类别或 null。applied 须有同次尝试更早的 saved；重复位置必须同内容。历史回执不等于当前 freshness 或连通。
-
 ## NodeExecution
 
-`node_execution` 保存 network_id、node_id、instance_id、generation、boot_id、instance_expires_at、target_publication_id、execution_expires_at、capabilities。
+`node_execution` 保存 network_id、node_id、instance_id、generation、boot_id、instance_expires_at、capabilities：当前实例、其期限与已认证 acquire 声明的能力。实例期限与 State 联系新鲜度分开；普通 State 不自行替换能力。`node_instance_claims` 保存 network_id、node_id、instance_id、generation，拒绝释放／过期后的实例 ID 重新认领。
 
-实例期限、执行期限与 State 联系新鲜度分开。capabilities 来自已认证 acquire；普通 State 不自行替换执行能力。`node_instance_claims` 保存 network_id、node_id、instance_id、generation，拒绝释放／过期后的实例 ID 重新认领。
+### RoutingSelection
 
-### Demand 与 RoutingSelection
+`routing_selections` 保存 network_id、node_id、identity_digest、profile、version、selected_at：节点或用户提交的持久方案选择。只有 identity_digest 与当前身份一致时适用；version 跨身份单调递增。清除后行保留、profile 为空串（方案名不能为空）且不适用，以保持版本单调。身份摘要不赋权；实际方案由 NodeState 报告。
+
+## Netmap
+
+每节点 netmap 由 Server 编译、签名后经 `sync` 交付，见 [Netmap 设计](/v2/node/netmap-design)。
 
 | 表 | 字段与用途 |
 | --- | --- |
-| `execution_demands` | network_id、node_id、id、instance_id、request_digest、payload、expires_at、cancelled_at；有界业务需求与重试绑定 |
-| `routing_selections` | network_id、node_id、identity_digest、profile、version、selected_at；节点或用户提交的持久方案选择。只有 identity_digest 与当前身份一致时适用；version 跨身份单调递增。清除后行保留、profile 为空串（方案名不能为空）且不适用，以保持版本单调 |
+| `node_netmaps` | network_id、node_id、serial、revision、digest、dependency_digest、payload、created_at、withdrawn_at；加密的 netmap 内容，只保留当前与上一份（delta 基准）。内容不可修改，serial 只增；撤回的当前行保留 serial 高水位，节点回来时不会看到 serial 回退 |
+| `node_netmap_history` | network_id、node_id、serial、revision、digest；每个曾签发 serial 的紧凑不可变引用，比内容行保留更久，回执历史不钉住旧内容 |
+| `node_netmap_inputs` | network_id、node_id、digest；该节点当前 netmap 的编译输入指纹（含 Server 构建身份），启动重编译据此判断是否需要新 serial |
+| `node_netmap_artifacts` | network_id、node_id、serial、digest、superseded_at；每个 serial 引用的规则集 artifact。节点可取回仍可能在租约内的自身 netmap 引用的 digest；被替代超过最长租约的行删除 |
+| `netmap_receipts` | network_id、node_id、serial、instance_id、generation、attempt、sequence、phase、reported_at、received_at、failure；节点对确切 netmap 的保存／安装结果，按实例、attempt、sequence 排序，不可修改。phase 为 saved／applied／failed，failure 为明确组件类别或 null；回执只对节点当前 netmap 与存活实例是当前证据 |
+| `node_netmap_unavailable` | network_id、node_id、reason、since；非配置触发的重编译中超出上限而被排除的节点，在之后重编译重新满足上限前没有 netmap |
 
-身份摘要不赋权，需求不绕过 access。重启恢复方案仍检查当前条件；实际方案由 NodeState 报告。
+### ServerSigningKey
+
+`server_signing_keys` 保存 id、purpose（`netmap`）、generation、public_key、private_key、created_at、retired_at。私钥以主密钥密封并绑定 (id, generation)；恰好一把当前钥（retired_at 为空），其余为轮换窗口内或已退休的旧钥，永久保留、不可修改或删除。轮换见 [Server · Netmap 签发钥轮换](/v2/server#netmap-签发钥轮换)。
 
 ## ActivityEvent
 
@@ -245,7 +245,7 @@ tags 是本次接入输入，注册后当前身份只来自 Configuration。模�
 | `before_revision`／`after_revision`／`request_id` | 配置变更与请求关联 |
 | `previous_email` | 仅 account.email 允许非空：修改前的地址快照 |
 
-记录与对应成功动作同事务提交；幂等恢复不重复插入。不包含秘密、完整 diff 或原始请求 body。Node 应用结果在 execution_receipts，不能改写“配置已保存”的活动事实。HTTP 范围见[版本与操作历史](/v2/api/history)。
+记录与对应成功动作同事务提交；幂等恢复不重复插入。不包含秘密、完整 diff 或原始请求 body。Node 应用结果在 netmap_receipts，不能改写“配置已保存”的活动事实。HTTP 范围见[版本与操作历史](/v2/api/history)。
 
 ## ObservationEvent
 
@@ -259,21 +259,36 @@ tags 是本次接入输入，注册后当前身份只来自 Configuration。模�
 
 collection_gap 则来自 Node 真实事件，保留原始区间和 dropped，不按查询裁剪比例伪造数量。两类覆盖信息与查询权限一起过滤，见[观测历史](/v2/state-reference/observations)。
 
-## DiagnosticTask 与 Subscription
+### ObservationSubscriberId
 
-| 表 | 字段与用途 |
-| --- | --- |
-| `diagnostic_tasks` | id、network_id、node_id、instance_id、boot_id、revision、reuse_key、payload、compilation、dirty；固定执行上下文、私有编译判定和共享任务 |
-| `diagnostic_subscriptions` | id、task_id、principal_kind、request_digest、expires_at、cancelled；每个需求的独立权限与短租约 |
-
-`user_session` 主体绑定 session_id／membership_id；`node_instance` 主体绑定 node_network_id、node_id、control_key_id、instance_id、instance_generation、boot_id 和原 request_payload。两类字段互斥，主体与原请求绑定不可更新，Node 不能借共享 task 操作用户订阅。
-
-compilation 区分授权拒绝、能力不足与可执行结果，绑定实际 Source ConfigurationRef 和认证 inventory；它是私有编译判定，不是额外执行许可。Node 只收到当前正式 DiagnosticPermit。
-
-会话、账户、membership、Node key／instance 或配置失效在对应事务取消订阅。维护器撤回诊断发布；已安装许可另受本地短期限约束，Node 普通 renew 不能续活观察。
+`observation_subscriber_ids` 只保存已消费的观察订阅者 ID（不可修改、不删除）：它是跨进程重启的幂等墓碑，不是持久化的任务、许可或授权缓存。观察任务与订阅只在内存中，见[内存字段](/v2/storage/memory)。
 
 ## MasterKeyBinding
 
 `master_key_binding` 保存 singleton、key_id、key_check，绑定私有主密钥且不可修改／删除。私有密钥文件先持久发布，再与数据库绑定提交；丢失密钥不能生成替代来解密原库。
 
 SQL 行包含私有字段，不能整体作为 Console DTO。完整配置、永久吊销与有效恢复依据不随内存缓存或短期任务清理。
+
+## DelegationCode {#delegationcode}
+
+`delegation_codes` 保存 code_hash、user_id、session_id、client、redirect_uri、code_challenge、created_at、expires_at、consumed_at：已登录用户为委托客户端签发的一次性授权码（只存摘要），PKCE challenge 绑定兑换；兑换要求签发会话仍有效。所得会话在 `user_sessions.delegation_client` 标明客户端，不能管理账户或其他会话。
+
+## Schema 版本与迁移 {#migration}
+
+`schema_migrations` 每次完成的迁移一行，保存 sequence、from_version、to_version、build（执行迁移的构建身份）、started_at、finished_at、backup（保留的旧库文件名）；与迁移结果同一事务提交，不可修改或删除。
+
+运行时只认当前形态：业务代码与读取路径没有旧版本分支。较早版本的库在打开前由 `store::schema::migrate` 单向迁移，服务启动与 `meshway-server migrate` 共用这一份实现（运维行为见 [Server · 存储迁移](/v2/server#存储迁移)）：
+
+1. 读取 (application_id, user_version)：当前版本或空库直接进入正常打开；非 `MSHW`、比本构建新、早于最低可迁移版本（当前为 8）为持久阻断，不修改文件；离线命令遇到可迁移的旧库拒绝。
+2. 以 `history/v<旧版本>.sql` 对旧库做与正常打开相同的完整检查（规范 SQL 原文、`integrity_check`、`foreign_key_check`、主密钥绑定／challenge 时钟／IP 数据集 head 不变量）；不符为持久阻断。
+3. 旧库 checkpoint 并切换为 DELETE 日志模式，不留下可能被重放到新文件上的 WAL。
+4. 每级在 data-dir 内 owner-only 的 `controller.sqlite.migrating.v<N>` 中执行版本 N 的规范 schema，只读 `ATTACH` 上一级文件，按外键拓扑序、主键升序 `INSERT … SELECT` 复制每张表（触发器与外键对每行重新生效）；schema 自带的种子行（challenge 时钟）取旧值；`sqlite_sequence` 高水位不下降；每表行数与内容和源表相同；同一事务内以版本 N 的完整检查验证结果后提交。
+5. 旧库文件加第二个名字 `controller.sqlite.v<旧版本>-<Unix 毫秒>` 作为备份，再把 staging 原子 `rename` 为 `controller.sqlite`；备份保留最新 3 份。中断在两步之间时，下一次启动移除多出的名字并重新迁移。
+
+密文逐字节复制（认证加密的 AAD 只绑定领域与业务键，不含表名与版本），迁移不需要主密钥；netmap 内容、netmap 历史与签发钥从不解密或改写。编译产物的变化由启动重编译负责，不由迁移改写。
+
+修改 schema 的规则：
+
+- 任何 SQL 改动在同一提交中提升 `VERSION`、新增快照 `history/v<VERSION>.sql`（等于当前 SQL 拼接）与迁移级 `migrate/v<VERSION>.rs`。快照提交后不可修改，测试固定每个快照的 SHA-256、要求当前 SQL 等于最新快照、版本连续且每级都有迁移；并行分支同时升号在同一文件名上冲突。
+- 迁移级只声明偏离默认复制的部分：新表、删除的表、列有变化的表（以读取 `old.*` 的 SQL 填充）；未声明的差异使迁移失败，测试要求声明与两份快照的实际差异一致。
+- 新增 NOT NULL 列必须能由已有行推出（迁移级以 SQL 写出它的值）；无法由已有数据推出的事实不加 NOT NULL 列，改用可空列或独立表。CHECK 收窄同理：已有行必须满足新约束，否则该级先给出明确的变换。
