@@ -358,3 +358,108 @@ async fn a_new_flow_goes_through_the_relay_while_the_direct_circuit_has_no_chann
     drop(init);
     f.close().await;
 }
+
+/// R4: A roamed while both its direct and its relayed circuit to B are
+/// established; the direct channel is gone and the new one not authenticated
+/// yet (no carrier). The old direct flow fills B's bounded first-packet queue.
+/// A new 5-tuple still goes through R at once, never into that full queue; a
+/// packet reusing an earlier flow's 5-tuple is that earlier flow and waits
+/// with it on the direct circuit (beyond the bound it is dropped).
+#[tokio::test]
+async fn a_new_tuple_takes_the_established_relay_while_the_old_flow_fills_the_queue() {
+    use meshway_dataplane::secure::Received;
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    // Only R carries first: a relayed circuit for one flow.
+    let relay_flow =
+        |f: &NetmapMesh| super::packet::udp(f.address(0), f.address(2), 50002, 42424, b"relay");
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(relay_flow(&f)).unwrap() else {
+        panic!("the relayed path starts at once")
+    };
+    assert_eq!(init.next(), r);
+    let relayed = f.finish_handshake(init).await;
+    let Ok(Flushed::Send(job)) = f.a.flush(32).remove(0) else {
+        panic!("queued packet")
+    };
+    delivered(&mut f, sealed(job));
+    // Then the direct channel: the next new flow opens the direct circuit.
+    let direct = meshway_dataplane::secure::Carrier {
+        dialer: a,
+        listener: b,
+        listener_key: "tcp".into(),
+        protocol: meshway_model::TransportProtocol::NativeTcp,
+    };
+    f.a.set_carriers(BTreeMap::from([
+        (r, f.ar.carrier.clone()),
+        (b, direct.clone()),
+    ]))
+    .unwrap();
+    f.b.set_carriers(BTreeMap::from([
+        (r, f.rb.carrier.clone()),
+        (a, direct.clone()),
+    ]))
+    .unwrap();
+    let mut ab = super::support::secure::Link::connect(
+        tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        direct.clone(),
+    )
+    .await;
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(f.mesh_udp(false, 42424)).unwrap()
+    else {
+        panic!("the direct path starts at once")
+    };
+    assert_eq!(init.next(), b);
+    let circuit = init.circuit();
+    ab.dial.send(init).await;
+    let first = ab.listen.recv().await;
+    let Received::Established {
+        response: Some(second),
+        ..
+    } = f.b.receive(&direct, first).unwrap()
+    else {
+        panic!("terminal handshake")
+    };
+    ab.listen.send(second).await;
+    let second = ab.dial.recv().await;
+    f.a.receive(&direct, second).unwrap();
+    let Ok(Flushed::Send(job)) = f.a.flush(32).remove(0) else {
+        panic!("queued packet")
+    };
+    assert_eq!(job.circuit(), circuit);
+    drop(job);
+    // A roamed: no carrier to B while its new channel is acquired.
+    f.a.set_carriers(BTreeMap::from([(r, f.ar.carrier.clone())]))
+        .unwrap();
+    // The old direct flow keeps its circuit; its packets fill the queue.
+    for _ in 0..40 {
+        assert!(matches!(
+            f.a.outbound(f.mesh_udp(false, 42424)).unwrap(),
+            Outbound::AwaitingAdjacency
+        ));
+    }
+    // A new 5-tuple joins the established relayed circuit at once.
+    let packet = super::packet::udp(f.address(0), f.address(2), 50003, 42424, b"new flow");
+    let Outbound::Send(job) = f.a.outbound(packet).unwrap() else {
+        panic!("a new flow goes through R, not into B's full queue")
+    };
+    assert_eq!(job.circuit(), relayed);
+    delivered(&mut f, sealed(job));
+    // The relayed circuit's own flow continues there too.
+    let Outbound::Send(job) = f.a.outbound(relay_flow(&f)).unwrap() else {
+        panic!("the relayed flow keeps its circuit")
+    };
+    assert_eq!(job.circuit(), relayed);
+    drop(job);
+    // Back on a carrier, the direct circuit releases only the queue's bound
+    // (32) of the old flow's packets.
+    f.a.set_carriers(BTreeMap::from([(r, f.ar.carrier.clone()), (b, direct)]))
+        .unwrap();
+    let released = f.a.flush(64);
+    assert_eq!(released.len(), 32);
+    assert!(
+        released
+            .iter()
+            .all(|output| matches!(output, Ok(Flushed::Send(job)) if job.circuit() == circuit))
+    );
+    f.close().await;
+}
