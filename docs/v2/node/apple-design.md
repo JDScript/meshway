@@ -121,18 +121,37 @@ SwiftUI 菜单栏面板与主窗口已接入类型化客户端（macOS 26、Swif
 
 | 界面 | 行为 |
 | --- | --- |
-| 连接 | 开关读 `desiredUp`，阶段读 `phase`；macOS VPN 状态独立显示。Connect 先启动既有 VPN manager，读取 revision 后提交 `Up`。Disconnect 提交 `Down`，等 Status 为 down 后停止 tunnel |
+| 状态岛 | 316 pt 菜单面板顶部与主窗口工具栏共用 `StatusIsland`：状态点、单行状态、可复制 Mesh IPv4 与连接开关。错误为琥珀色单行原因；点按打开 popover，完整保留独立的 Control／网络错误，不撑开布局。原始 Node／macOS VPN 状态在 popover 与设置中分别显示 |
+| 连接 | 开关读 `desiredUp`，不以操作提交成功推断已连接。Connect 先启动既有 VPN manager，读取 revision 后提交 `Up`。Disconnect 提交 `Down`，等 Status 为 down 后停止 tunnel |
 | 接入 | 首次输入 Server URL（extension 启动参数），支持高级 enrollment key；不保存该密钥。`awaitingApproval` 的 `enrollmentUrl` 用浏览器打开一次，并提供重新打开按钮；没有 URL 时显示联系 Server 运维的提示。既有 VPN 的 Server 不提供切网入口 |
-| 本节点 | 已安装节点名称、Mesh IPv4／IPv6、netmap 租约、sync、dataPlane、`lastError` 与独立的 `networkError`；时间相对显示，悬停给出绝对时间 |
-| Peers | 搜索名称／地址／Node ID，显示实际 state／transport／endpoint／via、idlePath、已测 RTT；详情与复制。没有测量的 RTT 不填零，idle 不显示为已建立直连 |
-| 出口方案 | netmap 中的生效／请求／默认方案、锁定、auto 与允许方案摘要；`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示，生效仍等本机 netmap 与 applied |
-| 诊断与身份 | Netcheck、四次 ping 的流式本地判定／测量、取消 ping、RotateKey、带永久注销说明的 Logout 确认；身份操作先读 revision，不绕过 CAS |
+| 菜单面板 | Liquid Glass 外壳内使用系统式紧凑行，悬停高亮；出口勾选列表、设备列表、打开 Meshway／设置／退出。设备超过五台折叠，展开后最多十行高并滚动；点设备复制 IPv4，缺失时复制 IPv6。没有地址时禁用并说明原因 |
+| 主窗口 | 无侧栏，工具栏左侧状态岛、右侧胶囊分段「设备／出口／诊断」。设备表搜索名称／地址／Node ID，行内为状态点、名称、等宽地址与路径／RTT。选中时详情从右侧进入；固定 210 pt 详情列保持表列位置稳定，未选中时该列为空 |
+| Peers | 直连为绿点、中继为靛蓝点、空闲为灰点、离线为淡灰点、不可达为琥珀点；右侧显示 RTT、经哪个节点或空闲。详情为地址、路径与承载、延迟、Ping。没有测量的 RTT 不填零，idle 不显示为已建立直连；完整 endpoint／via 可在行的 help 中读取 |
+| 出口方案 | 面板与主窗口共用勾选列表；仅本机 netmap 与 applied 一致时显示勾选。右侧出口名称来自方案规则／fallback 引用的出口列表，不代表当前某条流的实测出口。`SelectProfile`／`ClearProfile` 的 Server 提交结果只显示等待提示；请求／默认／锁定／auto 详情移到设置 |
+| 设置 | 标准 SwiftUI `Settings` scene，⌘, 打开。通用放图标；账户与本机放名称、IPv4／IPv6、Server、换钥与注销确认；详细信息放租约、sync、上次同步、dataPlane、网络变化、key generation、NE／VPN、netmap 与完整错误；诊断放 Netcheck。相对时间每秒更新，悬停给出绝对时间 |
+| 诊断与身份 | 主窗口诊断页有 Netcheck 与四次 ping 的流式本地判定／测量及取消；结果区固定高度并滚动。设置复用 Netcheck。RotateKey、带永久注销说明的 Logout 确认移至设置；身份操作先读 revision，不绕过 CAS |
 | 系统引导 | 读取 extension 属性与 VPN preferences，显示未安装／待批准／未启用／缺少配置；沿用 TunnelController 显式激活与创建 VPN。lab 命令与 Debug 菜单独立于正式主路径 |
-| 应用图标 | This Mac → Application icon 提供 Ink／Frost／Indigo／Graphite 四种缩略图，未接入时也可使用；默认 Frost（方案 2，浅色磨砂＋青绿）。选择提示占用固定空间，动画尊重减少动态效果 |
+| 应用图标 | 设置 → 通用 → 应用图标提供 Ink／Frost／Indigo／Graphite 四种缩略图，未接入时也可使用；默认 Frost（方案 2，浅色磨砂＋青绿）。选择提示占用固定空间，动画尊重减少动态效果 |
+
+状态岛只做呈现投影，优先显示已报告的操作／IPC／Node／网络／VPN preferences 错误；否则按以下顺序映射。NE 连接成功本身不等于 Node 已运行。
+
+| 来源 | 呈现 |
+| --- | --- |
+| 已报告错误，或 Node `blocked`／`retrying` | 出错；popover 保留原始阶段、原因与独立错误 |
+| Node `awaitingApproval`，或 extension 明确要求批准 | 需要批准 |
+| Node `running` | 已连接 |
+| Node `starting`／`synchronizing`／`controlReady` | 连接中 |
+| Node `down`／`stopping`／`leaving` | 已断开／正在断开／正在注销 |
+| 无 Node 快照，NE `connecting`／`reasserting`／`connected` | 连接中；不声称 Node 已运行 |
+| 无 Node 快照，NE `disconnecting` | 正在断开 |
+| 无 Node 快照，NE `disconnected`／`invalid` | 已断开 |
+| Node 与 NE 均未检查或未知 | 状态未知 |
+
+开关状态文字使用 `numericText` 过渡，状态点颜色渐变；分段内容滑移、设备详情右侧进入、列表增删淡入，复制反馈短暂变色／勾号后复原。自定义动效均遵从 `accessibilityReduceMotion`；没有持续装饰性动画。连接开关、方案选择与身份操作沿用 Status 就绪条件及在途禁用，禁用原因放在 help。
 
 App target 的 `Assets.xcassets/AppIcon.appiconset` 提供完整 macOS 16／32／128／256／512 pt 的 1×／2×默认图标；四份处理后母版作为 `AppIconChoice-*` 普通图片资源打包。`IconPreferences` 以 `UserDefaults` 保存本机偏好，启动及选择时通过 `NSApplication.shared.applicationIconImage` 更新运行中的 Dock 图标。Finder／Launchpad 保持默认 Frost，选择器明确说明这一限制；不调用 `NSWorkspace.setIcon`，不修改已签名 App bundle。源图处理与全套资源由 `apps/meshway-apple/scripts/generate-icons.py` 生成：清除圆角外残留、保留比例，图块最大 824×824 居中于 1024×1024 透明画布，不增加外阴影。
 
-`--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；窗口与面板明确标注 SAMPLE DATA，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section device` 显示图标选择器，预览中的选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览。`--model-tests` 使用同一组桥接样例检查 Swift 呈现模型。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
+`--preview unenrolled|approval|running|error --snapshot-dir DIR` 只存在于 Debug 构建，使用 Rust codec 生成的样例 Status，经同一客户端解码后驱动正式视图；主窗口、面板和设置窗口都有小型 SAMPLE 角标，不轮询 XPC、不打开批准页、不创建 VPN 或激活 extension。`--preview-section peers|exit|diagnostics` 选择主窗口页面，`--preview-selected` 展开第一台设备详情，`--preview-settings general|account|details|diagnostics` 选择设置页面；预览中的图标选择仅存内存，不修改 Dock 或真实偏好；`--dark` 切换深色预览。`--model-tests` 检查同一组桥接样例、Node／NE 状态岛映射、缺测与就绪条件。现有 running 样例含三台设备，没有 Netcheck／Ping 测量结果；截图不伪造更多设备或测量。截图仅供人工视觉检查，不能代替真实 Node 操作与包流验收。
 
 ## 复用白名单 {#reuse}
 

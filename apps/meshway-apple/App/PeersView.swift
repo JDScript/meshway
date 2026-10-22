@@ -58,11 +58,14 @@ struct DevicesView: View {
                                 }
                             }.buttonStyle(MenuRowStyle())
                                 .background(selected == peer.nodeId ? Color.accentColor.opacity(0.12) : .clear, in: .rect(cornerRadius: 6))
+                                .accessibilityAddTraits(selected == peer.nodeId ? .isSelected : [])
                                 .contextMenu { PeerCopyActions(peer: peer) }.transition(.opacity)
                         }
                     }.padding(4)
                 }.scrollIndicators(.hidden)
-                if model.peers.isEmpty { Text(model.search.isEmpty ? "暂无可见设备" : "没有匹配的设备").foregroundStyle(.secondary).padding(20) }
+                    .overlay {
+                        if model.peers.isEmpty { Text(model.search.isEmpty ? "暂无可见设备" : "没有匹配的设备").foregroundStyle(.secondary) }
+                    }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background.opacity(0.45), in: .rect(cornerRadius: 16))
             // A stable column keeps addresses and rows still as selection changes.
@@ -193,7 +196,7 @@ struct ProfileRows: View {
                             .opacity(profile.name == selection.appliedProfile && model.netmapApplied ? 1 : 0)
                         Text(profile.name).lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(profile.exits.isEmpty ? "" : "经 " + profile.exits.map(model.name).joined(separator: "、"))
+                        Text(exitNames(profile))
                             .font(.system(size: 11)).opacity(0.55).lineLimit(1)
                     }
                 }.buttonStyle(MenuRowStyle())
@@ -213,5 +216,11 @@ struct ProfileRows: View {
             }
         }.font(.system(size: 13))
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: selection.appliedProfile)
+    }
+    private func exitNames(_ profile: ClientProfile) -> String {
+        guard !profile.exits.isEmpty else { return "" }
+        let names = profile.exits.compactMap { id in model.status?.peers.first { $0.nodeId == id }?.node.hostname }
+        guard names.count == profile.exits.count else { return "出口名称未报告" }
+        return "经 " + names.joined(separator: "、")
     }
 }

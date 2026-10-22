@@ -26,7 +26,7 @@ enum IslandState: Equatable {
         }
     }
     static func resolve(phase: ClientPhase?, vpn: NEVPNStatus?, hasError: Bool, approvalRequired: Bool) -> Self {
-        if hasError { return .error }
+        if hasError || phase == .blocked || phase == .retrying { return .error }
         if phase == .awaitingApproval || approvalRequired { return .approval }
         if let phase {
             switch phase {

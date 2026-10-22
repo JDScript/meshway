@@ -54,6 +54,7 @@ enum ModelTests {
                 precondition(IslandState.resolve(phase: nil, vpn: nil, hasError: false, approvalRequired: false) == .unknown)
                 precondition(IslandState.resolve(phase: nil, vpn: .disconnected, hasError: false, approvalRequired: true) == .approval)
                 precondition(IslandState.resolve(phase: .running, vpn: .connected, hasError: true, approvalRequired: false) == .error)
+                precondition(IslandState.resolve(phase: .blocked, vpn: .connected, hasError: false, approvalRequired: true) == .error)
                 precondition(IslandState.resolve(phase: .stopping, vpn: .connected, hasError: false, approvalRequired: false) == .stopping)
                 precondition(IslandState.resolve(phase: .leaving, vpn: .connected, hasError: false, approvalRequired: false) == .leaving)
                 print("PASS Swift model: codec fixtures, search, idle/relay paths, missing RTT, selection, approval, independent errors")
