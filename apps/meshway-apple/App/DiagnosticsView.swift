@@ -29,8 +29,9 @@ struct DiagnosticsView: View {
                 HStack {
                     TextField("Node name, IP or domain", text: $model.pingTarget).textFieldStyle(.roundedBorder).onSubmit { model.ping() }
                     ProgressView().controlSize(.small).opacity(model.pingRunning ? 1 : 0).frame(width: 16)
-                    Button(model.pingRunning ? "Cancel" : "Ping") { if model.pingRunning { model.cancelPing() } else { model.ping() } }
-                        .frame(width: 64).disabled(!model.pingRunning && (model.sampleMode || model.pingTarget.isEmpty))
+                    Button { if model.pingRunning { model.cancelPing() } else { model.ping() } } label: {
+                        Text(model.pingRunning ? "Cancel" : "Ping").frame(width: 44)
+                    }.disabled(!model.pingRunning && (model.sampleMode || model.pingTarget.isEmpty))
                         .help(unavailableHelp(model, fallback: model.pingTarget.isEmpty ? "Enter a name, IP or domain" : "Measure four probes, or cancel the current measurement"))
                 }
                 ScrollView {

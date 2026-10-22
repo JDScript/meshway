@@ -18,11 +18,12 @@ struct PeerRow: View {
                 PathBadge(peer: peer)
                 Text(peer.rtt.map { milliseconds($0.durationUs) } ?? "Not measured").font(.caption).foregroundStyle(.secondary).contentTransition(.numericText())
                     .help(peer.rtt.map { "Measured " + $0.observedAt.formatted() } ?? "No successful RTT measurement")
-            }
+            }.frame(width: 100, alignment: .trailing)
             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
         }.padding(.horizontal, 10).frame(height: 78).contentShape(Rectangle())
             .background(hovered ? Color.primary.opacity(0.045) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
             .onHover { hovered = $0 }.animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: peer.rtt?.durationUs)
     }
 }
 
@@ -30,7 +31,7 @@ struct PathBadge: View {
     let peer: ClientPeer
     private var title: String { peer.state == .idle || peer.state == .relayIdle ? "Idle" : human(peer.state) }
     var body: some View {
-        Text(title).font(.system(size: 10, weight: .medium)).padding(.horizontal, 7).padding(.vertical, 3)
+        Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1).padding(.horizontal, 7).padding(.vertical, 3)
             .foregroundStyle(peer.state == .direct ? Color.green : Color.secondary)
             .background((peer.state == .direct ? Color.green : Color.secondary).opacity(0.09), in: Capsule())
             .help(peer.state == .idle || peer.state == .relayIdle ? "Idle path; no established channel" : title)
@@ -61,11 +62,12 @@ struct CompactPeerRow: View {
                     PathBadge(peer: peer)
                     Text(peer.rtt.map { milliseconds($0.durationUs) } ?? "—").font(.system(size: 10)).foregroundStyle(.secondary)
                         .contentTransition(.numericText()).frame(width: 63, alignment: .trailing)
-                }
+                }.frame(width: 63, alignment: .trailing)
             }.padding(.horizontal, 7).frame(height: 54).contentShape(Rectangle())
                 .background(hovered ? Color.primary.opacity(0.06) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).disabled(address == nil)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: copied)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: peer.rtt?.durationUs)
             .onHover { hovered = $0 }.animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
             .help(copied ? "Address copied" : "Click to copy address · \(model.path(peer)) · \(peer.rtt.map { "RTT measured " + $0.observedAt.formatted() } ?? "RTT not measured")")
             .task(id: copyID) {

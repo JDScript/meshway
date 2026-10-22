@@ -76,7 +76,7 @@ struct FeedbackShelf: View {
         Button { expanded = true } label: {
             HStack(spacing: 8) {
                 Image(systemName: messages.isEmpty ? "info.circle" : "exclamationmark.circle")
-                Text(messages.first ?? (model.busy ? "Working…" : "Status from this Mac"))
+                Text(messages.first ?? (model.busy ? "Working…" : (model.sampleMode ? "Preview · actions disabled" : "macOS VPN · \(model.vpnLabel)")))
                     .lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
                 Text(messages.count > 1 ? "+\(messages.count - 1)" : "").font(.caption2).frame(width: 16)
                 Image(systemName: "chevron.up").font(.caption2).opacity(messages.isEmpty ? 0 : 1)
@@ -136,17 +136,18 @@ struct CopyButton: View {
 struct AddressRow: View {
     let title: String
     let value: String?
+    var missing = "Not assigned"
     var body: some View {
         LabeledContent(title) {
             HStack(spacing: 8) {
-                Text(value ?? "Not assigned").font(value == nil ? .callout : .callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(value ?? missing).font(value == nil ? .callout : .callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                 if let value { CopyButton(value: value, title: "Copy \(title)") }
                 else { Color.clear.frame(width: 18, height: 18) }
             }
         }
     }
 }
-func unavailableHelp(_ model: AppModel, fallback: String) -> String {
+@MainActor func unavailableHelp(_ model: AppModel, fallback: String) -> String {
     if model.sampleMode { return "Sample preview — system-changing actions are disabled" }
     if model.busy { return "Waiting for the current operation to finish" }
     return fallback

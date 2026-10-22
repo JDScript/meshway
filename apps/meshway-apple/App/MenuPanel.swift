@@ -18,6 +18,7 @@ struct MenuPanel: View {
                     .font(model.status?.node == nil ? .caption : .caption.monospaced()).foregroundStyle(.secondary)
                 Spacer()
                 if let address = model.status?.node?.ipv4 ?? model.status?.node?.ipv6 { CopyButton(value: address) }
+                else { Color.clear.frame(width: 18, height: 18) }
             }.frame(height: 24)
             Divider().padding(.vertical, 10)
             HStack {
@@ -80,11 +81,8 @@ struct ProfileMenu: View {
             Button("Use default · \(selection.defaultProfile)") { Task { await model.perform(.clearProfile) } }
                 .disabled(!model.canRequestSelection || model.busy || model.sampleMode || selection.requestedProfile == nil)
         } label: {
-            HStack(spacing: 4) {
-                Text(selection.appliedProfile).lineLimit(1)
-                if !model.netmapApplied { Image(systemName: "clock").help("Netmap selection is not yet applied") }
-            }
-        }.menuStyle(.borderlessButton).fixedSize()
+            Text(selection.appliedProfile + (model.netmapApplied ? "" : " · pending")).lineLimit(1)
+        }.menuStyle(.borderlessButton).frame(maxWidth: 130, alignment: .trailing)
             .help(unavailableHelp(model, fallback: selection.locked ? "Profile selection is locked by your administrator" : "Select an exit profile"))
     }
 }

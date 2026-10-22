@@ -65,10 +65,10 @@ struct MainView: View {
                 }.animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: page)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: needsEnrollment)
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { FeedbackShelf(model: model) }
-            .navigationTitle(needsEnrollment ? "Welcome to Meshway" : (page ?? .overview).title)
+            .safeAreaInset(edge: .bottom, spacing: 0) { FeedbackShelf(model: model).background(.bar) }
+            .navigationTitle(needsEnrollment ? "Meshway" : (page ?? .overview).title)
             .toolbar {
-                ToolbarItem {
+                ToolbarItem(placement: .primaryAction) {
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                         .disabled(model.busy || model.sampleMode)
                         .help(unavailableHelp(model, fallback: "Read the latest Node status"))
@@ -108,8 +108,8 @@ struct MainView: View {
             Section { ConnectionHeader(model: model, compact: false).padding(.vertical, 8) }
             Section("Network") {
                 LabeledContent("Server", value: model.status?.server ?? model.server)
-                AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4)
-                AddressRow(title: "Mesh IPv6", value: model.status?.node?.ipv6)
+                AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
+                AddressRow(title: "Mesh IPv6", value: model.status?.node?.ipv6, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
                 LabeledContent("macOS VPN", value: model.vpnLabel)
             }
             Section("Connection health") {
@@ -121,7 +121,7 @@ struct MainView: View {
             }
             Section {
                 Button { page = .exit } label: {
-                    HStack { Label("Exit profile", systemImage: "arrow.up.forward.circle"); Spacer(); Text(model.selection?.appliedProfile ?? "Unavailable").foregroundStyle(.secondary); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
+                    HStack { Label("Exit profile", systemImage: "arrow.up.forward.circle"); Spacer(); Text(model.selection.map { $0.appliedProfile + (model.netmapApplied ? "" : " · pending") } ?? "Unavailable").foregroundStyle(.secondary); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
                 }.buttonStyle(.plain)
                 Button { page = .peers } label: {
                     HStack { Label("Peers", systemImage: "desktopcomputer"); Spacer(); Text(model.status.map { String($0.peers.count) } ?? "Unavailable").foregroundStyle(.secondary).contentTransition(.numericText()); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
@@ -155,8 +155,8 @@ struct MainView: View {
         Form {
             Section("This Mac") {
                 LabeledContent("Name", value: model.status?.node?.hostname ?? "Not installed")
-                AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4)
-                AddressRow(title: "Mesh IPv6", value: model.status?.node?.ipv6)
+                AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
+                AddressRow(title: "Mesh IPv6", value: model.status?.node?.ipv6, missing: model.status?.node == nil ? "Not installed" : "Not assigned")
                 LabeledContent("Key generation", value: model.status?.identity.map { String($0.keyGeneration) } ?? "No identity")
                 LabeledContent("Data plane observed") { OptionalTime(date: model.status?.observedAt) }
                 LabeledContent("Network changed") { OptionalTime(date: model.status?.lastNetworkChange) }
@@ -223,12 +223,14 @@ struct EnrollmentView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Server URL").font(.callout.weight(.medium))
                         TextField("https://mesh.example", text: $model.server).textFieldStyle(.roundedBorder).controlSize(.large)
+                            .accessibilityLabel("Server URL")
                             .disabled(model.tunnel.hasConfiguration || model.status != nil)
                             .onSubmit { if !disabled { Task { await model.connect(true) } } }
                             .help("Use the Server origin supplied by your administrator")
                         DisclosureGroup("Advanced enrollment", isExpanded: $advanced) {
                             SecureField("Enrollment key (optional)", text: $model.enrollmentKey).textFieldStyle(.roundedBorder).padding(.top, 8)
                         }.font(.callout).frame(height: 62, alignment: .top)
+                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: advanced)
                         Button { Task { await model.connect(true) } } label: {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small).opacity(model.busy ? 1 : 0).frame(width: 16)
@@ -239,8 +241,9 @@ struct EnrollmentView: View {
                             .help(unavailableHelp(model, fallback: model.server.isEmpty ? "Enter your Server URL first" : "Connect and open browser approval"))
                         Button("Enable Network Extension…") { model.tunnel.activate() }.buttonStyle(.link).disabled(model.sampleMode)
                             .help(unavailableHelp(model, fallback: "Approve Meshway in System Settings when prompted"))
-                        Text(model.sampleMode ? "macOS will ask you to approve the extension and VPN." : model.tunnel.extensionState)
+                        Text(model.sampleMode ? "macOS will ask you to approve the extension and VPN." : "\(model.tunnel.extensionState) · \(model.tunnel.message)")
                             .font(.caption).foregroundStyle(.secondary).lineLimit(2).frame(height: 30, alignment: .topLeading)
+                            .help(model.tunnel.message)
                     }.transition(.opacity)
                 }
             }.frame(width: 340, height: 252, alignment: .top)

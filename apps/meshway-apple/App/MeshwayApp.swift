@@ -21,7 +21,7 @@ struct MeshwayApp: App {
                 .frame(minWidth: 720, minHeight: 620)
                 .task { model.startPolling() }
         }
-        .defaultSize(width: 860, height: 740)
+        .defaultSize(width: 900, height: 720)
         .commands {
             #if DEBUG
             CommandMenu("Debug") {
