@@ -53,6 +53,7 @@ pub(super) struct Packets {
     traced_circuits: BTreeMap<[u8; 32], Instant>,
     pub dropped: u64,
     carrier_wait_logged: Option<Instant>,
+    held_logged: Option<Instant>,
     scan_remaining: usize,
     sends:
         meshway_dataplane::carrier::SendPending<(Result<(), meshway_connectivity::Error>, usize)>,
@@ -158,6 +159,44 @@ impl Packets {
             .collect::<String>();
         tracing::debug!(target: TARGET, %cid, ?target, %path_json, observed_at_ms,
             "Mesh circuit packet ready");
+    }
+    /// At most once a second while local packets wait after a turn (in this
+    /// queue, as first packets inside SecureNode, or unread in the TUN):
+    /// where they wait.
+    fn trace_held(
+        &mut self,
+        secure: &SecureNode,
+        pool: &secure::pipeline::Pool,
+        incoming_done: usize,
+        local_done: usize,
+    ) {
+        let first = secure.first_packets_waiting();
+        let can_read = self.can_read(pool);
+        if (self.local.is_empty() && first == 0 && can_read)
+            || self
+                .held_logged
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.held_logged = Some(Instant::now());
+        let oldest_local_ms = self.local.front().map(|item| {
+            u64::try_from((item.deadline - RETENTION).elapsed().as_millis()).unwrap_or(u64::MAX)
+        });
+        tracing::debug!(
+            local = self.local.len(),
+            oldest_local_ms,
+            first_waiting = first,
+            can_read,
+            incoming = self.incoming.len(),
+            control = self.control.len(),
+            local_done,
+            incoming_done,
+            pool_available = pool.available(),
+            sends = self.sends.occupancy().0,
+            deliveries = self.deliveries.occupancy().0,
+            "Local packets held after a turn"
+        );
     }
     pub fn wake_at(&self) -> Option<Instant> {
         let now = Instant::now();
@@ -692,6 +731,7 @@ impl Packets {
         if let Some(exit) = exit {
             exit.drive(secure);
         }
+        self.trace_held(secure, pool, incoming_done, local_done);
         self.scan_remaining = self
             .scan_remaining
             .saturating_sub(incoming_done + local_done)
