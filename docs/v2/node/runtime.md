@@ -210,7 +210,7 @@ owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2
 
 **重证**（`Host::recover`，只在暂态阻断后、到 `Host::recovery_at` 时由网络 worker 调用）：第一次先结束旧一期——停止其任务（monitor、网络分类、控制中继及其连接、受保护 socket），join egress capture 与出口 owner（出口清理不在此重试，留给新一期的 journal 恢复），关闭 Mesh TUN，落盘 journal；然后按进程启动的同一路径（`Kernel::open_term`）打开新一期：出口与 egress journal 恢复到负向边界、base journal 与内核现状精确对账、DNS 锚点校验。读取或变更再次失败（netlink／I/O）保持暂态，按退避再试，同一失败只记一次 WARN `Kernel ownership re-proof unavailable; retrying`；读到与 journal 不符（外来规则、私有表中的路由、不可恢复的 journal）改为持久冲突，WARN `Kernel ownership re-proof read back a conflict; ownership stays ended until restart`。成功时 INFO `Kernel ownership proved again; the Host owns a new term`（`check`、`attempts`、`elapsed_ms`）：新一期沿用同一 journal（同一 installation、mark、table）、同一控制中继 origin 与 UDS 路径（已有 HTTP client 照常连接）以及 Host 发布的观察通道（网络变化、`changePending`、`cleanupPending`）；网络 worker 停止 DNS owner（其锚点与 socket 属于旧一期，系统 DNS 安装保留，与重启相同）后以同一 offer 重装（`Kernel ownership recovered; reinstalling the netmap`，安装完成时另有一条 `Required packet plane component recovered; netmap reinstalled`，见[日志](/v2/logging#事件与字段)），DNS owner 在新一期上重新准备。未知的存储（journal 处于中断变更、版本不符）与重启时一样 fail closed，不因重证放宽。
 
-阻断期间 Status 为 `lastError: underlay`，`lastErrorDetail` 为 `kernelOwnership: unavailable (<check>); proving ownership again` 或 `kernelOwnership: conflict (<check>); stays failed closed until restart`。lab 复现与时间见[验收 · X13](/v2/node/validation#x13-reproof)。
+阻断期间 Status 为 `lastError: underlay`，`lastErrorDetail` 为 `kernelOwnership: unavailable (<check>); proving ownership again` 或 `kernelOwnership: conflict (<check>); stays failed closed until restart`。lab 复现与时间见[验收 · X13](/v2/node/validation#x13-reproof)。各 owner 失败分类、重证与 Status 投影的盘点及收敛为一个共享框架的设计（尚未实现）见[恢复状态机收敛设计](/v2/node/recovery-design)。
 
 IPC 13 的公开运行状态（`meshway status --json` 原样输出）：
 
