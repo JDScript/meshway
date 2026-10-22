@@ -77,7 +77,7 @@ async fn restarted_terminal_ends_the_relay_circuit_and_its_close_reaches_the_ori
 #[tokio::test]
 async fn a_restarted_terminal_lets_a_handshaking_origin_retry_through_the_relay_at_once() {
     let mut f = NetmapMesh::start().await;
-    let [a, r, b] = f.ids();
+    let [a, _, b] = f.ids();
     assert!(
         f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [1; 16])]))
             .is_empty()
