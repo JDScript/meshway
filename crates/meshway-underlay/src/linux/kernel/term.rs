@@ -22,7 +22,9 @@ impl Kernel {
         // between discovery and the monitor's start.
         let (connection, handle) = rtnl::connect()?;
         let conflict = CancellationToken::new();
-        let ending = Arc::new(super::super::protection::Ending::default());
+        let ending = Arc::new(super::super::protection::Ending::new(
+            published.ownership.clone(),
+        ));
         // Set once this term opened; a connection that ends before (a failed
         // open dropping its handles) or after its Kernel is dropped is no end.
         let term = Arc::new(std::sync::OnceLock::<std::sync::Weak<()>>::new());
@@ -158,6 +160,7 @@ impl Kernel {
             mut network,
             changes,
             cleanups,
+            ownership: _,
         } = published;
         network.routes = Some(observer.clone());
         let shared = Arc::new(Shared {

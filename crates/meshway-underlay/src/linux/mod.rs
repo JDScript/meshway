@@ -135,28 +135,17 @@ pub struct Host {
     _owner: HostOwner,
 }
 
-/// The first re-proof of an unavailable end, and the longest wait between two.
-const REPROOF: std::time::Duration = std::time::Duration::from_secs(1);
-const REPROOF_MAX: std::time::Duration = std::time::Duration::from_secs(8);
-
-/// Re-proofs of the ended term's ownership so far.
+/// Re-proofs of the ended term's ownership so far; when they are due is the
+/// ownership recovery's (`protection::Ownership`).
 #[derive(Default)]
 struct Reproof {
     /// The ended term's owners are joined and its tasks stopped.
     closed: bool,
     attempts: u32,
-    last: Option<std::time::Instant>,
+    /// When the current attempt started: the next one is due from there.
+    started: Option<std::time::Instant>,
     /// The last failure, logged once while it repeats.
     failure: Option<String>,
-}
-
-impl Reproof {
-    /// When the next attempt is due after an unavailable end at `ended`.
-    fn due(&self, ended: std::time::Instant) -> std::time::Instant {
-        self.last.unwrap_or(ended)
-            + meshway_model::Backoff::new(REPROOF, REPROOF_MAX)
-                .delay(self.attempts.saturating_add(1))
-    }
 }
 
 impl Host {
@@ -310,10 +299,17 @@ impl Host {
     /// When [`Self::recover`] is due: only after an unavailable end, 1 s
     /// after it, then doubling to at most 8 s between attempts.
     pub fn recovery_at(&self) -> Option<std::time::Instant> {
-        match self.kernel.shared.ended()? {
-            (crate::OwnershipEnd::Unavailable { .. }, ended) => Some(self.reproof.due(ended)),
-            (crate::OwnershipEnd::Conflict { .. }, _) => None,
+        self.kernel.shared.ended()?;
+        match self.kernel.shared.ending.ownership.health() {
+            meshway_model::recovery::Health::Retrying(retrying) => Some(retrying.retry_at),
+            _ => None,
         }
+    }
+
+    /// Kernel ownership's health, live across terms: retrying while an
+    /// unavailable end is re-proved, blocked on a proven conflict.
+    pub fn ownership(&self) -> tokio::sync::watch::Receiver<meshway_model::recovery::Health> {
+        self.kernel.shared.ending.ownership.subscribe()
     }
 
     /// Prove kernel ownership again after an unavailable end. The ended
@@ -341,7 +337,7 @@ impl Host {
             self.reproof.closed = true;
         }
         self.reproof.attempts = self.reproof.attempts.saturating_add(1);
-        self.reproof.last = Some(std::time::Instant::now());
+        self.reproof.started = Some(std::time::Instant::now());
         let tasks = Tasks::new(self.options.max_sockets * 4 + 32);
         let opened = async {
             let kernel = Kernel::open_term(
@@ -379,7 +375,6 @@ impl Host {
             });
             self.reproof = Reproof {
                 attempts,
-                last: Some(std::time::Instant::now()),
                 ..Reproof::default()
             };
             return Err(error);
@@ -394,6 +389,10 @@ impl Host {
             "Kernel ownership proved again; the Host owns a new term"
         );
         self.reproof = Reproof::default();
+        self.kernel.shared.ending.ownership.observe(
+            meshway_model::recovery::Observation::Holds,
+            std::time::Instant::now(),
+        );
         Ok(())
     }
 
@@ -418,7 +417,15 @@ impl Host {
             }
             self.reproof.failure = Some(failure);
         }
-        if !transient {
+        if transient {
+            // Unavailable again: the next re-proof waits longer.
+            if let Some((cause, _)) = self.kernel.shared.ended() {
+                self.kernel.shared.ending.ownership.observe(
+                    protection::Ownership::of(cause),
+                    self.reproof.started.unwrap_or_else(std::time::Instant::now),
+                );
+            }
+        } else {
             self.kernel
                 .shared
                 .end(crate::OwnershipEnd::Conflict { check: "reproof" });

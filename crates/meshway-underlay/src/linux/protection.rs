@@ -67,6 +67,74 @@ pub(super) struct Published {
     pub network: super::kernel::network::Network,
     pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
     pub cleanups: tokio::sync::watch::Sender<Option<crate::RetryPending>>,
+    pub ownership: Arc<Ownership>,
+}
+
+/// The first re-proof of an unavailable end, and the longest wait between two.
+const REPROOF: std::time::Duration = std::time::Duration::from_secs(1);
+const REPROOF_MAX: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// The Host's kernel ownership across its terms (owner #1): one recovery,
+/// fed by every end a term records and by every re-proof, and its health,
+/// live. An unavailable end is retried (re-proved) 1 s after it, doubling to
+/// at most 8 s apart, without a total limit; a proven conflict is blocked.
+pub(super) struct Ownership {
+    recovery: Mutex<meshway_model::recovery::Recovery>,
+    health: tokio::sync::watch::Sender<meshway_model::recovery::Health>,
+}
+
+impl Default for Ownership {
+    fn default() -> Self {
+        Self {
+            recovery: Mutex::new(meshway_model::recovery::Recovery::new(
+                meshway_model::recovery::Policy {
+                    backoff: meshway_model::Backoff::new(REPROOF, REPROOF_MAX),
+                    horizon: meshway_model::recovery::Horizon::Unbounded,
+                    reread_blocked: None,
+                },
+            )),
+            health: tokio::sync::watch::channel(Default::default()).0,
+        }
+    }
+}
+
+impl Ownership {
+    /// Judge the end of a term or a re-proof, and publish the outcome.
+    pub fn observe(
+        &self,
+        observation: meshway_model::recovery::Observation,
+        at: std::time::Instant,
+    ) -> meshway_model::recovery::Step {
+        let Ok(mut recovery) = self.recovery.lock() else {
+            return meshway_model::recovery::Step::Block(None);
+        };
+        let step = recovery.observe(observation, at);
+        let health = recovery.health().clone();
+        drop(recovery);
+        self.health.send_if_modified(|current| {
+            let changed = *current != health;
+            *current = health;
+            changed
+        });
+        step
+    }
+    /// The observation of a recorded end.
+    pub fn of(end: crate::OwnershipEnd) -> meshway_model::recovery::Observation {
+        match end {
+            crate::OwnershipEnd::Unavailable { check } => {
+                meshway_model::recovery::Observation::unknown(check, end)
+            }
+            crate::OwnershipEnd::Conflict { check } => {
+                meshway_model::recovery::Observation::proven(check, end)
+            }
+        }
+    }
+    pub fn health(&self) -> meshway_model::recovery::Health {
+        self.health.borrow().clone()
+    }
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<meshway_model::recovery::Health> {
+        self.health.subscribe()
+    }
 }
 
 /// The desired content capture is installed for. `session` ends every data
@@ -128,15 +196,30 @@ impl Resources {
 /// Why and when a term of kernel ownership ended. Created with the term's
 /// token, before [`Shared`], so the term's own netlink connection tasks
 /// record their end too.
-#[derive(Default)]
-pub(super) struct Ending(Mutex<Option<(crate::OwnershipEnd, std::time::Instant)>>);
+pub(super) struct Ending {
+    recorded: Mutex<Option<(crate::OwnershipEnd, std::time::Instant)>>,
+    /// The Host's ownership recovery every recorded end is judged by.
+    pub ownership: Arc<Ownership>,
+}
+
+impl Default for Ending {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
 
 impl Ending {
+    pub fn new(ownership: Arc<Ownership>) -> Self {
+        Self {
+            recorded: Mutex::new(None),
+            ownership,
+        }
+    }
     /// End the term of `conflict` for `cause`. A proven conflict replaces an
     /// earlier unavailable end, never the reverse; a token cancelled without
     /// a recorded cause counts as a conflict.
     pub fn end(&self, conflict: &CancellationToken, cause: crate::OwnershipEnd) {
-        if let Ok(mut ending) = self.0.lock() {
+        if let Ok(mut ending) = self.recorded.lock() {
             let replace = match &*ending {
                 None => true,
                 Some((crate::OwnershipEnd::Unavailable { .. }, _)) => {
@@ -145,13 +228,15 @@ impl Ending {
                 Some((crate::OwnershipEnd::Conflict { .. }, _)) => false,
             };
             if replace {
-                *ending = Some((cause, std::time::Instant::now()));
+                let at = std::time::Instant::now();
+                *ending = Some((cause, at));
+                self.ownership.observe(Ownership::of(cause), at);
             }
         }
         conflict.cancel();
     }
     fn recorded(&self) -> Option<(crate::OwnershipEnd, std::time::Instant)> {
-        self.0.lock().ok().and_then(|ending| *ending)
+        self.recorded.lock().ok().and_then(|ending| *ending)
     }
 }
 
@@ -177,6 +262,7 @@ impl Shared {
             },
             changes: self.changes.clone(),
             cleanups: self.cleanups.clone(),
+            ownership: self.ending.ownership.clone(),
         }
     }
 
@@ -413,7 +499,7 @@ mod tests {
     fn a_stopped_connection_records_an_unavailable_end_a_conflict_replaces() {
         use crate::OwnershipEnd;
         let conflict = CancellationToken::new();
-        let ending = Ending::default();
+        let ending = Ending::new(Default::default());
         ending.end(
             &conflict,
             OwnershipEnd::Unavailable {
@@ -445,6 +531,45 @@ mod tests {
             ending.recorded().map(|(cause, _)| cause),
             Some(OwnershipEnd::Conflict { check: "monitor" })
         );
+    }
+
+    /// RC-1 M2: the ends a term records and the Host's re-proofs are one
+    /// ownership recovery: an unavailable end is due 1 s after it, each
+    /// failed re-proof doubles that from its start (at most 8 s), a proven
+    /// conflict blocks, and a re-proof that holds ends it.
+    #[test]
+    fn recorded_ends_and_reproofs_are_one_ownership_recovery() {
+        use crate::OwnershipEnd;
+        use meshway_model::recovery::{Health, Observation, Step};
+        let second = std::time::Duration::from_secs(1);
+        let ownership = Arc::new(Ownership::default());
+        let mut health = ownership.subscribe();
+        let conflict = CancellationToken::new();
+        let ending = Ending::new(ownership.clone());
+        let cause = OwnershipEnd::Unavailable {
+            check: "monitor_unavailable",
+        };
+        ending.end(&conflict, cause);
+        assert!(health.has_changed().unwrap());
+        let Health::Retrying(retrying) = health.borrow_and_update().clone() else {
+            panic!("an unavailable end is retried");
+        };
+        assert_eq!(retrying.check, "monitor_unavailable");
+        assert_eq!(retrying.retry_at - retrying.since, second);
+        let mut started = retrying.since + second;
+        let mut waits = Vec::new();
+        for _ in 0..4 {
+            let Step::RetryAt(at) = ownership.observe(Ownership::of(cause), started) else {
+                panic!("still unavailable");
+            };
+            waits.push((at - started).as_secs());
+            started = at;
+        }
+        assert_eq!(waits, [2, 4, 8, 8]);
+        ending.end(&conflict, OwnershipEnd::Conflict { check: "monitor" });
+        assert!(health.borrow_and_update().is_blocked());
+        ownership.observe(Observation::Holds, started);
+        assert!(health.borrow_and_update().is_healthy());
     }
 
     #[test]
