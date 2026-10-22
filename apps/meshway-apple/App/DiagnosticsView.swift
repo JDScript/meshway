@@ -129,7 +129,7 @@ struct DiagnosticsView: View {
                                 actionDisabled: model.busy || model.sampleMode || checking,
                                 actionHelp: unavailableHelp(model, fallback: "开始网络检查"))
             }
-        }.frame(height: 170).padding(14).frame(maxWidth: .infinity)
+        }.frame(height: netcheckOnly ? 250 : 170).padding(14).frame(maxWidth: .infinity)
             .background(.background.opacity(0.5), in: .rect(cornerRadius: 18))
             .overlay(alignment: .topTrailing) { if checking { ProgressView().controlSize(.small).padding(20) } }
     }
