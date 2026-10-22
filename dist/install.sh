@@ -125,6 +125,13 @@ esac
 
 daemon_active() { systemctl is-active --quiet meshwayd.service; }
 server_active() { systemctl is-active --quiet $SERVER_UNIT; }
+# Holds or may take the storage lock: also while starting or restarting.
+server_running() {
+	case $(systemctl is-active $SERVER_UNIT 2>/dev/null) in
+	active | activating | deactivating | reloading | refreshing) return 0 ;;
+	*) return 1 ;;
+	esac
+}
 
 uninstall() {
 	if daemon_active; then
@@ -336,7 +343,7 @@ server_healthy() { # The listener answers the unauthenticated auth options.
 	case $host in 0.0.0.0) host=127.0.0.1 ;; \[::\]) host='[::1]' ;; esac
 	attempt=0
 	while [ $attempt -lt 10 ]; do
-		if curl -fsS --max-time 3 -o /dev/null "http://$host:$port/api/v1/auth/options"; then return 0; fi
+		if curl -fs --max-time 3 -o /dev/null "http://$host:$port/api/v1/auth/options"; then return 0; fi
 		attempt=$((attempt + 1))
 		sleep 1
 	done
@@ -379,7 +386,6 @@ install_server() {
 		die "meshway-server does not run on this machine (wrong architecture?)"
 	installed=$(head -n 1 "$work/version")
 	range=$(sed -n 's/^schema: \([0-9][0-9]*\) (migrates from \([0-9][0-9]*\))$/\1 \2/p' "$work/version")
-	[ -n "$range" ] || die "$installed does not report its schema range"
 	schema=${range% *}
 	oldest=${range#* }
 
@@ -388,6 +394,7 @@ install_server() {
 	database=$SERVER_DATA_DIR/controller.sqlite
 	from=""
 	if [ -s "$database" ]; then
+		[ -n "$range" ] || die "$installed does not report its schema range; it cannot be checked against $database"
 		application=$(header_u32 "$database" 68) || die "cannot read $database"
 		from=$(header_u32 "$database" 60) || die "cannot read $database"
 		[ "$application" = $SERVER_APPLICATION_ID ] || die "$database is not a Meshway Server database"
@@ -427,7 +434,7 @@ install_server() {
 	upgrade=0
 	[ ! -f "$BIN_DIR/meshway-server" ] || upgrade=1
 	was_active=0
-	! server_active || was_active=1
+	! server_running || was_active=1
 	started=$(date +%s)
 	# The new program must be readable by the service user for the migration.
 	place "$payload/meshway-server" "$BIN_DIR/meshway-server.new" 0755
