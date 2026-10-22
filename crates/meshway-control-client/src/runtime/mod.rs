@@ -50,10 +50,33 @@ impl<P> std::error::Error for ClientError<P> {}
 /// A transport failure keeps only its class. The debug event names that
 /// class and the innermost I/O error kind, never the URL, headers or body.
 fn network<P>(error: &(dyn std::error::Error + 'static), status: Option<u16>) -> ClientError<P> {
+    let (stage, io, os_error, tls) = transport_failure(error);
+    tracing::debug!(stage, io = ?io, os_error, tls, status, "Control HTTP transport failed");
+    ClientError::Network { status }
+}
+
+fn transport_failure(
+    error: &(dyn std::error::Error + 'static),
+) -> (
+    &'static str,
+    Option<std::io::ErrorKind>,
+    Option<i32>,
+    Option<String>,
+) {
     let mut stage = "other";
     let mut io = None;
+    let mut os_error = None;
+    let mut tls = None;
     let mut current = Some(error);
     while let Some(error) = current {
+        // The transparent wrapper's source() skips reqwest itself, which owns
+        // the timeout/connect classification (and the private request URL).
+        if let Some(reqwest_middleware::Error::Reqwest(inner)) =
+            error.downcast_ref::<reqwest_middleware::Error>()
+        {
+            current = Some(inner);
+            continue;
+        }
         if let Some(error) = error.downcast_ref::<reqwest::Error>() {
             stage = if error.is_timeout() {
                 "timeout"
@@ -69,11 +92,31 @@ fn network<P>(error: &(dyn std::error::Error + 'static), status: Option<u16>) ->
         }
         if let Some(error) = error.downcast_ref::<std::io::Error>() {
             io = Some(error.kind());
+            os_error = error.raw_os_error();
+            if let Some(inner) = error.get_ref() {
+                current = Some(inner);
+                continue;
+            }
+        }
+        if let Some(error) = error.downcast_ref::<rustls::Error>() {
+            // Only protocol enums/numbers: General, Other and certificate
+            // verifier errors can hold arbitrary text and are never formatted.
+            tls = Some(match error {
+                rustls::Error::InvalidMessage(value) => format!("invalid_message:{value:?}"),
+                rustls::Error::PeerMisbehaved(value) => format!("peer_misbehaved:{value:?}"),
+                rustls::Error::PeerIncompatible(_) => "peer_incompatible".into(),
+                rustls::Error::AlertReceived(value) => format!("alert:{value:?}"),
+                rustls::Error::DecryptError => "decrypt".into(),
+                rustls::Error::EncryptError => "encrypt".into(),
+                rustls::Error::InvalidCertificate(_) => "invalid_certificate".into(),
+                rustls::Error::PeerSentOversizedRecord => "oversized_record".into(),
+                rustls::Error::NoApplicationProtocol => "no_application_protocol".into(),
+                _ => "other".into(),
+            });
         }
         current = error.source();
     }
-    tracing::debug!(stage, io = ?io, status, "Control HTTP transport failed");
-    ClientError::Network { status }
+    (stage, io, os_error, tls)
 }
 
 /// Start a caller-owned HTTP builder with Meshway's explicit ring provider and
@@ -170,6 +213,10 @@ impl Client {
         match futures_util::future::select(Box::pin(operation), interrupt.interrupted()).await {
             futures_util::future::Either::Left((result, _)) => result,
             futures_util::future::Either::Right(((), _)) => {
+                tracing::debug!(
+                    stage = "host_interrupt",
+                    "Control HTTP transport interrupted"
+                );
                 Err(ClientError::Network { status: None })
             }
         }

@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 reqwest-middleware = "0.5"
+rustls.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
@@ -20,7 +21,6 @@ axum.workspace = true
 meshway-server = { path = "../../apps/meshway-server" }
 meshway-transport = { path = "../meshway-transport" }
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
-rustls.workspace = true
 tokio.workspace = true
 tempfile.workspace = true
 

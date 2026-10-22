@@ -25,6 +25,9 @@ use meshway_protocol::netmap::{SyncRequest, SyncResponse};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// The first sync answer of this process, logged once.
+static FIRST_ANSWER: std::sync::Once = std::sync::Once::new();
+
 /// Default lease validity of every sync response.
 pub const DEFAULT_NETMAP_VALIDITY: Duration = Duration::from_secs(24 * 60 * 60);
 /// Default nominal hold of a sync request without changes.
@@ -427,6 +430,15 @@ impl Netmaps {
         );
         let deadline = started + hold;
         let answered = |response: SyncResponse, reason: &'static str| {
+            // From here a Node may hold a lease of this process: an upgrade
+            // can no longer be rolled back (docs/v2/install.md#server-rollback).
+            FIRST_ANSWER.call_once(|| {
+                tracing::info!(
+                    network_id = %principal.network,
+                    node_id = %principal.node,
+                    "First Node sync answered by this Server process"
+                );
+            });
             records::Records::shared().issued(principal.network, principal.node, response.lease);
             let bound =
                 facts_renewal_until_ms(response.peer_facts.as_ref(), response.lease.issued_at_ms);

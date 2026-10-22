@@ -2144,6 +2144,7 @@ dependencies = [
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-server",
+ "meshway-service",
  "mimalloc",
  "reqwest",
  "rustix",
@@ -2541,6 +2542,7 @@ dependencies = [
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-rules",
+ "meshway-service",
  "meshway-stun",
  "meshway-transport",
  "meshway-transport-stream",
@@ -2562,6 +2564,14 @@ dependencies = [
  "utoipa-axum",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "meshway-service"
+version = "0.1.0-alpha.21"
+dependencies = [
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

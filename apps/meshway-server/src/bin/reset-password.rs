@@ -2,7 +2,7 @@
 //! the running Server must release ownership before this can open storage.
 #![forbid(unsafe_code)]
 use clap::Parser;
-use meshway_server::{App, AppError, Settings};
+use meshway_server::{App, Settings, command::Failure};
 use std::{io::Write, path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -29,18 +29,18 @@ async fn main() -> ExitCode {
     }
     match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            tracing::error!(error = %message, "Password reset command failed");
-            ExitCode::FAILURE
+        Err(failure) => {
+            tracing::error!(error = %failure.message, "Password reset command failed");
+            failure.code
         }
     }
 }
-async fn run(args: Arguments) -> Result<(), String> {
+async fn run(args: Arguments) -> Result<(), Failure> {
     let origin = meshway_server::console_origin(&args.console_origin)
-        .map_err(|error| format!("Invalid Console origin: {error}."))?;
+        .map_err(|error| Failure::from(format!("Invalid Console origin: {error}.")))?;
     let app = App::open(Settings::new(args.data_dir))
         .await
-        .map_err(open_failure)?;
+        .map_err(Failure::open)?;
     let result = async {
         let mut bytes = [0; 16];
         getrandom::fill(&mut bytes).map_err(|_| "Random source unavailable.")?;
@@ -67,15 +67,7 @@ async fn run(args: Arguments) -> Result<(), String> {
         .shutdown()
         .await
         .map_err(|_| "Server storage shutdown failed.".to_owned());
-    result.map_err(str::to_owned).and(shutdown)
-}
-
-/// AppError is a safe category with, at most, schema object names.
-fn open_failure(error: AppError) -> String {
-    match error {
-        AppError::AlreadyRunning => {
-            "Cannot obtain private Server storage ownership. Stop the Server first.".to_owned()
-        }
-        error => format!("Server storage startup failed: {error}."),
-    }
+    result
+        .map_err(Failure::from)
+        .and(shutdown.map_err(Failure::from))
 }

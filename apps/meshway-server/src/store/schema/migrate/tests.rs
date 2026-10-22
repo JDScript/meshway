@@ -644,7 +644,7 @@ pub(crate) fn downgrade_to_v8(path: &Path) {
         .pragma_update(None, "application_id", APPLICATION_ID)
         .unwrap();
     transaction.pragma_update(None, "user_version", 8).unwrap();
-    copy(&transaction, &BACK).unwrap();
+    copy(&transaction, &BACK, &|_| {}).unwrap();
     validate_as(&transaction, 8, history(8).unwrap()).unwrap();
     transaction.commit().unwrap();
     db.execute_batch("DETACH DATABASE old").unwrap();

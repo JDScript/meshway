@@ -6,7 +6,7 @@
 use clap::{Parser, Subcommand};
 use meshway_model::resources::{IpInfo, LookupResult};
 use meshway_server::resources::datasets::IpDatasetKind;
-use meshway_server::{App, AppError, Settings};
+use meshway_server::{App, Settings, command::Failure};
 use std::{io::Write, net::IpAddr, path::PathBuf, process::ExitCode};
 
 /// Datasets larger than this are not real MaxMind databases.
@@ -50,33 +50,23 @@ async fn main() -> ExitCode {
     }
     match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            tracing::error!(error = %message, "IP dataset command failed");
-            ExitCode::FAILURE
+        Err(failure) => {
+            tracing::error!(error = %failure.message, "IP dataset command failed");
+            failure.code
         }
     }
 }
 
-async fn run(arguments: Arguments) -> Result<(), String> {
+async fn run(arguments: Arguments) -> Result<(), Failure> {
     let app = App::open(Settings::new(arguments.data_dir))
         .await
-        .map_err(open_failure)?;
+        .map_err(Failure::open)?;
     let result = execute(&app, arguments.command).await;
     let shutdown = app
         .shutdown()
         .await
         .map_err(|_| "Server storage shutdown failed.".to_owned());
-    result.and(shutdown)
-}
-
-/// AppError is a safe category with, at most, schema object names.
-fn open_failure(error: AppError) -> String {
-    match error {
-        AppError::AlreadyRunning => {
-            "Cannot obtain private Server storage ownership. Stop the Server first.".to_owned()
-        }
-        error => format!("Server storage startup failed: {error}."),
-    }
+    result.and(shutdown).map_err(Failure::from)
 }
 
 async fn execute(app: &App, command: Command) -> Result<(), String> {

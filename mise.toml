@@ -86,6 +86,13 @@ run = [
 description = "Build the Server binary used by local services and SDK tests"
 run = "cargo build -p meshway-server --bin meshway-server --locked"
 
+[tasks."test:server-upgrade"]
+description = "Upgrade the previous release's Server to this build through the real API, with a control-only Node (scripts/ci/server-upgrade.py)"
+run = [
+  "cargo build -p meshway-server -p meshway-daemon -p meshway-cli --bins --locked",
+  "python3 scripts/ci/server-upgrade.py",
+]
+
 [tasks."build:node"]
 description = "Build meshwayd and the meshway local CLI"
 run = "cargo build -p meshway-daemon -p meshway-cli --bins --locked"

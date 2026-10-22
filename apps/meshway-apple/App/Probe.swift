@@ -8,7 +8,7 @@ enum Probe {
             do {
                 let arguments = Array(CommandLine.arguments.drop { $0 != "--probe" }.dropFirst())
                 let action = arguments.first ?? "status"
-                guard ["status", "up", "down", "exit", "ping"].contains(action) else { throw IPCFailure.result }
+                guard ["status", "up", "down", "exit", "ping", "netcheck"].contains(action) else { throw IPCFailure.result }
                 if action == "ping" {
                     // Cancels the stream after five seconds; Rust must observe the disconnect.
                     guard arguments.count == 2 else { throw IPCFailure.result }
@@ -29,6 +29,12 @@ enum Probe {
                 let operation = IPCExchange()
                 guard case .status(let status) = try await operation.run(.status, text: true) else { throw IPCFailure.result }
                 if action == "status" { print(operation.responseText ?? ""); exit(0) }
+                if action == "netcheck" {
+                    let result = try await operation.run(.netcheck, text: true)
+                    print(operation.responseText ?? "")
+                    if case .error = result { exit(1) }
+                    exit(0)
+                }
                 if action == "exit" {
                     guard arguments.count == 2 else { throw IPCFailure.result }
                     let command: ClientCommand = arguments[1] == "--default" ? .clearProfile : .selectProfile(profile: arguments[1])

@@ -58,6 +58,7 @@
 - 不改未知归属的宿主路由／DNS／防火墙／Docker daemon，不用 host network 或 privileged（含构建器）。测试资源隔离并可精确清理。
 - Planck 是共享宿主：同时跑矩阵的工作包至多 2 个，跑前 `docker ps` 确认（push main 会触发 validate 矩阵）；不在 Planck 制造宿主级 RTNL 停顿。
 - 现场部署验收固定采样：六台空闲时 meshwayd 每线程 CPU 与 underlay 直连对照；每个 alpha 发布后现场 soak ≥24 h 再发下一版（紧急修复除外）。
+- 本机 Mac 同时承载 dev Server、lab 三容器与 `meshway-vm`：全量 `mise run check` 与大型构建优先在 Planck 运行，本机只跑相关 crate 测试；soak 期间不在本机并行大型构建或 VM 负载，避免宿主停顿污染现场证据。
 - 大型构建前检查磁盘，低于 50 GiB 先处理已结束且无进程／挂载引用的缓存。`CARGO_INCREMENTAL=0`，相同任务复用指定 target；不同 feature 的可执行测试不并发共用 target。不全量 prune 未知 volumes。
 
 ## 协作

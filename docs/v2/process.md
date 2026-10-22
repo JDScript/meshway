@@ -7,7 +7,7 @@
 | 层 | 内容 | 入口 | 典型耗时 |
 | --- | --- | --- | --- |
 | T1 静态与单测 | fmt／严格 Clippy、workspace 测试、生成契约 drift、SDK 消费者、Console 类型／领域测试／构建、脚本测试、文档检查 | `mise run check` | planck 约 5 分钟；M3 约 15 分钟 |
-| T2 隔离整组 | 真实 TUN、受保护包流、daemon／CLI／出口／netmap 整组（16 行） | `mise run validate:matrix`；远程 `mise run validate:remote` | 16 行在 planck 默认 8 行一批约 13 分钟（全并发约 6.5 分钟，但会挤占共享主机）；短模式单行约 3 分钟 |
+| T2 隔离整组 | 真实 TUN、受保护包流、daemon／CLI／出口／漫游／故障注入／netmap 整组（25 行，见[默认矩阵](/v2/node/validation#matrix)） | `mise run validate:matrix`；远程 `mise run validate:remote` | 25 行在 planck 并行 8 约 18 分钟；短模式单行约 3 分钟 |
 | T3 性能 | L0 circuit、原语、L1 transport、L2–L4 dataplane、常驻 lab L5 | `mise run perf:*`，lab 见[三节点环境](/v2/node/docker-lab) | L0 2 分钟；L3／L4 固定口径约 10 分钟 |
 
 T2 的短模式（`--short`，持续流约 30 秒）只用于诊断与包内门槛，不构成验收；验收状态只由全长运行更新。T3 只在空闲的测量机上运行，宿主有其他构建或测量负载时的样本不作结论。
@@ -29,7 +29,7 @@ T1 的 Rust 行为测试由 `mise run test:rust` 使用 nextest 跨测试二进�
 
 ## 整组验收的使用方式
 
-T2 的每一行都受生产时间常量约束（60 秒 execution lease、续租、退避、125 秒持续流），单行约 8 分钟，不以测试刻度改变生产代码。因此：
+T2 的每一行都受生产时间常量约束（60 秒租约、续租、退避、70 秒持续流），runtime 单行约 5 分钟（`exit/off` 约 13 分钟），不以测试刻度改变生产代码。因此：
 
 - **异步执行，不等待**：整组运行提交到测量机（`validate:remote`）或由 Actions 触发后立即返回，结果经 `--attach`、状态页或 PR 检查送达；任何人／agent 都不在会话里阻塞等待一行跑完。
 - **失败靠证据定位，不靠重跑观察**：每次失败都保留 a／r／b／controller 日志、阶段标记与 pcap；先从证据定位到所属 crate，写进程内复现（虚拟时间或共享 Server fixture 的 Rust 测试，秒级），对着它修复，整组只做最后一次确认。
@@ -54,7 +54,7 @@ v0.1.0 只含 Linux Node 与 Server：一个小团队能自行安装，在真实
 | --- | --- | --- |
 | A 还债 | 已登记缺陷（X16、R4、X17 及 `fault/throttle` 行暴露的问题）；恢复状态机收敛为一个共享框架；[验收范围](/v2/node/validation)改为对外参考格式 | 无未登记的矩阵失败签名；`fault/throttle` 行连续 3 轮全绿 |
 | B 交付件 | Server 存储迁移（schema 升级不 reset、不重新接入）；Server 部署形态（systemd unit、备份、远程升级）；含 compilerVersion 断网窗口的升级演练 | 在现场从上一版本按[安装](/v2/install)文档升级成功 |
-| C 现场 soak | 常驻六台连续 14 天 | 零人工重启；每次 `blocked` 都有已证实的原因；空闲 CPU 每线程 <5% |
+| C 现场 soak | 常驻六台连续 14 天 | 零人工重启；每次 `blocked` 都有已证实的原因；空闲 CPU 每线程 <5%（中继／出口节点按 [P2](/v2/node/validation#remaining-boundaries) 结论定义口径） |
 | D 审阅 | 威胁模型／安全审阅与最终代码审阅（只读，与 C 并行） | 无高危未修 |
 
 ## 分支与证据

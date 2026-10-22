@@ -10,6 +10,8 @@ pub mod state;
 
 pub mod accounts;
 mod app;
+pub mod backup;
+pub mod command;
 pub(crate) mod configuration;
 pub mod connectivity;
 mod cursor;
@@ -27,5 +29,10 @@ pub mod settings;
 mod store;
 mod stun;
 
-pub use app::{App, AppError, Migrated};
+pub use app::{App, AppError, Migrated, PERSISTENT_STORAGE_BLOCK};
 pub use settings::{InvalidConsoleOrigin, Migration, Settings, console_origin};
+
+/// Schema version of the databases this build writes.
+pub const SCHEMA_VERSION: i64 = store::schema::VERSION;
+/// The oldest schema version this build migrates from.
+pub const MIN_MIGRATABLE_SCHEMA: i64 = store::schema::MIN_MIGRATABLE;

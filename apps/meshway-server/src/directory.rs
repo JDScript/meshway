@@ -13,6 +13,7 @@ pub(crate) struct Directory {
 }
 
 const DATABASE: &str = "controller.sqlite";
+pub(crate) const LOCK: &str = "controller.lock";
 /// Prefix of a migration's unpublished staging files (with their SQLite
 /// journals); they are never read, only removed.
 const STAGING: &str = "controller.sqlite.migrating.";
@@ -39,7 +40,7 @@ fn backup_stamp(name: &str) -> Option<(i64, i64)> {
 
 impl Directory {
     pub(crate) fn open(path: &Path) -> Result<Self, DirectoryError> {
-        let private = meshway_private_storage::Directory::open(path, "controller.lock")?;
+        let private = meshway_private_storage::Directory::open(path, LOCK)?;
         // A migration interrupted between naming the old database as a backup
         // and publishing the new one left the old file with a second name; the
         // database is still the old one, and the migration starts again.
@@ -72,6 +73,22 @@ impl Directory {
             .metadata()
             .map_err(|_| DirectoryError::Io)?
             .len())
+    }
+
+    /// Makes the database file and its name durable.
+    pub(crate) fn sync_database(&self) -> Result<(), DirectoryError> {
+        self._database.sync_all().map_err(|_| DirectoryError::Io)?;
+        self.private.sync()
+    }
+
+    /// Removes every file but the lock.
+    pub(crate) fn remove_all(&self) -> Result<(), DirectoryError> {
+        for name in self.private.names()? {
+            if name != LOCK {
+                self.private.remove(&name)?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn available_bytes(&self) -> Result<u64, DirectoryError> {

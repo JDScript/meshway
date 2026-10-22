@@ -24,6 +24,7 @@ meshway-private-storage = { path = "../../crates/meshway-private-storage" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
+meshway-service = { path = "../../crates/meshway-service" }
 meshway-rules = { path = "../../crates/meshway-rules", features = ["catalog"] }
 meshway-transport = { path = "../../crates/meshway-transport" }
 meshway-transport-stream = { path = "../../crates/meshway-transport-stream", features = ["platform-verifier"] }

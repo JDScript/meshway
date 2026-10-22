@@ -135,7 +135,12 @@ fn open(
         .get_or_init(|| {
             let logs: Arc<dyn LogSink> = logs.into();
             meshway_logging::Options {
-                filter: "info".into(),
+                filter: if cfg!(debug_assertions) {
+                    "info,meshway_control_client=debug,meshway_node::runtime::control=debug,meshway_node::runtime::network::reporting=debug,meshway_node::runtime::network::traversal=debug,meshway_connectivity=debug"
+                } else {
+                    "info"
+                }
+                .into(),
                 format: meshway_logging::Format::Json,
             }
             .init_with_writer(move || LogWriter(logs.clone(), Vec::new()), false)

@@ -16,6 +16,7 @@ on:
       - "crates/meshway-private-storage/**"
       - "crates/meshway-logging/**"
       - "crates/meshway-build/**"
+      - "crates/meshway-service/**"
       - "crates/meshway-configuration/**"
       - "crates/meshway-policy/**"
       - "crates/meshway-rules/**"

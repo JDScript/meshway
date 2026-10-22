@@ -1,14 +1,29 @@
 #![forbid(unsafe_code)]
 
-use std::{io::Write, net::SocketAddr, path::PathBuf, process::ExitCode, time::Duration};
+use std::{
+    io::Write, net::SocketAddr, path::PathBuf, process::ExitCode, sync::LazyLock, time::Duration,
+};
 
 use clap::{Parser, Subcommand};
-use meshway_server::{App, AppError, Migration, Settings, http};
+use meshway_server::{App, Migration, Settings, command::Failure, http};
 use tokio::net::TcpListener;
+
+/// `--version`: the build identity, and the schema range an upgrade checks a
+/// data directory against before it stops the running Server.
+static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{}\nschema: {} (migrates from {})\ntarget: {}",
+        meshway_build::identity(),
+        meshway_server::SCHEMA_VERSION,
+        meshway_server::MIN_MIGRATABLE_SCHEMA,
+        meshway_build::TARGET,
+    )
+});
 
 #[derive(Parser)]
 #[command(
     version,
+    long_version = LONG_VERSION.as_str(),
     about = "Meshway Server",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
@@ -80,6 +95,18 @@ enum Command {
     /// Start a netmap signing-key rotation: a new key of the next generation
     /// becomes current, and for the window every sync answer carries it with
     /// an endorsement by the replaced key. Rejected while a window is open.
+    /// Copy the database and the master key into the new private directory
+    /// OUTPUT (0700, files 0600), itself a data directory a Server can be
+    /// started on. Together they are every secret of this Server, its
+    /// netmap signing keys included: protect the copy like the host.
+    Backup {
+        /// Absolute path to this instance's private data directory.
+        #[arg(long, env = "MESHWAY_DATA_DIR")]
+        data_dir: PathBuf,
+        /// Absolute path of the backup directory to create; it must not exist.
+        #[arg(long)]
+        output: PathBuf,
+    },
     RotateNetmapKey {
         /// Absolute path to this instance's private data directory.
         #[arg(long, env = "MESHWAY_DATA_DIR")]
@@ -140,44 +167,16 @@ async fn main() -> ExitCode {
     }
 }
 
-/// `EX_CONFIG`: storage is blocked persistently ([`AppError::is_persistent`]);
-/// a service manager does not restart into the same failure.
-const PERSISTENT_STORAGE_BLOCK: u8 = 78;
-
-struct Failure {
-    message: String,
-    code: ExitCode,
-}
-
-impl From<String> for Failure {
-    fn from(message: String) -> Self {
-        Self {
-            message,
-            code: ExitCode::FAILURE,
-        }
-    }
-}
-
-fn storage_failure(error: AppError) -> Failure {
-    Failure {
-        code: if error.is_persistent() {
-            ExitCode::from(PERSISTENT_STORAGE_BLOCK)
-        } else {
-            ExitCode::FAILURE
-        },
-        message: open_failure(error),
-    }
-}
-
 async fn maintain(command: Command) -> Result<(), Failure> {
     let (data_dir, window) = match command {
         Command::Migrate { data_dir } => return migrate(data_dir).await,
+        Command::Backup { data_dir, output } => return backup(data_dir, output).await,
         Command::RotateNetmapKey { data_dir, window } => (data_dir, window),
     };
     let window = window.unwrap_or(meshway_server::netmap::signing::DEFAULT_ROTATION_WINDOW);
     let app = App::open(Settings::new(data_dir))
         .await
-        .map_err(storage_failure)?;
+        .map_err(Failure::open)?;
     let result = app
         .rotate_netmap_key(window)
         .await
@@ -210,7 +209,7 @@ async fn maintain(command: Command) -> Result<(), Failure> {
 async fn migrate(data_dir: PathBuf) -> Result<(), Failure> {
     let mut settings = Settings::new(data_dir);
     settings.migration = Migration::Automatic;
-    let app = App::open(settings).await.map_err(storage_failure)?;
+    let app = App::open(settings).await.map_err(Failure::open)?;
     let report = match app.migrated() {
         Some(migrated) => format!(
             "Database migrated from schema {} to {} in {} ms; the previous database is kept as {}.",
@@ -228,14 +227,23 @@ async fn migrate(data_dir: PathBuf) -> Result<(), Failure> {
         .map_err(|_| "Status output failed.".to_owned().into())
 }
 
-/// AppError is a safe category with, at most, schema object names.
-fn open_failure(error: AppError) -> String {
-    match error {
-        AppError::AlreadyRunning => {
-            "Cannot obtain private Server storage ownership. Stop the Server first.".to_owned()
-        }
-        error => format!("Server storage startup failed: {error}."),
-    }
+async fn backup(data_dir: PathBuf, output: PathBuf) -> Result<(), Failure> {
+    let backup = meshway_server::backup::backup(data_dir, output)
+        .await
+        .map_err(|error| match error {
+            meshway_server::AppError::BackupOutput => {
+                Failure::from(format!("Backup failed: {error}."))
+            }
+            error => Failure::open(error),
+        })?;
+    writeln!(
+        std::io::stdout().lock(),
+        "Backed up the database (schema {}, {} bytes) and the master key to {}.",
+        backup.schema,
+        backup.database_bytes,
+        backup.output.display(),
+    )
+    .map_err(|_| "Status output failed.".into())
 }
 
 async fn run(arguments: Arguments) -> Result<(), Failure> {
@@ -270,7 +278,7 @@ async fn run(arguments: Arguments) -> Result<(), Failure> {
             return Err("Duplicate STUN server key.".to_owned().into());
         }
     }
-    let app = App::open(settings).await.map_err(storage_failure)?;
+    let app = App::open(settings).await.map_err(Failure::open)?;
     let result = async {
         let listener = TcpListener::bind(arguments.listen)
             .await
@@ -281,6 +289,7 @@ async fn run(arguments: Arguments) -> Result<(), Failure> {
         writeln!(std::io::stdout().lock(), "Listening on {address}")
             .map_err(|_| "Server status output failed.".to_owned())?;
         tracing::info!(%address, version = env!("CARGO_PKG_VERSION"), "Server ready");
+        meshway_service::notify(&format!("READY=1\nSTATUS=Serving on {address}"));
         let (signal_result, received_signal) = tokio::sync::oneshot::channel();
         let stop_streams = app.stream_shutdown();
         let shutdown = async move {
@@ -292,6 +301,7 @@ async fn run(arguments: Arguments) -> Result<(), Failure> {
             #[cfg(not(unix))]
             let signal_failed = tokio::signal::ctrl_c().await.is_err();
             tracing::info!(signal_failed, "Server shutdown requested");
+            meshway_service::notify("STOPPING=1");
             stop_streams();
             let _ = signal_result.send(signal_failed);
         };
