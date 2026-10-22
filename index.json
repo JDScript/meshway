@@ -1,8 +1,329 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T11:47:09.074298+00:00",
+  "updatedAt": "2026-10-22T12:12:52.005220+00:00",
   "runs": [
+    {
+      "id": 39775995948,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "9972830e1c2c5e1b300fa4297f4e4c3764f7ce0f",
+      "message": "docs: remaining boundaries X17, R5 and P2; fixes move their entries to the fixed index; milestone C CPU scope for relay/exit nodes",
+      "createdAt": "2026-10-22T12:08:57Z",
+      "updatedAt": "2026-10-22T12:10:26Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39775995948",
+      "jobs": [
+        {
+          "id": 119815512655,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T12:10:14Z",
+          "completedAt": "2026-10-22T12:10:26Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39775995948/job/119815512655"
+        },
+        {
+          "id": 119815620977,
+          "name": "web",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-22T12:10:26Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39775995948/job/119815620977"
+        },
+        {
+          "id": 119815623084,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T12:10:26Z",
+          "completedAt": "2026-10-22T12:10:26Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39775995948/job/119815623084"
+        },
+        {
+          "id": 119815624246,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T12:10:27Z",
+          "completedAt": "2026-10-22T12:10:26Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39775995948/job/119815624246"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39774180802,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "7397a13b137436f7091372cac625e5d3bfcc31f3",
+      "message": "Merge branch 'mig2/server-deploy'",
+      "createdAt": "2026-10-22T11:54:56Z",
+      "updatedAt": "2026-10-22T12:10:12Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39774180802",
+      "jobs": [
+        {
+          "id": 119808860664,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T11:54:59Z",
+          "completedAt": "2026-10-22T11:55:11Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180802/job/119808860664"
+        },
+        {
+          "id": 119808966037,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T11:55:14Z",
+          "completedAt": "2026-10-22T12:03:56Z",
+          "seconds": 522.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180802/job/119808966037"
+        },
+        {
+          "id": 119808966177,
+          "name": "server-upgrade",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-22T12:07:22Z",
+          "completedAt": "2026-10-22T12:10:11Z",
+          "seconds": 169.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180802/job/119808966177"
+        },
+        {
+          "id": 119808966185,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T12:03:59Z",
+          "completedAt": "2026-10-22T12:07:20Z",
+          "seconds": 201.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180802/job/119808966185"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39774180676,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "7397a13b137436f7091372cac625e5d3bfcc31f3",
+      "message": "Merge branch 'mig2/server-deploy'",
+      "createdAt": "2026-10-22T11:54:56Z",
+      "updatedAt": "2026-10-22T12:01:55Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39774180676",
+      "jobs": [
+        {
+          "id": 119808860065,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T11:54:59Z",
+          "completedAt": "2026-10-22T12:01:54Z",
+          "seconds": 415.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180676/job/119808860065"
+        },
+        {
+          "id": 119808860453,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-22T12:01:55Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180676/job/119808860453"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12423973123,
+          "name": "perf-arm64-39774180676",
+          "bytes": 46395,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180676/artifacts/12423973123",
+          "jobId": 119808860065,
+          "runner": "jp-tyo-arm64",
+          "seconds": 415.0,
+          "state": "ok",
+          "error": null,
+          "reports": [
+            {
+              "reportId": "20261022T115824Z-c7c15843",
+              "kind": "circuit",
+              "revision": "7397a13b137436f7091372cac625e5d3bfcc31f3",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": null,
+              "loadMin": 0.255859375,
+              "loadMax": 1.84619140625,
+              "metrics": [
+                {
+                  "label": "L0 2 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 15.059224,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 2 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 66395.40888761042,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 20.310762,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 49225.71627915186,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 29.952136,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 33384.2270867637,
+                  "samples": 3,
+                  "attempted": 3
+                }
+              ]
+            }
+          ],
+          "matrices": [],
+          "builds": []
+        }
+      ]
+    },
+    {
+      "id": 39774180641,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "7397a13b137436f7091372cac625e5d3bfcc31f3",
+      "message": "Merge branch 'mig2/server-deploy'",
+      "createdAt": "2026-10-22T11:54:56Z",
+      "updatedAt": "2026-10-22T11:54:56Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39774180641",
+      "jobs": [
+        {
+          "id": 119808859539,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T11:54:58Z",
+          "completedAt": "2026-10-22T12:01:54Z",
+          "seconds": 416.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180641/job/119808859539"
+        },
+        {
+          "id": 119808860121,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-22T11:54:57Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180641/job/119808860121"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12423668772,
+          "name": "server-aarch64-unknown-linux-musl-7397a13b137436f7091372cac625e5d3bfcc31f3",
+          "bytes": 17724489,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180641/artifacts/12423668772",
+          "jobId": null,
+          "runner": null,
+          "seconds": null,
+          "state": "ignored",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": []
+        },
+        {
+          "id": 12423389450,
+          "name": "node-aarch64-unknown-linux-musl-7397a13b137436f7091372cac625e5d3bfcc31f3",
+          "bytes": 11020869,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39774180641/artifacts/12423389450",
+          "jobId": 119808859539,
+          "runner": "planck",
+          "seconds": 416.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16958328,
+              "sha256": "fa3326fd7d8b101da78883d066ff76dc4305f2ed16b04e1487dcea07de5ffd43"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1946528,
+              "sha256": "93bd55d4efb7ff5c2222d1f66ff0bf324aeb20ba48a908d11589451e97cc1ee1"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 39772094543,
       "attempt": 1,
