@@ -55,7 +55,7 @@
 | `netmap/expiry` | Native UDP | 越过租约后 fail closed 并恢复 | TUN ≤ 2 秒删除 | `20261022T113200Z-67dbe910` | [租约到期撤回](#lease-expiry-withdrawal) |
 | `netmap/restart` | 本机上报端点 | Server 不可达时空闲重拨与 daemon 重启 | 只用最后已知事实重建 | `20261022T113302Z-da54a466` | [netmap 生命周期行](#netmap-rows) |
 
-**新增行或更新状态**：新行在本表按 `ROWS` 顺序加一行，并在[行定义](#rows)下按同一模板（拓扑、阶段与断言、门槛来源、不覆盖）加一个小节；后续运行只更新本节开头的矩阵 ID 与“报告”列。行暴露的已修问题加到[已修复问题索引](#fixed)，未修的加到[剩余边界](#remaining-boundaries)，真机结论加到[真机证据](#real-hosts)；运行过程写 changelog 与私有证据。
+**新增行或更新状态**：新行在本表按 `ROWS` 顺序加一行，并在[行定义](#rows)下按同一模板（拓扑、阶段与断言、门槛来源、不覆盖）加一个小节；后续运行只更新本节开头的矩阵 ID 与“报告”列。行暴露的已修问题加到[已修复问题索引](#fixed)，未修的加到[剩余边界](#remaining-boundaries)，真机结论加到[真机证据](#real-hosts)；运行过程写 changelog 与私有证据。修复合入的工作包负责把对应的剩余边界条目移到已修复问题索引。
 
 ### 未验收范围 {#not-covered}
 
@@ -250,7 +250,7 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | 漫游（lab） | lax 换 bridge（soft）ping 无中断；断开再接回（hard）sha／nyc 0.11 秒内经挑战跟随新来源，最长中断 ≤ 0.62 秒，channel ID 不变 | R1 `.meshway/validation/r1/lab/`；OPS13 |
 | 漫游（VM） | 加第二地址／改 `src`／恢复三次都分类为 path、每次重新发布 STUN 观测；sha→VM 最长中断 0.31 秒，it7 跟随 NAT 映射往返 | R3 `.meshway/validation/r3/vm/`；OPS14 `.meshway/node-lab/ops14/r3-vm/` |
 | 出口 DNS 与域名出口（lab） | lax 经 Exit nyc via sha 时名称只经 nyc 的 resolved 发往上游，阻断上游时查询失败；`geosite:openai` 只经 nyc 出口；nyc resolved 把 Mesh 地址作 DNS 服务器后 0.5 秒内报 `exitDns: unavailable`、源 SERVFAIL、恢复后再解析 | X5／X5b／X6，`.meshway/node-lab/x5/`、`x6/` |
-| 空闲 CPU | alpha.21 六台 meshwayd 空闲最忙线程：lab 1.0–2.0 %、VM 0.4–0.6 %、Planck 0.4 %、it7 3.8–7.6 %（进程 10.6–11.4 %）；X18 修复后 VM release 空闲 0.56 % | OPS20 `.meshway/node-lab/ops20/cpu-idle*/`；X18 |
+| 空闲 CPU | alpha.21 六台 meshwayd 空闲最忙线程：lab 1.0–2.0 %、VM 0.4–0.6 %、Planck 0.4 %、it7 3.8–7.6 %（进程 10.6–11.4 %，见剩余边界 P2）；X18 修复后 VM release 空闲 0.56 % | OPS20 `.meshway/node-lab/ops20/cpu-idle*/`；X18 |
 | 吞吐 | 常驻 lab 与 Planck 的分层吞吐、出口正向写路径与 WARP 路径限制见[分层性能测量](/v2/node/performance)与 [OrbStack 与 WARP](/v2/install#orbstack-warp) | performance.md |
 | 系统服务 | 整机重启（含 Server 不可达）无需 `up` 恢复 running；resolved 重启 5 秒内、停止再启动 10 秒内恢复 Mesh 解析；Server 安装、升级、回退与备份 | [Linux 安装 · 验收记录](/v2/install#验收记录) |
 
@@ -294,13 +294,14 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | 跟踪 | 症状 | 频率 | 证据 |
 | --- | --- | --- | --- |
 | R4 | `roam/relay`：重新穿透已开始而新直连通道尚未认证时发出的单报文新流没有回复（同时经 R 的中继流正常），`newFlowsThroughR` 失败 | 约每 10 轮一次 | `.meshway/validation/h4/matrix10/`（行 `20261017T090359Z-49e94e80`）；`.meshway/validation/x16/`（`20261022T052624Z-929bea24` hard 格） |
-| 未编号 | `roam/exit` soft 格 `exitReadyAgain`：A 路径变化时在途的 State 报告以网络错误失败、按 5 秒重试，出口能力 6–7 秒才回 `ready`（门槛 5 秒），数据面各项达标 | 近两周两次 | `.meshway/validation/x18/`（`20261019T081744Z-73fe0943`）、`.meshway/validation/x16/` |
+| R5 | `roam/exit` soft 格 `exitReadyAgain`：A 路径变化时在途的 State 报告以网络错误失败、按 5 秒重试，出口能力 6–7 秒才回 `ready`（门槛 5 秒），数据面各项达标 | 近两周两次 | `.meshway/validation/x18/`（`20261019T081744Z-73fe0943`）、`.meshway/validation/x16/`；随 RC-1 M9 修复（未合入 main） |
 | I6-2 | IPv6 出口前缀变化不退役旧流；出口不对外部超限回包合成 packet too big | 未实现（v0.1.0 后，已知限制） | [IPv6 出口设计](/v2/node/ipv6-exit-design) |
 | 未定位 | `exit/off` 第 12 阶段 `A live UDP flow through the exit did not start`：20 个报文 0 回显，E 两次 `Exit forwarding refused by the kernel route decision`；单行复跑通过 | 一次 | `.meshway/validation/f7/`（`20261022T065619Z-34e5d00e`） |
-| 未定位 | `exit/off` 第 16 阶段压力步 iperf3 50 秒未结束；E 角色保持、无内核失败日志 | 三次（含一次同机无其他吞吐阶段） | `.meshway/validation/n6/`（行 `20261018T045847Z-d65d2124`）、`.meshway/validation/p1/`（`20261015T065357Z-b98749cc`） |
+| X17 | `exit/off` 第 16 阶段压力步 iperf3 50 秒未结束；E 角色一直保持、无内核失败日志，抓包在该阶段前已停止 | 两次（N6 第 5 轮同机无其他吞吐阶段；P1 时与另一出口行的吞吐阶段并发） | `.meshway/validation/n6/`（矩阵 `20261018T044655Z-89ef1b80`，行 `20261018T045847Z-d65d2124`）、`.meshway/validation/p1/`（`20261015T065357Z-b98749cc`） |
 | RC-1 G14 | `fault/throttle`：B 限额解除后 0.3–0.6 秒 running，A→B 回显却 5.3–9.5 秒后才恢复（门槛 10 秒）：R 因 B 换 boot 退役 circuit，A 在 B 重装前新发起的 circuit 仍在握手，直到 A 约 10 秒的 `maintain` 才重建 | 每段 | `.meshway/validation/f7/`（行 `20261022T080248Z-8f1ca896` `cpu-short`）；修复在 `rc1/recovery`，未合入 main |
 | RC-1 G15 | `fault/throttle`：限额解除瞬间 worker 先以 offer 重装，随后处理已自行重证的故障边沿，再撤回约 150 ms 并重装（成对、有界，不影响门槛） | 每段 1 次 | 同上；修复在 `rc1/recovery`，未合入 main |
 | OPS14 | 真机漫游 it7→VM 中断 0.61–0.83 秒（5/s ping 丢 2–3 个），高于 0.5 秒预期；sha→VM 与 VM→it7 达标 | 每次地址变化 | `.meshway/node-lab/ops14/r3-vm/` |
+| P2 | it7 空闲时 meshwayd 最忙线程 3.8–7.6 %、进程 10.6–11.4 %，高于 lab（1.0–2.0 %）、VM（0.4–0.6 %）与 Planck（0.4 %）及里程碑 C 的 5 % 门槛。it7 为 2 vCPU，承担四条中继边与出口角色；待查是真实的中继／keepalive 工作还是浪费 | 每次空闲采样 | `.meshway/node-lab/ops20/cpu-idle/`、`cpu-idle-2/` |
 | R1 | 一次 path 变化约 2 秒后 Manager apply 返回 `transport operation cancelled or timed out`（某 owner 未经请求结束），具体 owner 未定位；现由 WARN 的 `owner` 字段给出 | 两次（矩阵、lab），此后未见 | `.meshway/validation/r1/`（`20261015T172722Z-c3cc3381`） |
 | 历史 | 未定位且此后未复现：`nat/resolved` 撤权阶段 DNS `Backend` 后 45 秒无首个回显（U1，`20261013T205702Z-9626e731`）；`exit/off` 第 10 阶段首个名称连接未经 E（H2，`20261014T202904Z-1f0503dc`）；高负载下的第 10 阶段同名第二次连接多一次往返与 LAN UDP 单包超时（F4a） | — | 对应工作包目录 |
 
