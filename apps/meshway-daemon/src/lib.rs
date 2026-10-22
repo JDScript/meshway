@@ -2,7 +2,6 @@
 #![forbid(unsafe_code)]
 #![cfg(unix)]
 mod ipc;
-mod service;
 pub use meshway_node::Settings;
 
 pub async fn run(
@@ -40,10 +39,10 @@ pub async fn run(
                         if writeln!(std::io::stdout().lock(), "Local IPC ready: {}", path.display()).is_err() {
                             break Err("Cannot write Node readiness.");
                         }
-                        service::notify("READY=1");
+                        meshway_service::notify("READY=1");
                     }
                     meshway_node::Lifecycle::Stopping => {
-                        service::notify("STOPPING=1");
+                        meshway_service::notify("STOPPING=1");
                         stopping = true;
                     }
                     _ => {}
@@ -56,7 +55,7 @@ pub async fn run(
     // A watch is level-triggered: an immediate failure can coalesce Stopping
     // and Stopped before this host is polled again. Always notify systemd once.
     if !stopping {
-        service::notify("STOPPING=1");
+        meshway_service::notify("STOPPING=1");
     }
     cancel.cancel();
     if !finished {

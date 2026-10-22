@@ -1,0 +1,15 @@
+[package]
+name = "meshway-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Service manager readiness notifications of Meshway executables"
+
+[dependencies]
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
