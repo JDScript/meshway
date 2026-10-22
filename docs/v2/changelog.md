@@ -33,6 +33,8 @@ RC-1 恢复状态机收敛（`rc1/recovery`，设计 RC-D）：Node 上所有 fa
 - 周期证明的成本（不变量：周期性证明的成本只取决于它比较的字段，不随宿主无关接口的配置量放大；owner：Underlay `kernel::anchor`、`rtnl::links_named`）：DNS 锚点的每次证明只完整解码 index、名称或别名与锚点相同的 link，其余只读这三项（G16，P2：it7 一次 link dump 解码 528 µs，只读三项 0.6 µs）；observe 节拍与出口审计不变。
 - Control：路径变化后以网络错误失败的工作每条路径立即重试一次（`roam/exit` soft 格）。本机记录写入结果不确定仍为 `blocked`，作为 v0.1.0 唯一显式例外写入 `AGENTS.md`（G11、Q6）。
 
+验证：`fault/throttle` 单行 `20261022T093016Z-b0665ce4`、`…094624Z-51819e6f`、`…095750Z-3a3011a1`、`…100910Z-b61c71eb`（全绿，`withdrawalsAtRestore` 0，限额解除后包流 0.08–0.29 秒，最忙线程 < 2 %）；`roam/exit` 单行三轮（候选 0.39–0.59 秒、`ready` 1.5–1.9 秒）；Planck 25 行矩阵 `20261022T121654Z-1f007a34`（`ee77ff35`）与 `20261022T130605Z-fe6eb663`（`21311100`）全部通过；lab `--cpus 0.02` 90 秒三轮无 `blocked`、`retrying` 后 2–18 秒 `running`（第二轮发现并修复 worker 未处理 `decide` 选出的重证即 panic）；红测在各步父提交上失败。证据 `.meshway/validation/rc1/`。
+
 ## v0.1.0-alpha.21
 
 范围：MIG-1 Server schema 9 与单向存储迁移（从 alpha.20 的 schema 8 自动迁移，不 reset、不重新接入；迁移承诺自本版本起）；S5 换 `compilerVersion` 后旧编译器 delta 基准视为没有基准；X16 同一 netlink socket 的 rtnetlink dump 串行＋有界重读。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6 与 HTTP 契约均不变；Server schema 8 → 9 只涉及 Server，Node 无感，按先 Node 后 Server 普通升级（无断网窗口；Server 停机含一次迁移）。
