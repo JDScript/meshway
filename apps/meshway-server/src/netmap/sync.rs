@@ -96,16 +96,17 @@ pub(super) fn read(
             Error::NetmapWithdrawn
         });
     };
+    // A delta needs the held base readable by this build; a base another
+    // compiler version wrote is answered in full.
+    let base = match current.previous {
+        Some(previous) if request.netmap == Some(previous) => {
+            store::load_earlier(tx, sealer, network, node, previous)?
+        }
+        _ => None,
+    };
     let netmap = if request.netmap == Some(current.current) {
         SyncNetmap::Unchanged
-    } else if request.netmap.is_some() && request.netmap == current.previous {
-        let base = store::load(
-            tx,
-            sealer,
-            network,
-            node,
-            current.previous.ok_or(Error::Internal("netmap base"))?,
-        )?;
+    } else if let Some(base) = base {
         let target = store::load(tx, sealer, network, node, current.current)?;
         let delta = netmap_delta(&base, &target).map_err(|_| Error::Internal("netmap delta"))?;
         SyncNetmap::Delta {

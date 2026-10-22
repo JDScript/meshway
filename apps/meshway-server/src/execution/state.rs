@@ -306,7 +306,9 @@ impl Execution {
     }
 
     /// Current admission plus the delta base the Node may still name in late
-    /// receipts and State: history only, never installation authority.
+    /// receipts and State: history only, never installation authority. A base
+    /// another compiler version wrote is not admitted; a report naming it is
+    /// rejected like any other netmap that is neither current nor the base.
     pub(crate) fn node_admission(
         &self,
         tx: &Transaction<'_>,
@@ -318,8 +320,9 @@ impl Execution {
         if let Some(previous) =
             crate::store::netmap::current(tx, network, node)?.and_then(|c| c.previous)
             && !report.configurations.contains(&previous)
+            && let Some(netmap) =
+                crate::store::netmap::load_earlier(tx, &self.sealer, network, node, previous)?
         {
-            let netmap = crate::store::netmap::load(tx, &self.sealer, network, node, previous)?;
             report.configurations.push(previous);
             report
                 .contexts

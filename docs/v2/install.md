@@ -183,7 +183,7 @@ compiler: meshway-netmap-4
 
 1. **同一窗口升级全部**：所有 Node 与 Server 在同一个维护窗口内升级；不要只升级一部分后长时间停留。
 2. **先备齐产物**：开始前确认该版本的全部产物已就绪——Release 的各架构 tar 与 `SHA256SUMS` 已发布并校验，Server 已按该版本构建，Docker lab 等需单独构建的环境（`mise run build:node:linux`）已构建完成。不要在产物仍在排队构建时就升级第一台节点。
-3. **顺序不变**：仍先 Node（CLI 与 daemon 一起）后 Server；Server 升级后，各节点下一次 `sync` 即取得新 netmap 并恢复，无需 `up`。
+3. **顺序不变**：仍先 Node（CLI 与 daemon 一起）后 Server；Server 升级后，各节点下一次 `sync` 即取得新 netmap 并恢复，无需 `up`，也无需改动配置（旧编译器留下的 delta 基准按[无基准](/v2/node/netmap-design#server-侧)处理）。
 4. **窗口长度**＝从第一台节点升级到 Server 升级完成；节点升级本身只需数秒，窗口主要由节点之间的等待与 Server 升级决定。
 
 **升级时的源端 IPv6 捕获**：同一次启动内由旧版本建立、未 `down` 的源端捕获表没有 IPv6 捕获（`underlay-egress.json` 的程序不含 `capture6`），新版本沿用它时把受管与 sink 的 IPv6 出口区间都拒绝（fail closed），IPv6 出口在该节点 `meshway down` 后再 `up`，或主机重启后才生效；IPv4 不受影响。

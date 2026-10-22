@@ -442,6 +442,14 @@ Planck 23 行矩阵 `20261016T150131Z-1f0563e0`（`0ecab400`，并行 8，墙钟
 
 Planck 23 行矩阵 `20261017T003157Z-9cccbf41`（`e7a01397`，并行 8，墙钟 1,099 秒，同机无其他矩阵）全部通过，无遗留容器／网络。证据 `.meshway/validation/s4/matrix/`。
 
+### S5 旧编译器留下的 delta 基准证据 {#s5}
+
+规则见 [Netmap 设计 · Server 侧](/v2/node/netmap-design#server-侧) 的 delta 基准生命周期。
+
+OPS18（alpha.18 → alpha.19，`meshway-netmap-3` → `meshway-netmap-4`）Server 升级后 23:06:39–23:09:37 共 202 次 `POST /agent-api/v1/state` 503 `stored value could not be decoded: node_netmaps.payload`，sync／applied 均正常、全部 peer offline：启动重编译替换了当前 netmap，旧编译器的上一份留作 delta 基准，State 准入每次都按当前格式解码它；当时以改一次配置再改回绕过。Server 单测（真实 App、加密存储、重开进程）：`app::tests::netmap::upgrade::a_base_another_compiler_wrote_is_no_base_for_state_or_sync`——按 `meshway-netmap-3` 形状（另一 `compilerVersion` 与 digest、缺 `exitRole`）写入 `a` 的当前 netmap 并换掉指纹，重开后 `a` 得到 serial +1、基准为旧行；当前 netmap 的 State 被接受，报告旧行的 State 为 `InvalidRequest`（400），持旧行的 `sync` 回 full，改名后持本构建内容的 `sync` 回 delta（base／target 正确），同一构建再重开不写任何 netmap／指纹行。`node::selection::clear::a_start_after_a_compiler_upgrade_compiles_auto_again`：`a` 应用 `auto` 时同形状重开，启动重编译成功（此前 `auto` 解析变化记录解码旧行失败，该网络停留在读不懂的当前 netmap 上）。把 `load_earlier` 改回按当前格式解码时两条测试均以 `Decode("node_netmaps.payload")` 失败（`.meshway/validation/s5/unit/before-fix.log`）。
+
+Planck 24 行矩阵 `20261022T024402Z-a8ecf31f`（`cce3cf9b`，并行 8，墙钟 1,462 秒，开始时同机无其他矩阵）全部通过。证据 `.meshway/validation/s5/`。
+
 ### H4 撤回原因、重装日志、observedAt 与控制中继状态证据 {#h4}
 
 规则见[撤回期间的原因](/v2/node/runtime#ownership-end)、[控制中继不结束归属](/v2/node/runtime#ownership-end)、Status 表的 `observedAt`／`controlObservedAt`／`controlRelay` 与[日志](/v2/logging#事件与字段)。

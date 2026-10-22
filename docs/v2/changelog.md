@@ -2,6 +2,14 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+旧编译器留下的 delta 基准（S5，`s5/delta-baseline`）：wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
+
+- 修复（不变量：Server 只拒绝当前无法证明合法的 State，自己读不懂的旧编译产物不是节点的错误；owner：`store::netmap::load_earlier`，delta 基准与重编译前当前 netmap 的唯一读者）：`compilerVersion` 升级后的 Server 启动把旧编译器的当前 netmap 留作 delta 基准，State 准入每次解码它而全部 503（OPS18 202 次），持有它的节点 `sync` 也会 503，已应用 `auto` 的网络启动重编译失败。另一 `compilerVersion` 写成的基准现在视为没有基准：`sync` 回 full，准入只含当前 netmap，`auto` 按新解析记录；无法解密或声称当前版本却解码失败的内容仍是存储错误。升级不再需要改一次配置。
+
+验证：见 [S5](/v2/node/validation#s5)；Planck 24 行矩阵通过。
+
 ## v0.1.0-alpha.20
 
 范围：X18 Status 跟踪任务 DNS guard 电平分支修复，以及 daemon lifecycle watch 关闭后分支禁用；契约不变——`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 8 与 HTTP 契约均不变，Node 与 Server 可按任意顺序普通升级（无断网窗口）。
