@@ -71,7 +71,7 @@ MESHWAY_CONTROLLER_URL=http://127.0.0.1:8420 mise run dev:console -- --host 127.
 
 ### 生命周期与归属
 
-- `start` 幂等启动或检查健康，缺少 Server 二进制时才构建；`restart` 重启现有程序；`update server` 构建锁定程序（同时产出 `meshway-server` 与离线维护工具 `ip-datasets`）后停旧启新。这些操作保留数据库、私有材料与开发登录文件，不隐式导入或替换部署数据集。
+- `start` 幂等启动或检查健康，缺少 Server 二进制时才构建；`restart` 重启现有程序；`update server` 构建锁定程序（同时产出 `meshway-server` 与离线维护工具 `ip-datasets`）后停旧，以新程序运行 `meshway-server migrate`（库已是当前 schema 时什么也不做；迁移时打印保留的旧库路径，失败时保持原库、不启动并区分持久阻断与暂态失败，见 [Server · 存储迁移](/v2/server#存储迁移)），再启新。这些操作保留数据库、私有材料与开发登录文件，不隐式导入或替换部署数据集；schema 升级不需要 `reset server`。
 - Server 的 `start`／`restart`／`update` 可加 `--log-filter <过滤器>`（如 `info,meshway_server=debug`，语法见[日志](/v2/logging)），作为启动参数传给 Server 并计入记录的启动命令；之后不带该参数的 `restart`／`update` 回到默认 `info`，运行中改过滤器须 `restart`。
 - 脚本记录实际启动命令与进程身份（tmux 会话 `meshway-server`／`meshway-docs`）；记录、进程或工作树路径与预期不符，或端口被外部 listener 占用时，拒绝操作而不迁移未知进程。
 - `stop` 只对核验过的进程树发送 SIGINT，超时保留现场。

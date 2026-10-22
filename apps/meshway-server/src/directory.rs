@@ -12,9 +12,42 @@ pub(crate) struct Directory {
     _database: std::fs::File,
 }
 
+const DATABASE: &str = "controller.sqlite";
+/// Prefix of a migration's unpublished staging files (with their SQLite
+/// journals); they are never read, only removed.
+const STAGING: &str = "controller.sqlite.migrating.";
+/// Database files a migration replaced, newest first, that are kept.
+pub(crate) const MIGRATION_BACKUPS: usize = 3;
+
+/// `controller.sqlite.v{version}-{unix ms}`: the database file of schema
+/// `version` a migration replaced at that time.
+pub(crate) fn backup_name(version: i64, at_ms: i64) -> String {
+    format!("{DATABASE}.v{version}-{at_ms}")
+}
+
+fn backup_stamp(name: &str) -> Option<(i64, i64)> {
+    let (version, stamp) = name
+        .strip_prefix(DATABASE)?
+        .strip_prefix(".v")?
+        .split_once('-')?;
+    let digits = |value: &str| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
+    if !digits(version) || !digits(stamp) {
+        return None;
+    }
+    Some((version.parse().ok()?, stamp.parse().ok()?))
+}
+
 impl Directory {
     pub(crate) fn open(path: &Path) -> Result<Self, DirectoryError> {
         let private = meshway_private_storage::Directory::open(path, "controller.lock")?;
+        // A migration interrupted between naming the old database as a backup
+        // and publishing the new one left the old file with a second name; the
+        // database is still the old one, and the migration starts again.
+        for name in private.names()? {
+            if backup_stamp(&name).is_some() && private.remove_link(DATABASE, &name)? {
+                tracing::info!(backup = %name, "Removed the backup name of an interrupted database migration");
+            }
+        }
         for name in [
             "controller.sqlite-wal",
             "controller.sqlite-shm",
@@ -22,9 +55,7 @@ impl Directory {
         ] {
             private.file(name, false)?;
         }
-        let database = private
-            .file("controller.sqlite", true)?
-            .ok_or(DirectoryError::Io)?;
+        let database = private.file(DATABASE, true)?.ok_or(DirectoryError::Io)?;
         Ok(Self {
             private,
             _database: database,
@@ -32,7 +63,92 @@ impl Directory {
     }
 
     pub(crate) fn database_path(&self) -> PathBuf {
-        self.private.path().join("controller.sqlite")
+        self.private.path().join(DATABASE)
+    }
+
+    pub(crate) fn database_len(&self) -> Result<u64, DirectoryError> {
+        Ok(self
+            ._database
+            .metadata()
+            .map_err(|_| DirectoryError::Io)?
+            .len())
+    }
+
+    pub(crate) fn available_bytes(&self) -> Result<u64, DirectoryError> {
+        self.private.available_bytes()
+    }
+
+    /// Removes every unpublished migration staging file.
+    pub(crate) fn discard_staging(&self) -> Result<(), DirectoryError> {
+        for name in self.private.names()? {
+            if name.starts_with(STAGING) {
+                self.private.remove(&name)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A new, empty owner-only staging file for the database of `version`.
+    pub(crate) fn create_staging(&self, version: i64) -> Result<(String, PathBuf), DirectoryError> {
+        let name = format!("{STAGING}v{version}");
+        self.private.remove(&name)?;
+        drop(self.private.file(&name, true)?.ok_or(DirectoryError::Io)?);
+        Ok((name.clone(), self.private.path().join(name)))
+    }
+
+    pub(crate) fn remove_staging(&self, name: &str) -> Result<(), DirectoryError> {
+        debug_assert!(name.starts_with(STAGING));
+        self.private.remove(name)
+    }
+
+    /// A quiesced database has no journal: no WAL that SQLite could replay
+    /// onto another file under the database name. A stale shared-memory index
+    /// is removed.
+    pub(crate) fn ensure_no_journal(&self) -> Result<(), DirectoryError> {
+        for name in ["controller.sqlite-wal", "controller.sqlite-journal"] {
+            if self.private.file(name, false)?.is_some() {
+                return Err(DirectoryError::Io);
+            }
+        }
+        self.private.remove("controller.sqlite-shm")
+    }
+
+    /// Gives the current database file the second name `backup`; it keeps
+    /// the old file once [`Self::replace_database`] published the new one.
+    /// Interrupted in between, [`Self::open`] removes the second name.
+    pub(crate) fn link_backup(&self, backup: &str) -> Result<(), DirectoryError> {
+        debug_assert!(backup_stamp(backup).is_some());
+        self.private.link(DATABASE, backup)
+    }
+
+    /// Atomically replaces the database by the complete staging file
+    /// `staging`: the name is always the complete old or the complete new
+    /// file. Afterwards only the newest [`MIGRATION_BACKUPS`] backups stay.
+    pub(crate) fn replace_database(&mut self, staging: &str) -> Result<(), DirectoryError> {
+        debug_assert!(staging.starts_with(STAGING));
+        self.private.rename_over(staging, DATABASE)?;
+        self._database = self
+            .private
+            .file(DATABASE, false)?
+            .ok_or(DirectoryError::Io)?;
+        let mut backups: Vec<_> = self
+            .private
+            .names()?
+            .into_iter()
+            .filter_map(|name| backup_stamp(&name).map(|(_, at)| (at, name)))
+            .collect();
+        backups.sort();
+        let excess = backups.len().saturating_sub(MIGRATION_BACKUPS);
+        for (_, name) in &backups[..excess] {
+            if let Err(error) = self.private.remove(name) {
+                tracing::warn!(backup = %name, %error, "Old database backup not removed");
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        self.private.path()
     }
 
     pub(crate) fn read_key(

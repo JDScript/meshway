@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 mod commit;
 mod dns;
+mod migration;
 mod signing;
 mod sync;
 mod upgrade;

@@ -3,7 +3,7 @@
 use std::{io::Write, net::SocketAddr, path::PathBuf, process::ExitCode, time::Duration};
 
 use clap::{Parser, Subcommand};
-use meshway_server::{App, AppError, Settings, http};
+use meshway_server::{App, AppError, Migration, Settings, http};
 use tokio::net::TcpListener;
 
 #[derive(Parser)]
@@ -64,8 +64,19 @@ struct Arguments {
 
 /// Offline host-maintenance commands. They share normal storage locking and
 /// key checks: the serving process must release the data directory first.
+/// Only `migrate` converts a database of an earlier schema version; the
+/// others refuse one.
 #[derive(Subcommand)]
 enum Command {
+    /// Migrate the database to this build's schema version (keeping the old
+    /// file as a backup in the data directory), compile every stored netmap
+    /// with this build, and exit without serving. A current database is
+    /// checked and left as it is.
+    Migrate {
+        /// Absolute path to this instance's private data directory.
+        #[arg(long, env = "MESHWAY_DATA_DIR")]
+        data_dir: PathBuf,
+    },
     /// Start a netmap signing-key rotation: a new key of the next generation
     /// becomes current, and for the window every sync answer carries it with
     /// an endorsement by the replaced key. Rejected while a window is open.
@@ -114,27 +125,59 @@ async fn main() -> ExitCode {
     if let Some(command) = arguments.command.take() {
         return match maintain(command).await {
             Ok(()) => ExitCode::SUCCESS,
-            Err(message) => {
-                tracing::error!(error = %message, "Server maintenance command failed");
-                ExitCode::FAILURE
+            Err(failure) => {
+                tracing::error!(error = %failure.message, "Server maintenance command failed");
+                failure.code
             }
         };
     }
     match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            tracing::error!(error = %message, "Server stopped with an error");
-            ExitCode::FAILURE
+        Err(failure) => {
+            tracing::error!(error = %failure.message, "Server stopped with an error");
+            failure.code
         }
     }
 }
 
-async fn maintain(command: Command) -> Result<(), String> {
-    let Command::RotateNetmapKey { data_dir, window } = command;
+/// `EX_CONFIG`: storage is blocked persistently ([`AppError::is_persistent`]);
+/// a service manager does not restart into the same failure.
+const PERSISTENT_STORAGE_BLOCK: u8 = 78;
+
+struct Failure {
+    message: String,
+    code: ExitCode,
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            code: ExitCode::FAILURE,
+        }
+    }
+}
+
+fn storage_failure(error: AppError) -> Failure {
+    Failure {
+        code: if error.is_persistent() {
+            ExitCode::from(PERSISTENT_STORAGE_BLOCK)
+        } else {
+            ExitCode::FAILURE
+        },
+        message: open_failure(error),
+    }
+}
+
+async fn maintain(command: Command) -> Result<(), Failure> {
+    let (data_dir, window) = match command {
+        Command::Migrate { data_dir } => return migrate(data_dir).await,
+        Command::RotateNetmapKey { data_dir, window } => (data_dir, window),
+    };
     let window = window.unwrap_or(meshway_server::netmap::signing::DEFAULT_ROTATION_WINDOW);
     let app = App::open(Settings::new(data_dir))
         .await
-        .map_err(open_failure)?;
+        .map_err(storage_failure)?;
     let result = app
         .rotate_netmap_key(window)
         .await
@@ -161,7 +204,28 @@ async fn maintain(command: Command) -> Result<(), String> {
         rotated.previous.key_generation.get(),
         rotated.previous.key_id,
     )
-    .map_err(|_| "Status output failed.".to_owned())
+    .map_err(|_| "Status output failed.".to_owned().into())
+}
+
+async fn migrate(data_dir: PathBuf) -> Result<(), Failure> {
+    let mut settings = Settings::new(data_dir);
+    settings.migration = Migration::Automatic;
+    let app = App::open(settings).await.map_err(storage_failure)?;
+    let report = match app.migrated() {
+        Some(migrated) => format!(
+            "Database migrated from schema {} to {} in {} ms; the previous database is kept as {}.",
+            migrated.from,
+            migrated.to,
+            migrated.elapsed.as_millis(),
+            migrated.backup.display(),
+        ),
+        None => "Database is already at this build's schema; nothing migrated.".to_owned(),
+    };
+    app.shutdown()
+        .await
+        .map_err(|_| "Server storage shutdown failed.".to_owned())?;
+    writeln!(std::io::stdout().lock(), "{report}")
+        .map_err(|_| "Status output failed.".to_owned().into())
 }
 
 /// AppError is a safe category with, at most, schema object names.
@@ -174,7 +238,7 @@ fn open_failure(error: AppError) -> String {
     }
 }
 
-async fn run(arguments: Arguments) -> Result<(), String> {
+async fn run(arguments: Arguments) -> Result<(), Failure> {
     // Install fallible signal handlers before acquiring storage ownership.
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -187,6 +251,7 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             .data_dir
             .ok_or_else(|| "--data-dir is required.".to_owned())?,
     );
+    settings.migration = Migration::Automatic;
     settings.registration_enabled = arguments.registration_enabled;
     settings.session_ttl = Duration::from_secs(arguments.session_ttl_seconds);
     settings.console_origin = arguments.console_origin;
@@ -202,13 +267,10 @@ async fn run(arguments: Arguments) -> Result<(), String> {
     };
     for (key, endpoint) in arguments.stun_server {
         if settings.stun_servers.insert(key, endpoint).is_some() {
-            return Err("Duplicate STUN server key.".into());
+            return Err("Duplicate STUN server key.".to_owned().into());
         }
     }
-    // AppError is a safe category with, at most, schema object names.
-    let app = App::open(settings)
-        .await
-        .map_err(|error| format!("Server storage startup failed: {error}."))?;
+    let app = App::open(settings).await.map_err(storage_failure)?;
     let result = async {
         let listener = TcpListener::bind(arguments.listen)
             .await

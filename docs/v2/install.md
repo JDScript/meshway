@@ -175,7 +175,7 @@ compiler: meshway-netmap-4
 
 ### Server 升级 {#server-upgrade}
 
-先升级全部 Node（CLI 与 daemon 一起），再升级 Server。新 Server 启动时、受理请求之前，把每个网络已存的 netmap 按本构建重新编译（[Server 构建是编译输入](/v2/node/netmap-design#server-侧)）：内容因新构建而变化的节点得到新 serial，下一次 `sync` 即收到，内容不变的节点保留 serial；不需要为此改配置、改选择或手动触发重编译。有节点得到新 serial 时 Server 记 info `Stored netmaps compiled again by this build`（`build`、`networks`、`changed_nodes`、`elapsed_ms`）；没有变化（同一构建重启，或新构建编译出相同内容）只记 debug `Stored netmaps checked against this build; nothing changed`。启动耗时随节点数线性，1000 节点的网络约 2–3 秒。
+先升级全部 Node（CLI 与 daemon 一起），再升级 Server。Server schema 变化的版本（changelog 范围句写明）由新 Server 在打开数据库前自动迁移，保留旧库为备份、不需重置或重新接入，见 [Server · 存储迁移](/v2/server#存储迁移)。新 Server 启动时、受理请求之前，把每个网络已存的 netmap 按本构建重新编译（[Server 构建是编译输入](/v2/node/netmap-design#server-侧)）：内容因新构建而变化的节点得到新 serial，下一次 `sync` 即收到，内容不变的节点保留 serial；不需要为此改配置、改选择或手动触发重编译。有节点得到新 serial 时 Server 记 info `Stored netmaps compiled again by this build`（`build`、`networks`、`changed_nodes`、`elapsed_ms`）；没有变化（同一构建重启，或新构建编译出相同内容）只记 debug `Stored netmaps checked against this build; nothing changed`。启动耗时随节点数线性，1000 节点的网络约 2–3 秒。
 
 ### compilerVersion 变化的版本 {#compiler-version-upgrade}
 

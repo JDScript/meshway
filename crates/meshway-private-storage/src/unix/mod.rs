@@ -273,6 +273,62 @@ pub(super) fn read_only_file(directory: &File, name: &str) -> Result<Option<File
     Ok(Some(file))
 }
 
+pub(super) fn link(directory: &File, existing: &str, new_name: &str) -> Result<(), Error> {
+    file(directory, existing, false)?.ok_or(Error::Io)?;
+    rustix::fs::linkat(
+        directory,
+        existing,
+        directory,
+        new_name,
+        rustix::fs::AtFlags::empty(),
+    )
+    .map_err(io_error)?;
+    directory.sync_all().map_err(|_| Error::Io)
+}
+
+fn open_metadata(directory: &File, name: &str) -> Result<Option<std::fs::Metadata>, Error> {
+    let flags = OFlags::RDONLY
+        .union(OFlags::NOFOLLOW)
+        .union(OFlags::CLOEXEC)
+        .union(OFlags::NONBLOCK);
+    let file = match openat(directory, name, flags, Mode::empty()) {
+        Ok(fd) => File::from(fd),
+        Err(Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(io_error(error)),
+    };
+    let metadata = file.metadata().map_err(|_| Error::Io)?;
+    check_metadata(&metadata, false)?;
+    Ok(Some(metadata))
+}
+
+pub(super) fn remove_link(directory: &File, name: &str, alias: &str) -> Result<bool, Error> {
+    let Some(second) = open_metadata(directory, alias)? else {
+        return Ok(false);
+    };
+    let Some(first) = open_metadata(directory, name)? else {
+        return Ok(false);
+    };
+    if (first.dev(), first.ino()) != (second.dev(), second.ino()) {
+        return Ok(false);
+    }
+    if first.nlink() != 2 {
+        return Err(Error::UnsafeStorage);
+    }
+    unlink(directory, alias)?;
+    Ok(true)
+}
+
+pub(super) fn rename_over(directory: &File, source: &str, final_name: &str) -> Result<(), Error> {
+    let staged = file(directory, source, false)?.ok_or(Error::Io)?;
+    staged.sync_all().map_err(|_| Error::Io)?;
+    // The directory is exclusively owned; still never rename over a name
+    // that is not an owner-only regular file. It may have a second name
+    // (see `link`): that one keeps the replaced file.
+    open_metadata(directory, final_name)?;
+    rustix::fs::renameat(directory, source, directory, final_name).map_err(io_error)?;
+    directory.sync_all().map_err(|_| Error::Io)
+}
+
 pub(super) fn unlink(directory: &File, name: &str) -> Result<(), Error> {
     rustix::fs::unlinkat(directory, name, rustix::fs::AtFlags::empty()).map_err(io_error)?;
     directory.sync_all().map_err(|_| Error::Io)

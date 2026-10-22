@@ -15,7 +15,8 @@ Server 按 `docs/v2/` 和当前共享契约实现；不以归档 Controller 的 
 - 身份、公钥、实例和报告授权在同一有效上下文检查；多个需求合成完整目标，不 last-demand-wins，不仅比较源 revision。
 - 已接纳 SQLite job 的提交后结果进入统一 journal；HTTP 取消不丢结果。缓存与订阅不代替当前权限检查。
 - 模块回归保留网络隔离、秘密、所有权、撤回、重试、lease 和进程退出语义。禁止靠假 Node／假执行载荷证明闭环。
-- schema 只有当前初始化形态与完整性检查；不加历史兼容轨，不静默清库。
+- 运行时只认当前 schema 形态与完整性检查；旧版本库由打开前的单向迁移（`store::schema::migrate`，唯一实现）转换，迁移级只读旧版本快照 `history/v<N>.sql`，业务与读取路径不出现旧形态分支；不静默清库。
+- 改 SQL 同一提交提升 `VERSION`、新增 `history/v<VERSION>.sql` 与 `migrate/v<VERSION>.rs`；已提交快照不可修改。评审清单：新 NOT NULL 列必须能由已有行推出（迁移级写出它的值），否则用可空列或独立表；CHECK 收窄须证明已有行满足或在该级变换；密文、netmap、签发钥逐字节复制，serial 高水位不降。
 
 ## 工程
 
