@@ -4,6 +4,8 @@ Server 使用 SQLite 保存私有身份、完整配置、执行恢复依据和�
 
 账户与执行表的 UUID 使用 16-byte BLOB，部分观测／资源表使用规范文本 UUID；时间使用 UTC Unix 毫秒 INTEGER，对外编码为 RFC 3339。秘密原文与完整配置使用认证加密，认证 token 保存摘要。主键、外键和不可逆约束由 schema 共同验证。
 
+当前只接受空库或精确等于当前版本的库；schema 升级迁移与 Server 部署形态的设计（未实现）见[存储迁移与部署形态设计](/v2/storage/migration-design)。
+
 ## User
 
 `users`：
