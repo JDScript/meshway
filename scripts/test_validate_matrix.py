@@ -234,9 +234,9 @@ class MatrixTests(unittest.TestCase):
             self.assertTrue(all("--build-only" in command for command in builds))
             self.assertEqual(report["scope"], "diagnostic-short")
 
-    def test_the_longest_rows_start_first_and_the_rest_keep_their_order(self):
+    def test_the_longest_row_starts_first_and_the_rest_keep_their_order(self):
         rows = ["udp/off", "exit/off", "tcp/off", "fault/throttle", "roam/exit"]
-        self.assertEqual(matrix.schedule(rows), ["fault/throttle", "exit/off", "udp/off", "tcp/off", "roam/exit"])
+        self.assertEqual(matrix.schedule(rows), ["fault/throttle", "udp/off", "exit/off", "tcp/off", "roam/exit"])
         self.assertEqual(matrix.schedule(["tcp/off", "udp/off"]), ["tcp/off", "udp/off"])
 
     def test_fault_row_is_its_own_topology(self):
