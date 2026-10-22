@@ -4,6 +4,14 @@
 
 ## 未发布
 
+R4 `roam/relay` 空窗新流无回复（`r4/handoff-flows`）：产品代码、wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
+
+- 定位：失败的“新流”不是新流。fixture 每个单报文流由内核选临时源端口、收到回显即关闭，Linux 随机复用这些端口（此前 43 轮的 9,751 个流中 38 次在 60 秒内复用）；A 流表 60 秒空闲内的同一 5 元组就是原流，按 D7 留在直连 circuit 上等重新获取，它的包与 100 pps 旧直连流共用 B 的首包队列（每目标 32 个），空窗内队列已满而被丢弃。与通道认证时机和 G14 无关：失败格中 A 在新通道认证（`authenticated_ready`）前没有 B 的承载，真正的新 5 元组都经 R 得到回复；h4/matrix10 与 x16 两次失败的流 B 都没有收到，同一时刻 B 收到的恰是队列释放的 32 个旧流包。
+- fixture（不变量：`roam/relay` 的每个新流对 A 的流表是新的 5 元组；owner：`dev/roam-fixture/traffic.py flows`）：每个流绑定自己的源端口（20000 起、1,000 秒内不重复、在临时端口范围之外）；发送失败的流按无回复计入空窗（此前不计入门槛）；证据记 `newFlowsReusingTuple`。门槛不变。见 [roam/relay 行](/v2/node/validation#roam-relay-row)、[漫游中的策略中继](/v2/node/connectivity#roaming)。
+- 回归守护：`netmap_paths::a_new_tuple_takes_the_established_relay_while_the_old_flow_fills_the_queue`（直连与中继 circuit 都已建立、B 的承载消失：新 5 元组立即经 R 送达，不进已满的队列；旧 5 元组随直连 circuit 等待，承载恢复时只释放 32 个）。
+
+验证：判别（产品为 `f9c564ff`）——每个流改用 5 秒前已回复流的源端口时 2 行 4 格空窗内 11 个流全部无回复、其余门槛通过（`20261022T141006Z-778cacdc`、`20261022T141011Z-361357c8`）；只记录内核端口的基线 12 行 97 个空窗流无复用、全部经 R；修复后 `roam/relay` 单行 12 次（并行 4）90 个空窗流全部 1 秒内经 R、0 次 `newFlowsThroughR` 失败；Planck 25 行矩阵 `20261022T145506Z-d176310c`（`d2cb2f72`，并行 4）全部通过；证据 `.meshway/validation/r4/`。
+
 Server 部署形态（MIG-2，`mig2/server-deploy`）：wire、IPC、`compilerVersion`、Server schema 9 与 HTTP 契约均不变；Server 首次作为 Release 产物发布。
 
 - 新增（不变量：服务管理器看到的就绪只在存储已打开、迁移与启动重编译完成且监听已绑定之后，持续推进的迁移不被启动超时杀掉；owner：新 crate `meshway-service` 是唯一的 sd_notify 实现，`meshwayd` 只换调用路径，Server `main` 发 `READY=1`／`STOPPING=1`，`store::schema::migrate` 每步发 `EXTEND_TIMEOUT_USEC`）：`dist/systemd/meshway-server.service`——`Type=notify`、静态系统用户 `meshway-server`、零 capability、`ProtectSystem=strict`、`StateDirectory=meshway-server`、`RestartPreventExitStatus=78`。见[安装 · Server](/v2/install#server)。

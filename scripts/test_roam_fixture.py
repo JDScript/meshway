@@ -56,6 +56,39 @@ class RelayGateTests(unittest.TestCase):
                 checks, _ = self.cell(Path(directory), flows, counters)
                 self.assertFalse(checks["newFlowsThroughR"])
 
+    def test_a_flow_that_could_not_be_sent_in_the_gap_is_an_unanswered_one(self):
+        busy = [(ROUTED - 3, 100), (ROUTED - 1, 400)]
+        flows = [f"fsend {ns(ROUTED + 1.0)} 1 20001\n", f"fecho {ns(ROUTED + 1.2)} 1\n",
+                 f"ferror {ns(ROUTED + 1.25)} 2 98\n"]
+        with tempfile.TemporaryDirectory() as directory:
+            checks, relay = self.cell(Path(directory), flows, busy)
+            self.assertFalse(checks["newFlowsThroughR"])
+            self.assertEqual((relay["newFlowsInGap"], relay["newFlowsAnsweredThroughR"]), (2, 1))
+
+    def test_a_gap_flow_on_an_earlier_flows_source_port_is_counted_as_a_reused_tuple(self):
+        busy = [(ROUTED - 3, 100), (ROUTED - 1, 400)]
+        flows = [f"fsend {ns(ROUTED - 20)} 1 41420\n", f"fecho {ns(ROUTED - 20)} 1\n",
+                 f"fsend {ns(ROUTED + 1.0)} 2 41420\n", f"fsend {ns(ROUTED + 1.25)} 3 41421\n",
+                 f"fecho {ns(ROUTED + 1.3)} 3\n"]
+        with tempfile.TemporaryDirectory() as directory:
+            checks, relay = self.cell(Path(directory), flows, busy)
+            # Still a gap flow that must be answered: the gate is unchanged.
+            self.assertFalse(checks["newFlowsThroughR"])
+            self.assertEqual(relay["newFlowsReusingTuple"], 1)
+
+
+class FlowPortTests(unittest.TestCase):
+    def test_no_flow_port_repeats_within_the_flow_idle_timeout_nor_is_ephemeral(self):
+        spec = importlib.util.spec_from_file_location(
+            "roam_traffic", Path(__file__).resolve().parents[1] / "dev/roam-fixture/traffic.py")
+        traffic = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(traffic)
+        window = int(evidence.FLOW_IDLE_S / 0.25) + 1
+        for start in (0, traffic.FLOW_PORTS - window // 2):
+            ports = [traffic.flow_port(identifier) for identifier in range(start, start + window)]
+            self.assertEqual(len(set(ports)), window)
+        self.assertLess(traffic.flow_port(traffic.FLOW_PORTS - 1), 32768, "below Linux's ephemeral range")
+
 
 if __name__ == "__main__":
     unittest.main()
