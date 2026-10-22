@@ -47,6 +47,26 @@ jobs:
     needs: version
     uses: ./.github/workflows/build.yml
 
+  console:
+    # The Console SPA, served by the same-origin reverse proxy in front of the
+    # Server (the Server serves no static files).
+    needs: version
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.8.14
+          install_args: --locked
+      - run: mise run setup
+      - run: mise run build:console
+      - uses: actions/upload-artifact@v4
+        with:
+          name: console-${{ github.sha }}
+          path: apps/meshway-web-console/dist/
+          retention-days: 14
+
   server-upgrade:
     # Release gate: the previous release's Server (its asset, or built from
     # its tag when it published none) is upgraded to this build's x86_64
@@ -87,7 +107,7 @@ jobs:
           retention-days: 14
 
   publish:
-    needs: [version, build, server-upgrade]
+    needs: [version, build, console, server-upgrade]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     permissions:
@@ -125,6 +145,8 @@ jobs:
               -C "$stage" -czf "release/meshway-server-$target.tar.gz" ip-datasets meshway-server meshway-server.service reset-password
             rm -rf "$stage"
           done
+          tar --owner=0 --group=0 --numeric-owner --sort=name --mtime="$mtime" \
+            -C "artifacts/console-$GITHUB_SHA" -czf release/meshway-console.tar.gz .
           cp dist/install.sh release/install.sh
           (cd release && sha256sum -- * > SHA256SUMS)
           # The x86_64 CLI and Server run here: their reported version must be the tag.
@@ -173,6 +195,7 @@ jobs:
             release/meshway-aarch64-unknown-linux-musl.tar.gz
             release/meshway-server-x86_64-unknown-linux-musl.tar.gz
             release/meshway-server-aarch64-unknown-linux-musl.tar.gz
+            release/meshway-console.tar.gz
             release/install.sh
             release/SHA256SUMS
 

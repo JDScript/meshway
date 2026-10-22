@@ -369,6 +369,9 @@ EOF
 }
 
 install_server() {
+	for tool in curl od runuser useradd; do
+		command -v $tool >/dev/null || die "$tool is required"
+	done
 	work=$(mktemp -d)
 	# shellcheck disable=SC2086
 	stage "meshway-server-$target.tar.gz" $SERVER_UNIT meshway-server $SERVER_TOOLS
