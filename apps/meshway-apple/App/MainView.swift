@@ -60,13 +60,13 @@ struct MainView: View {
             ZStack {
                 Color(nsColor: .windowBackgroundColor)
                 Group {
-                    if needsEnrollment { EnrollmentView(model: model) }
+                    if needsEnrollment && page != .device { EnrollmentView(model: model) }
                     else { detail.id(page).transition(.opacity) }
                 }.animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: page)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: needsEnrollment)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { FeedbackShelf(model: model).background(.bar) }
-            .navigationTitle(needsEnrollment ? "Meshway" : (page ?? .overview).title)
+            .navigationTitle(needsEnrollment && page != .device ? "Meshway" : (page ?? .overview).title)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
@@ -153,6 +153,7 @@ struct MainView: View {
 
     private var device: some View {
         Form {
+            Section("Application icon") { IconPicker() }
             Section("This Mac") {
                 LabeledContent("Name", value: model.status?.node?.hostname ?? "Not installed")
                 AddressRow(title: "Mesh IPv4", value: model.status?.node?.ipv4, missing: model.status?.node == nil ? "Not installed" : "Not assigned")

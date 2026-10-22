@@ -39,7 +39,7 @@ enum PreviewMode {
                     guard AppPage(rawValue: args[index + 1]) != nil else { throw IPCFailure.result }
                     model.previewSection = args[index + 1]
                 }
-                let main = window(MainView(model: model), size: NSSize(width: 900, height: 720), title: "Meshway · SAMPLE DATA")
+                let main = window(MainView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 900, height: 720), title: "Meshway · SAMPLE DATA")
                 let panel = window(MenuPanel(model: model).clipShape(.rect(cornerRadius: 14)), size: NSSize(width: 344, height: 480), title: "Meshway menu panel · SAMPLE DATA", panel: true)
                 windows = [main, panel]
                 main.setFrameOrigin(NSPoint(x: 60, y: 80)); panel.setFrameOrigin(NSPoint(x: 950, y: 160))
