@@ -162,8 +162,9 @@ impl Platform for Apple {
         _: &'a str,
         options: meshway_underlay::Options,
         dns_settings: meshway_dns::SystemDnsSettings,
-    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, Problem>> {
+    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, OpenError>> {
         Box::pin(async move {
+            let opened: std::result::Result<Box<dyn Host>, Problem> = async move {
             options.validate().map_err(|_| Problem::Configuration)?;
             dns_settings
                 .validate()
@@ -255,6 +256,9 @@ impl Platform for Apple {
                     hosts: sockets.hosts.clone(),
                 }),
             }) as Box<dyn Host>)
+            }
+            .await;
+            opened.map_err(Into::into)
         })
     }
     fn spawn(&self, worker: Worker) -> tokio::task::JoinHandle<std::result::Result<(), Problem>> {

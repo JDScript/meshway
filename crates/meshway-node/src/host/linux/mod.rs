@@ -50,17 +50,17 @@ impl Platform for Linux {
         origin: &'a str,
         mut options: meshway_underlay::Options,
         dns: SystemDnsSettings,
-    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, Problem>> {
+    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, OpenError>> {
         Box::pin(async move {
             let reservation = if matches!(dns.backend, SystemDnsBackend::OwnedResolvConf { .. }) {
                 let reserved = SystemDnsOwner::reserve(dns.clone(), directory.clone())
                     .await
-                    .map_err(|_| Problem::Dns)?;
+                    .map_err(dns_startup)?;
                 if options.bootstrap_nameservers.is_none() && options.bootstrap_hosts.is_empty() {
                     options.bootstrap_nameservers = reserved
                         .bootstrap_nameservers()
                         .await
-                        .map_err(|_| Problem::Dns)?;
+                        .map_err(dns_startup)?;
                 }
                 Some(reserved)
             } else {
@@ -70,14 +70,14 @@ impl Platform for Linux {
                 .await
                 .map_err(|error| {
                     tracing::warn!(%error, "Underlay startup failed");
-                    crate::runtime::network::startup_problem(&error)
+                    crate::runtime::network::startup_failure(&error)
                 })?;
             if let Err(error) = inner.attach_control(origin).await {
                 tracing::warn!(%error, "Underlay Control attachment failed");
                 if let Err(error) = inner.shutdown(true).await {
                     tracing::warn!(%error, "Underlay startup cleanup failed");
                 }
-                return Err(crate::runtime::network::startup_problem(&error));
+                return Err(crate::runtime::network::startup_failure(&error));
             }
             Ok(Box::new(Attachment {
                 inner,
@@ -91,6 +91,17 @@ impl Platform for Linux {
         // Live exit probes register under a synchronous monitor guard. Keep
         // this existing !Send execution choice in Linux, not in Node's worker.
         tokio::task::spawn_blocking(move || tokio::runtime::Handle::current().block_on(worker()))
+    }
+}
+
+/// The resolv.conf reservation at start, judged as at run time: another
+/// owner's reservation is proven, a refused setting blocks, anything else
+/// (a read that failed) is retried.
+fn dns_startup(error: SystemDnsError) -> OpenError {
+    match error {
+        SystemDnsError::Conflict => OpenError::proven(Problem::Dns),
+        SystemDnsError::Settings | SystemDnsError::Unsupported => Problem::Dns.into(),
+        _ => OpenError::unknown(Problem::Dns),
     }
 }
 

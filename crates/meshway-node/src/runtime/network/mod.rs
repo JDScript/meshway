@@ -23,15 +23,28 @@ use meshway_protocol::ipc::{DataPlane, Problem};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 
+/// Why the Host did not open, judged as at run time (G9): a foreign kernel
+/// object or an unrecoverable journal is proven (`blocked`, read again every
+/// 60 s); a failed read, a held lock and a bootstrap resolver that did not
+/// open are retried (as `relay_unavailable` is in a running term); invalid
+/// options and an unsupported platform are refusals.
 #[cfg(any(target_os = "linux", test))]
-pub(crate) fn startup_problem(error: &meshway_underlay::Error) -> Problem {
-    use meshway_underlay::Error;
+pub(crate) fn startup_failure(error: &meshway_underlay::Error) -> crate::host::OpenError {
+    use crate::host::OpenError;
+    use meshway_underlay::{Error, Judgement};
     match error {
-        Error::Storage(meshway_private_storage::Error::InUse) => Problem::Underlay,
-        Error::Journal | Error::JournalVersion { .. } | Error::Storage(_) => Problem::Storage,
-        Error::Unsupported => Problem::UnsupportedMode,
-        Error::Options | Error::Origin | Error::Resolver => Problem::Configuration,
-        _ => Problem::Underlay,
+        Error::Storage(meshway_private_storage::Error::InUse) => {
+            OpenError::unknown(Problem::Underlay)
+        }
+        Error::Journal | Error::JournalVersion { .. } => OpenError::proven(Problem::Storage),
+        Error::Storage(_) => OpenError::unknown(Problem::Storage),
+        Error::Unsupported => Problem::UnsupportedMode.into(),
+        Error::Options | Error::Origin => Problem::Configuration.into(),
+        Error::Resolver => OpenError::unknown(Problem::Underlay),
+        error => match error.judgement() {
+            Judgement::Proven => OpenError::proven(Problem::Underlay),
+            Judgement::Unknown | Judgement::Refused => OpenError::unknown(Problem::Underlay),
+        },
     }
 }
 
@@ -318,7 +331,7 @@ impl Handle {
         options: meshway_underlay::Options,
         dns_settings: meshway_dns::SystemDnsSettings,
         platform: Arc<dyn crate::host::Platform>,
-    ) -> Result<Self, Problem> {
+    ) -> Result<Self, crate::host::OpenError> {
         {
             let mtu = options.mtu;
             let host = platform
@@ -611,30 +624,47 @@ pub(super) async fn request(
 
 #[cfg(test)]
 mod tests {
+    /// RC-1 M9 (G9; red on 61c8654f, m9/red-old-code.log): at start as at
+    /// run time, a foreign kernel object and an unrecoverable journal are
+    /// proven (`blocked`, read again every 60 s), a held lock, a failed read
+    /// and a bootstrap resolver that did not open are retried, invalid
+    /// options are refused.
     #[test]
-    fn corrupt_underlay_journal_is_storage_but_live_conflict_is_retryable_underlay() {
-        use super::startup_problem;
+    fn startup_failures_are_judged_as_at_run_time() {
+        use super::startup_failure;
+        use crate::host::OpenError;
         use meshway_protocol::ipc::Problem;
+        use meshway_underlay::Error;
         assert_eq!(
-            startup_problem(&meshway_underlay::Error::Journal),
-            Problem::Storage
+            startup_failure(&Error::Journal),
+            OpenError::proven(Problem::Storage)
         );
         assert_eq!(
-            startup_problem(&meshway_underlay::Error::JournalVersion {
+            startup_failure(&Error::JournalVersion {
                 file: "underlay-egress.json",
                 version: 1
             }),
-            Problem::Storage
+            OpenError::proven(Problem::Storage)
         );
         assert_eq!(
-            startup_problem(&meshway_underlay::Error::Conflict),
-            Problem::Underlay
+            startup_failure(&Error::Conflict),
+            OpenError::proven(Problem::Underlay)
         );
+        for retried in [
+            Error::Storage(meshway_private_storage::Error::InUse),
+            Error::Netlink,
+            Error::Drain,
+            Error::Resolver,
+        ] {
+            assert_eq!(
+                startup_failure(&retried),
+                OpenError::unknown(Problem::Underlay),
+                "{retried}"
+            );
+        }
         assert_eq!(
-            startup_problem(&meshway_underlay::Error::Storage(
-                meshway_private_storage::Error::InUse
-            )),
-            Problem::Underlay
+            startup_failure(&Error::Options),
+            Problem::Configuration.into()
         );
     }
 }

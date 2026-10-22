@@ -44,7 +44,7 @@
 - Rust 业务代码 forbid unsafe；确需 native/FFI 的桥接隔离审计，不静默放开应用 lint 或 TLS 默认 features。
 - Rust 程序入口复用 `meshway-logging`，库只发 `tracing` 事件、不安装全局 subscriber；字段与 stdout／stderr 边界见 `docs/v2/logging.md`。
 - 取消后的已接纳事务仍由数据库 owner 完成；异步生产者有明确停止／join，缓冲和任务有界。
-- 每条 fail-closed 路径必须区分两类并写明 owner：读到**已证实**的不一致为持久阻断（Status `blocked`＋原因，需人工或重启）；读取失败、超时或变更结果未知为暂态阻断，由命名 owner 按有界退避重证，原因消失后以同一 netmap 自动恢复（Status `retrying`＋最早原因）。不得出现无 owner、无重证周期的永久阻断；一次失败的读取或变更不能证明归属已变。
+- 每条 fail-closed 路径必须区分两类并写明 owner：读到**已证实**的不一致为持久阻断（Status `blocked`＋原因，需人工或重启）；读取失败、超时或变更结果未知为暂态阻断，由命名 owner 按有界退避重证，原因消失后以同一 netmap 自动恢复（Status `retrying`＋最早原因）。不得出现无 owner、无重证周期的永久阻断；一次失败的读取或变更不能证明归属已变。v0.1.0 唯一显式例外：本机 Control 记录写入结果不确定（`Recovery::Storage`）时保持 `blocked`＋撤回、不重读判定（RC-D Q6，见 `docs/v2/node/runtime.md` 恢复语义）。
 - 事件循环每轮至少推进一个状态，不得有电平分支：`watch` 克隆在等待前 `mark_unchanged`／处理时 `borrow_and_update`，已关闭的分支禁用，同一事实只处理一次直到它变化；定时恢复不得被立即就绪的分支饿死。
 
 ## 验证与环境

@@ -312,43 +312,10 @@ impl Kernel {
     }
 }
 
-/// What a failed kernel operation's error proves. The one classification
-/// every kernel owner uses (installation, repair, monitor, re-proof, the
-/// egress capture owner's changes and the exit owner's).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::linux) enum Kind {
-    /// A read or change that failed, timed out or stopped, or the owner's
-    /// own internal failure: nothing was read back, nothing is proven.
-    Unknown,
-    /// Read back and different from what the owner owns: a foreign object,
-    /// a mark or journal that does not match.
-    Proven,
-    /// Refused before any kernel work (expired authority, an unsupported
-    /// target, a full budget, invalid options): certain, no outcome in doubt.
-    Refused,
-}
+pub(in crate::linux) use crate::Judgement as Kind;
 
 pub(in crate::linux) fn kind(error: &Error) -> Kind {
-    match error {
-        Error::Conflict | Error::Protection | Error::Journal | Error::JournalVersion { .. } => {
-            Kind::Proven
-        }
-        Error::Expired
-        | Error::Target
-        | Error::Capacity
-        | Error::Options
-        | Error::Origin
-        | Error::Unsupported
-        | Error::Resolver
-        | Error::ControlUnavailable => Kind::Refused,
-        Error::Netlink
-        | Error::Io(_)
-        | Error::Drain
-        | Error::Worker
-        | Error::Storage(_)
-        | Error::Tun(_)
-        | Error::Bind { .. } => Kind::Unknown,
-    }
+    error.judgement()
 }
 
 /// How an owner's failed kernel `operation` ends ownership: only a read-back

@@ -30,6 +30,9 @@ const RELEASE: Duration = Duration::from_secs(2);
 /// Control retry backoff cap (seconds), the same as the sync loop's: after a
 /// Server outage the Node is back within one backoff period.
 const BACKOFF_MAX: u64 = 15;
+/// How often a proven start failure (a foreign kernel object, an
+/// unrecoverable journal) is read again while `blocked`.
+const REREAD_PROVEN: Duration = Duration::from_secs(60);
 /// A sync that has not succeeded for this long is reported as reconnecting:
 /// above one Server hold plus the request budget's margin.
 pub(super) const SYNC_STALE: Duration = Duration::from_secs(100);
@@ -166,6 +169,11 @@ struct Maintenance {
     /// The host's path changes when `retry_at` was set: a later path change
     /// (a new link now routes) retries at once.
     retry_path: u64,
+    /// The host's path changes at the last completed work: a network
+    /// failure on a later path is retried at once, once per path.
+    settled_path: u64,
+    /// The path whose one immediate retry was taken.
+    immediate_path: Option<u64>,
     /// The instance and netmap whose installation outcome was receipted.
     receipted: Option<(InstanceId, NetmapRef, bool)>,
 }
@@ -212,20 +220,25 @@ pub(super) async fn run(
                         local_pings.send_replace(Some(handle.local()));
                         network = Some(handle);
                     }
-                    Err(problem) => {
-                        let delay =
-                            (problem == Problem::Underlay).then_some(Duration::from_secs(backoff));
+                    Err(failure) => {
+                        // Judged as at run time: retried with the backoff,
+                        // read again every 60 s while proven, or refused.
+                        let (phase, delay) = match failure.judgement {
+                            meshway_underlay::Judgement::Unknown => {
+                                (Phase::Retrying, Some(Duration::from_secs(backoff)))
+                            }
+                            meshway_underlay::Judgement::Proven => {
+                                (Phase::Blocked, Some(REREAD_PROVEN))
+                            }
+                            meshway_underlay::Judgement::Refused => (Phase::Blocked, None),
+                        };
                         publish(
                             &reported,
                             &plan,
                             None,
-                            if delay.is_some() {
-                                Phase::Retrying
-                            } else {
-                                Phase::Blocked
-                            },
+                            phase,
                             None,
-                            Some(problem),
+                            Some(failure.problem),
                             delay,
                         );
                         backoff = (backoff * 2).min(BACKOFF_MAX);
@@ -1053,9 +1066,15 @@ async fn maintain(
     // while the work ran: try again at once instead of backing off.
     let local = network.as_deref().map(network::Handle::path_changes) != resets;
     let control = &*shared.lock().await;
+    let path = network
+        .as_deref()
+        .map(network::Handle::path_changes)
+        .unwrap_or(0);
     match result {
         Ok(()) => {
             work.retry_at = None;
+            work.settled_path = path;
+            work.immediate_path = None;
             if reported.borrow().problem.is_some() {
                 publish(
                     reported,
@@ -1093,6 +1112,17 @@ async fn maintain(
                 work.retry_at = None;
                 return Ok(());
             }
+            if retry_after_path_change(failure.problem, path, work) {
+                // The work started on a path that had just changed (its
+                // connection was closed by this host before or as it ran):
+                // the new path is tried at once, once.
+                tracing::debug!(
+                    operation,
+                    "Control work failed right after a local path change; retrying at once"
+                );
+                work.retry_at = None;
+                return Ok(());
+            }
             // A reset context (session or instance gone) is re-acquired at once.
             let delay = failure
                 .retry_after
@@ -1114,6 +1144,18 @@ async fn maintain(
             Ok(())
         }
     }
+}
+
+/// R1: a network failure of work that ran on a path that changed since the
+/// last completed work is retried at once, once per path (a later failure
+/// on the same path waits its backoff).
+fn retry_after_path_change(problem: Problem, path: u64, work: &mut Maintenance) -> bool {
+    if problem != Problem::Network || path == work.settled_path || work.immediate_path == Some(path)
+    {
+        return false;
+    }
+    work.immediate_path = Some(path);
+    true
 }
 
 async fn maintain_once(

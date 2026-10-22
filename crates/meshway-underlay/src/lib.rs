@@ -291,6 +291,47 @@ pub enum Error {
     Worker,
 }
 
+/// What a failed operation's error proves. The one classification every
+/// kernel owner uses (installation, repair, monitor, re-proof, the egress
+/// capture and exit owners' changes) and the Host's start reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Judgement {
+    /// A read or change that failed, timed out or stopped, or the owner's
+    /// own internal failure: nothing was read back, nothing is proven.
+    Unknown,
+    /// Read back and different from what the owner owns: a foreign object,
+    /// a mark or journal that does not match.
+    Proven,
+    /// Refused before any kernel work (expired authority, an unsupported
+    /// target, a full budget, invalid options): certain, no outcome in doubt.
+    Refused,
+}
+
+impl Error {
+    pub fn judgement(&self) -> Judgement {
+        match self {
+            Self::Conflict | Self::Protection | Self::Journal | Self::JournalVersion { .. } => {
+                Judgement::Proven
+            }
+            Self::Expired
+            | Self::Target
+            | Self::Capacity
+            | Self::Options
+            | Self::Origin
+            | Self::Unsupported
+            | Self::Resolver
+            | Self::ControlUnavailable => Judgement::Refused,
+            Self::Netlink
+            | Self::Io(_)
+            | Self::Drain
+            | Self::Worker
+            | Self::Storage(_)
+            | Self::Tun(_)
+            | Self::Bind { .. } => Judgement::Unknown,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(not(target_os = "linux"))]

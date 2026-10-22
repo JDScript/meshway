@@ -98,7 +98,9 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
         .unwrap();
     assert!(matches!(
         meshway_underlay::Host::open(directory.clone(), options.clone()).await,
-        Err(meshway_underlay::Error::Conflict)
+        Err(meshway_underlay::Error::Storage(
+            meshway_private_storage::Error::InUse
+        ))
     ));
 
     let revision = meshway_model::Version::MIN;
@@ -174,4 +176,20 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
     driver.await.unwrap().unwrap();
     control.shutdown().await.unwrap();
     server.close().await;
+}
+
+/// RC-1 M9 (roam/exit, R1): a network failure of Control work that ran on
+/// a path changed since the last completed work is retried at once, once
+/// per path; another failure on that path, a failure of another kind, or
+/// one on the settled path waits its backoff.
+#[test]
+fn a_network_failure_right_after_a_path_change_is_retried_at_once_once() {
+    let mut work = Maintenance::default();
+    assert!(!retry_after_path_change(Problem::Network, 0, &mut work));
+    assert!(retry_after_path_change(Problem::Network, 1, &mut work));
+    assert!(!retry_after_path_change(Problem::Network, 1, &mut work));
+    assert!(!retry_after_path_change(Problem::ServerBusy, 2, &mut work));
+    assert!(retry_after_path_change(Problem::Network, 2, &mut work));
+    work.settled_path = 3;
+    assert!(!retry_after_path_change(Problem::Network, 3, &mut work));
 }

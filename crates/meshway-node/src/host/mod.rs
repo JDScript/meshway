@@ -56,6 +56,42 @@ pub struct Capabilities {
 
 /// Opens one platform owner per runtime, and selects that owner's executor.
 /// There is no packet or authority state in this factory.
+/// Why a host did not open, as its owner judged it (the same judgement as
+/// at run time): Control retries an unknown failure with its backoff, reads a
+/// proven one again every 60 s while `blocked`, and leaves a refusal
+/// (configuration, an unsupported mode) blocked until the operator's intent
+/// changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenError {
+    pub problem: Problem,
+    pub judgement: meshway_underlay::Judgement,
+}
+
+impl OpenError {
+    pub fn unknown(problem: Problem) -> Self {
+        Self {
+            problem,
+            judgement: meshway_underlay::Judgement::Unknown,
+        }
+    }
+    pub fn proven(problem: Problem) -> Self {
+        Self {
+            problem,
+            judgement: meshway_underlay::Judgement::Proven,
+        }
+    }
+}
+
+/// A plain problem is a refusal.
+impl From<Problem> for OpenError {
+    fn from(problem: Problem) -> Self {
+        Self {
+            problem,
+            judgement: meshway_underlay::Judgement::Refused,
+        }
+    }
+}
+
 pub trait Platform: Send + Sync + 'static {
     fn capabilities(&self) -> Capabilities;
     fn interfaces(&self) -> std::io::Result<Vec<InterfaceAddress>>;
@@ -65,7 +101,7 @@ pub trait Platform: Send + Sync + 'static {
         origin: &'a str,
         options: meshway_underlay::Options,
         dns: meshway_dns::SystemDnsSettings,
-    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, Problem>>;
+    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, OpenError>>;
     fn spawn(&self, worker: Worker) -> tokio::task::JoinHandle<std::result::Result<(), Problem>>;
 }
 
@@ -85,8 +121,8 @@ impl Platform for ControlOnly {
         _: &'a str,
         _: meshway_underlay::Options,
         _: meshway_dns::SystemDnsSettings,
-    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, Problem>> {
-        Box::pin(async { Err(Problem::UnsupportedMode) })
+    ) -> SendFuture<'a, std::result::Result<Box<dyn Host>, OpenError>> {
+        Box::pin(async { Err(Problem::UnsupportedMode.into()) })
     }
     fn spawn(&self, _: Worker) -> tokio::task::JoinHandle<std::result::Result<(), Problem>> {
         tokio::spawn(async { Err(Problem::UnsupportedMode) })

@@ -101,10 +101,12 @@ static HOST_OWNED: AtomicBool = AtomicBool::new(false);
 struct HostOwner;
 
 impl HostOwner {
+    /// The process's one Host owner. Another live Host holding it is a lock
+    /// in use (it may release it), not a foreign kernel object.
     fn acquire() -> Result<Self> {
         HOST_OWNED
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| Error::Conflict)?;
+            .map_err(|_| Error::Storage(meshway_private_storage::Error::InUse))?;
         Ok(Self)
     }
 }
