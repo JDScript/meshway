@@ -281,7 +281,14 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             None => std::future::pending().await,
                         }
                     }, if live => if event.iter().any(|event| matches!(event, Event::Closed)) { Work::CarrierClosed } else { Work::Carrier(event) },
-                    _ = sleep_until(wake_at) => Work::Tick,
+                    _ = sleep_until(wake_at) => {
+                        // Diagnostics: a timer that fires late means this
+                        // worker was not polled although its work was due.
+                        if let Some(late) = wake_at.map(|at| at.elapsed()).filter(|late| *late >= Duration::from_millis(100)) {
+                            tracing::debug!(late_ms = u64::try_from(late.as_millis()).unwrap_or(u64::MAX), "Network worker woke late");
+                        }
+                        Work::Tick
+                    },
                     else => std::future::pending().await,
                 }
             } => work,
