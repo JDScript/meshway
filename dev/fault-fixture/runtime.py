@@ -382,6 +382,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 throttle("e", EXIT_THROTTLE, "exit", lambda: running("e", evidence.exit_ready))
             save()
         manifest["endedAt"] = clock()
+        signal("fault-complete")
         manifest["status"] = "finishing"
         save()
     except BaseException as error:

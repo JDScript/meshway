@@ -101,9 +101,15 @@ def first(values, after, predicate):
     return next((value for value in values if value["at"] >= after and "error" not in value and predicate(value)), None)
 
 
+def exit_status(family):
+    """A family's status: `{"status": "ready"}` (with a reason for others)."""
+    value = family.get("status")
+    return value.get("status") if isinstance(value, dict) else value
+
+
 def exit_ready(sample):
     families = (((sample.get("exit") or {}).get("capability") or {}).get("families")) or []
-    return bool(families) and all(item.get("status") == "ready" and item.get("installed") for item in families)
+    return bool(families) and all(exit_status(item) == "ready" and item.get("installed") for item in families)
 
 
 def log_events(path, start, end):

@@ -250,7 +250,11 @@ async fn observe(
         };
         tokio::time::sleep(pause.saturating_sub(started.elapsed())).await;
     }
-    if role == Role::B && handled != 2 {
+    // Only a completed row owes both restarts; an aborted one stops early.
+    if role == Role::B
+        && handled != 2
+        && tokio::fs::try_exists(cli.signals.join("fault-complete")).await?
+    {
         return Err("B did not run the two requested resolved restarts".into());
     }
     Ok(())

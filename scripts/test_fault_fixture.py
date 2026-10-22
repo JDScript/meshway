@@ -39,7 +39,7 @@ def quiet(start, seconds=60.0):
 def running(at, **change):
     return {"at": at, "phase": "running", "dataPlane": "ready", "lastError": None, "syncError": None,
             "sync": "connected", "applied": {"serial": SERIAL},
-            "exit": {"capability": {"families": [{"family": "ipv4", "status": "ready", "installed": True}]}},
+            "exit": {"capability": {"families": [{"family": "ipv4", "status": {"status": "ready"}, "installed": True}]}},
             **change}
 
 
@@ -237,7 +237,7 @@ class GateTests(unittest.TestCase):
         for index in range(80):
             at = 1812.0 + index / 2
             report.status["e"][at] = running(at, exit={"capability": {"families": [
-                {"family": "ipv4", "status": "probing", "installed": False}]}})
+                {"family": "ipv4", "status": {"status": "probing"}, "installed": False}]}})
         self.failed(report, "exit-audit", "exitReady")
 
     def test_a_changed_netmap_and_a_skipped_stage_fail_the_row(self):
