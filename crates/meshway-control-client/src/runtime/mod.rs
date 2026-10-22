@@ -50,17 +50,23 @@ impl<P> std::error::Error for ClientError<P> {}
 /// A transport failure keeps only its class. The debug event names that
 /// class and the innermost I/O error kind, never the URL, headers or body.
 fn network<P>(error: &(dyn std::error::Error + 'static), status: Option<u16>) -> ClientError<P> {
-    let (stage, io, os_error) = transport_failure(error);
-    tracing::debug!(stage, io = ?io, os_error, status, "Control HTTP transport failed");
+    let (stage, io, os_error, tls) = transport_failure(error);
+    tracing::debug!(stage, io = ?io, os_error, tls, status, "Control HTTP transport failed");
     ClientError::Network { status }
 }
 
 fn transport_failure(
     error: &(dyn std::error::Error + 'static),
-) -> (&'static str, Option<std::io::ErrorKind>, Option<i32>) {
+) -> (
+    &'static str,
+    Option<std::io::ErrorKind>,
+    Option<i32>,
+    Option<String>,
+) {
     let mut stage = "other";
     let mut io = None;
     let mut os_error = None;
+    let mut tls = None;
     let mut current = Some(error);
     while let Some(error) = current {
         // The transparent wrapper's source() skips reqwest itself, which owns
@@ -87,10 +93,30 @@ fn transport_failure(
         if let Some(error) = error.downcast_ref::<std::io::Error>() {
             io = Some(error.kind());
             os_error = error.raw_os_error();
+            if let Some(inner) = error.get_ref() {
+                current = Some(inner);
+                continue;
+            }
+        }
+        if let Some(error) = error.downcast_ref::<rustls::Error>() {
+            // Only protocol enums/numbers: General, Other and certificate
+            // verifier errors can hold arbitrary text and are never formatted.
+            tls = Some(match error {
+                rustls::Error::InvalidMessage(value) => format!("invalid_message:{value:?}"),
+                rustls::Error::PeerMisbehaved(value) => format!("peer_misbehaved:{value:?}"),
+                rustls::Error::PeerIncompatible(_) => "peer_incompatible".into(),
+                rustls::Error::AlertReceived(value) => format!("alert:{value:?}"),
+                rustls::Error::DecryptError => "decrypt".into(),
+                rustls::Error::EncryptError => "encrypt".into(),
+                rustls::Error::InvalidCertificate(_) => "invalid_certificate".into(),
+                rustls::Error::PeerSentOversizedRecord => "oversized_record".into(),
+                rustls::Error::NoApplicationProtocol => "no_application_protocol".into(),
+                _ => "other".into(),
+            });
         }
         current = error.source();
     }
-    (stage, io, os_error)
+    (stage, io, os_error, tls)
 }
 
 /// Start a caller-owned HTTP builder with Meshway's explicit ring provider and

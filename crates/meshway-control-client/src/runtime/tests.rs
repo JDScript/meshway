@@ -149,6 +149,19 @@ async fn middleware_timeout_keeps_its_safe_transport_classification() {
     let _ = (&mut server.0).await;
 }
 
+#[test]
+fn io_wrapped_tls_failure_is_classified_without_arbitrary_error_text() {
+    for (error, expected) in [
+        (rustls::Error::DecryptError, "decrypt"),
+        (rustls::Error::General("must-not-escape".into()), "other"),
+    ] {
+        let wrapped = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+        let (_, io, _, tls) = transport_failure(&wrapped);
+        assert_eq!(io, Some(std::io::ErrorKind::InvalidData));
+        assert_eq!(tls.as_deref(), Some(expected));
+    }
+}
+
 #[tokio::test]
 async fn state_body_uses_shared_client_while_sync_is_held_and_after_path_interrupt() {
     let entered = Arc::new(tokio::sync::Notify::new());
