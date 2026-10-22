@@ -1,8 +1,268 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-22T14:45:48.566794+00:00",
+  "updatedAt": "2026-10-22T16:02:58.194805+00:00",
   "runs": [
+    {
+      "id": 39808346773,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "59029c830d101e79cc39fab88f65a0e59ee6e393",
+      "message": "Merge branch 'r4/handoff-flows'",
+      "createdAt": "2026-10-22T15:48:56Z",
+      "updatedAt": "2026-10-22T15:48:56Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39808346773",
+      "jobs": [
+        {
+          "id": 119927513164,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-22T15:48:56Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346773/job/119927513164"
+        },
+        {
+          "id": 119927513457,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T15:48:58Z",
+          "completedAt": "2026-10-22T15:56:57Z",
+          "seconds": 479.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346773/job/119927513457"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12439461519,
+          "name": "node-aarch64-unknown-linux-musl-59029c830d101e79cc39fab88f65a0e59ee6e393",
+          "bytes": 11047642,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346773/artifacts/12439461519",
+          "jobId": 119927513457,
+          "runner": "planck",
+          "seconds": 479.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 17002680,
+              "sha256": "87e19fdb585d3eb1a1c5b0dea238cef214760f2a36dbbf1bda94f0f40ba8d8c5"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1946528,
+              "sha256": "06f966833be4100e5ae6fe9847f11f099961cf2a0d3e7335f7fba6cf6222b300"
+            }
+          ]
+        },
+        {
+          "id": 12438329345,
+          "name": "server-aarch64-unknown-linux-musl-59029c830d101e79cc39fab88f65a0e59ee6e393",
+          "bytes": 17724490,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346773/artifacts/12438329345",
+          "jobId": null,
+          "runner": null,
+          "seconds": null,
+          "state": "ignored",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": []
+        }
+      ]
+    },
+    {
+      "id": 39808346762,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "59029c830d101e79cc39fab88f65a0e59ee6e393",
+      "message": "Merge branch 'r4/handoff-flows'",
+      "createdAt": "2026-10-22T15:48:56Z",
+      "updatedAt": "2026-10-22T15:59:28Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39808346762",
+      "jobs": [
+        {
+          "id": 119927512389,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T15:48:59Z",
+          "completedAt": "2026-10-22T15:49:13Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346762/job/119927512389"
+        },
+        {
+          "id": 119927664049,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T15:49:15Z",
+          "completedAt": "2026-10-22T15:51:52Z",
+          "seconds": 157.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346762/job/119927664049"
+        },
+        {
+          "id": 119927664070,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T15:51:55Z",
+          "completedAt": "2026-10-22T15:59:27Z",
+          "seconds": 452.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346762/job/119927664070"
+        },
+        {
+          "id": 119927666470,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-22T15:49:13Z",
+          "completedAt": "2026-10-22T15:49:13Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346762/job/119927666470"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 39808346751,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "59029c830d101e79cc39fab88f65a0e59ee6e393",
+      "message": "Merge branch 'r4/handoff-flows'",
+      "createdAt": "2026-10-22T15:48:56Z",
+      "updatedAt": "2026-10-22T15:56:58Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/39808346751",
+      "jobs": [
+        {
+          "id": 119927512244,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-22T15:48:59Z",
+          "completedAt": "2026-10-22T15:55:45Z",
+          "seconds": 406.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346751/job/119927512244"
+        },
+        {
+          "id": 119927512779,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-22T15:56:58Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346751/job/119927512779"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12439680877,
+          "name": "perf-arm64-39808346751",
+          "bytes": 45600,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39808346751/artifacts/12439680877",
+          "jobId": 119927512244,
+          "runner": "jp-tyo-arm64",
+          "seconds": 406.0,
+          "state": "ok",
+          "error": null,
+          "reports": [
+            {
+              "reportId": "20261022T155215Z-15c734c7",
+              "kind": "circuit",
+              "revision": "59029c830d101e79cc39fab88f65a0e59ee6e393",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": null,
+              "loadMin": 0.26513671875,
+              "loadMax": 1.61767578125,
+              "metrics": [
+                {
+                  "label": "L0 2 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 14.973443999999999,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 2 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 66773.36560819509,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 20.009304,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 49972.90506567018,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 30.110248,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 33206.277647453375,
+                  "samples": 3,
+                  "attempted": 3
+                }
+              ]
+            }
+          ],
+          "matrices": [],
+          "builds": []
+        }
+      ]
+    },
     {
       "id": 39790367965,
       "attempt": 1,
