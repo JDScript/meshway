@@ -413,11 +413,11 @@ fn clear(changes: &tokio::sync::watch::Sender<Option<crate::KernelChangePending>
 }
 
 /// Whether a failed change leaves its kernel outcome in doubt: a kernel
-/// tool or netlink operation failed, timed out, or read back unexpectedly.
-/// Refusals before any kernel work (expired authority, target, capacity)
-/// are certain.
+/// tool or netlink operation failed, timed out, or read back unexpectedly
+/// (the change's own error is no judgement: its reread is). Refusals before
+/// any kernel work (expired authority, target, capacity) are certain.
 pub(super) fn uncertain(error: &Error) -> bool {
-    matches!(error, Error::Netlink | Error::Conflict | Error::Io(_))
+    super::kind(error) != super::Kind::Refused
 }
 
 /// A periodic duty of an owner loop (an audit, maintenance): due a full

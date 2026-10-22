@@ -73,16 +73,16 @@ pub(super) struct Kernel {
     /// When owned capture objects were last reinstalled ([`Self::repair`]).
     repaired: std::collections::VecDeque<std::time::Instant>,
     /// A repair still owed: its reads failed before it could tell what is
-    /// missing. When it is due and how many reads failed in a row.
-    repair_owed: Option<(std::time::Instant, u32)>,
+    /// missing; its recovery says when it is due again.
+    repair_owed: Option<meshway_model::recovery::Recovery>,
 }
 
 /// Repairs of removed capture objects allowed within [`REPAIR_WINDOW`].
 const MAX_REPAIRS: usize = 3;
 const REPAIR_WINDOW: Duration = Duration::from_secs(60);
-/// Failed reads of one owed repair before ownership ends as unavailable,
-/// [`REPAIR_RETRY`] apart.
-const MAX_REPAIR_READS: u32 = 5;
+/// How long the reads of one owed repair may fail, [`REPAIR_RETRY`] apart,
+/// before ownership ends as unavailable (the egress owner's limit).
+const REPAIR_READS_LIMIT: Duration = verification::UNVERIFIED_LIMIT;
 const REPAIR_RETRY: Duration = Duration::from_secs(1);
 
 impl Kernel {
@@ -312,23 +312,65 @@ impl Kernel {
     }
 }
 
-/// How an owner's failed kernel operation ends ownership: a read or change
-/// that timed out or failed in the kernel proves nothing (`<operation>_unavailable`);
-/// anything else (a read-back that differs) is a conflict.
-fn ended(operation: &'static str, error: &Error) -> crate::OwnershipEnd {
-    match (error, operation) {
-        (Error::Drain, _) => crate::OwnershipEnd::Unavailable {
-            check: "drain_unavailable",
-        },
-        (Error::Netlink | Error::Io(_), "repair") => crate::OwnershipEnd::Unavailable {
-            check: "repair_unavailable",
-        },
-        (Error::Netlink | Error::Io(_), _) => crate::OwnershipEnd::Unavailable {
-            check: "install_unavailable",
-        },
-        (_, "repair") => crate::OwnershipEnd::Conflict { check: "repair" },
-        _ => crate::OwnershipEnd::Conflict { check: "install" },
+/// What a failed kernel operation's error proves. The one classification
+/// every kernel owner uses (installation, repair, monitor, re-proof, the
+/// egress capture owner's changes and the exit owner's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::linux) enum Kind {
+    /// A read or change that failed, timed out or stopped, or the owner's
+    /// own internal failure: nothing was read back, nothing is proven.
+    Unknown,
+    /// Read back and different from what the owner owns: a foreign object,
+    /// a mark or journal that does not match.
+    Proven,
+    /// Refused before any kernel work (expired authority, an unsupported
+    /// target, a full budget, invalid options): certain, no outcome in doubt.
+    Refused,
+}
+
+pub(in crate::linux) fn kind(error: &Error) -> Kind {
+    match error {
+        Error::Conflict | Error::Protection | Error::Journal | Error::JournalVersion { .. } => {
+            Kind::Proven
+        }
+        Error::Expired
+        | Error::Target
+        | Error::Capacity
+        | Error::Options
+        | Error::Origin
+        | Error::Unsupported
+        | Error::Resolver
+        | Error::ControlUnavailable => Kind::Refused,
+        Error::Netlink
+        | Error::Io(_)
+        | Error::Drain
+        | Error::Worker
+        | Error::Storage(_)
+        | Error::Tun(_)
+        | Error::Bind { .. } => Kind::Unknown,
     }
+}
+
+/// How an owner's failed kernel `operation` ends ownership: only a read-back
+/// that differs is a conflict (`<operation>`); anything else proves nothing
+/// (`<operation>_unavailable`, `drain_unavailable` for a missed drain) and
+/// is re-proved. A refusal that ends ownership left a change of its own in
+/// doubt (a pending journal step): unavailable as well.
+pub(in crate::linux) fn ended(operation: &'static str, error: &Error) -> crate::OwnershipEnd {
+    if kind(error) == Kind::Proven {
+        return crate::OwnershipEnd::Conflict { check: operation };
+    }
+    let check = match (error, operation) {
+        (Error::Drain, _) => "drain_unavailable",
+        (_, "repair") => "repair_unavailable",
+        (_, "monitor") => "monitor_unavailable",
+        (_, "retire") => "retire_unavailable",
+        (_, "pause") => "pause_unavailable",
+        (_, "stage") => "stage_unavailable",
+        (_, "switch") => "switch_unavailable",
+        _ => "install_unavailable",
+    };
+    crate::OwnershipEnd::Unavailable { check }
 }
 
 /// The answers of one request that is not a dump (dumps: [`rtnl`]).

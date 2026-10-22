@@ -245,7 +245,13 @@ fn settled(
     match result {
         Ok(()) => Some(Ok(())),
         Err((error, check @ ("verify" | "verify_unavailable"))) => {
-            stopped(shared, operation, check, &error);
+            stopped(
+                shared,
+                operation,
+                check,
+                &error,
+                (check != "verify").then_some(&error),
+            );
             None
         }
         Err((error, _)) => Some(Err(error)),
@@ -263,7 +269,13 @@ async fn pause(backend: &mut Backend, shared: &Shared, stop: &CancellationToken)
         Ok(()) => true,
         Err((_, "stopped")) => false,
         Err((error, check)) => {
-            stopped(shared, "pause", check, &error);
+            stopped(
+                shared,
+                "pause",
+                check,
+                &error,
+                (check != "verify").then_some(&error),
+            );
             false
         }
     }
@@ -272,12 +284,14 @@ async fn pause(backend: &mut Backend, shared: &Shared, stop: &CancellationToken)
 /// The egress owner ends the host's kernel ownership (every owner then
 /// fails closed): say which operation failed and how. Objects unreadable,
 /// or a change unknown, for the whole limit is an unavailable end the Host
-/// proves again; anything else is a conflict.
+/// proves again, as is any other failure that read nothing back; only a
+/// read-back that differs is a conflict ([`super::super::ended`]).
 fn stopped(
     shared: &super::super::super::protection::Shared,
     operation: &'static str,
     check: &'static str,
     error: &dyn std::fmt::Display,
+    cause: Option<&Error>,
 ) {
     tracing::warn!(
         operation,
@@ -285,8 +299,12 @@ fn stopped(
         error = %error,
         "Egress capture owner stopping after a failed kernel operation; kernel ownership ends"
     );
-    shared.end(match check {
-        "verify_unavailable" | "change_unavailable" => crate::OwnershipEnd::Unavailable { check },
+    shared.end(match (check, cause) {
+        ("verify_unavailable" | "change_unavailable", _) => {
+            crate::OwnershipEnd::Unavailable { check }
+        }
+        // The operation's own error: only a read-back that differs is proven.
+        (_, Some(cause)) => super::super::ended(operation, cause),
         _ => crate::OwnershipEnd::Conflict { check },
     });
 }
@@ -295,7 +313,9 @@ struct Installing(Option<Arc<Shared>>);
 impl Drop for Installing {
     fn drop(&mut self) {
         if let Some(shared) = self.0.take() {
-            shared.end(crate::OwnershipEnd::Conflict {
+            // A cancelled installation proves no other writer: the Host
+            // re-proves what the journal and the kernel hold.
+            shared.end(crate::OwnershipEnd::Unavailable {
                 check: "install_cancelled",
             });
         }
@@ -456,7 +476,7 @@ impl super::super::Kernel {
                     _ = audit.due() => {
                         let verification = backend.check().await;
                         audit.ran();
-                        if let Err(reason) = unverified.record(&verification, std::time::Instant::now()) { stopped(&shared, "verify", reason, &verification); break; }
+                        if let Err(reason) = unverified.record(&verification, std::time::Instant::now()) { stopped(&shared, "verify", reason, &verification, None); break; }
                         if unverified.unknown() { continue; }
                         // Only withdrawal or a different plan withdraws an
                         // active capture.
@@ -497,7 +517,7 @@ impl super::super::Kernel {
                                     Verification::Unavailable(_) => Err(Error::Netlink),
                                     Verification::Changed(_) => Err(Error::Conflict),
                                 });
-                                if let Err(reason) = ended { stopped(&shared, "audit", reason, &verification); break; }
+                                if let Err(reason) = ended { stopped(&shared, "audit", reason, &verification, None); break; }
                                 continue;
                             },
                             Request::Stage(plan, reply) => {
@@ -542,9 +562,12 @@ impl super::super::Kernel {
                                 let result = backend.retire().await;
                                 let ok = result.is_ok();
                                 if ok { state.send_modify(|state| { state.active = false; state.retired = true; }); }
-                                let failed = result.as_ref().err().map(ToString::to_string);
+                                let failed = result.as_ref().err().map(|error| (error.to_string(), super::super::ended("retire", error)));
                                 let _ = reply.send(result);
-                                if let Some(error) = failed { stopped(&shared, "retire", "retire", &error); }
+                                if let Some((error, end)) = failed {
+                                    tracing::warn!(operation = "retire", check = end.check(), %error, "Egress capture owner stopping after a failed kernel operation; kernel ownership ends");
+                                    shared.end(end);
+                                }
                                 stop.cancel();
                                 return if ok { Ok(()) } else { Err(Error::Conflict) };
                             },
@@ -617,5 +640,42 @@ mod clamp_tests {
         retry.succeeded();
         assert!(!retry.take_due(now + Duration::from_secs(3600)));
         assert_eq!(retry.recovery.attempts(), 0);
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+    use crate::linux::protection::{Mark, Resources};
+    use tokio::sync::Semaphore;
+
+    /// RC-1 M4 (G5, Q5): an installation future dropped after its first
+    /// owned resource (a stalled process, an outer timeout) proves no other
+    /// writer: kernel ownership ends as unavailable and is re-proved.
+    #[test]
+    fn a_cancelled_installation_ends_ownership_as_unavailable() {
+        let shared = Arc::new(Shared {
+            mark: Mark { value: 1, mask: 1 },
+            selectors: Vec::new(),
+            conflict: CancellationToken::new(),
+            network: Default::default(),
+            tasks: crate::linux::tasks::Tasks::new(1),
+            sockets: Arc::new(Semaphore::new(1)),
+            data_sockets: Arc::new(Semaphore::new(1)),
+            attempts: Arc::new(Semaphore::new(1)),
+            resolutions: Arc::new(Semaphore::new(1)),
+            execution: std::sync::RwLock::new(None),
+            changes: watch::channel(None).0,
+            cleanups: watch::channel(None).0,
+            ending: Default::default(),
+            resources: Resources::new(1),
+        });
+        drop(Installing(Some(shared.clone())));
+        assert_eq!(
+            shared.ended().map(|(cause, _)| cause),
+            Some(crate::OwnershipEnd::Unavailable {
+                check: "install_cancelled"
+            })
+        );
     }
 }

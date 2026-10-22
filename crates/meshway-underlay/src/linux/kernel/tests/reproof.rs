@@ -175,7 +175,8 @@ async fn an_unavailable_ownership_end_is_proved_again_and_a_foreign_object_keeps
     );
 
     // Unavailable again; meanwhile another writer adds a rule inside the
-    // capture block. The re-proof reads it back: a conflict that stays.
+    // capture block. The re-proof reads it back: a conflict that stays
+    // while the rule is there, read again every 60 s (RC-1 Q2).
     let unreadable = Unreadable::start();
     tokio::time::timeout(std::time::Duration::from_secs(45), host.ended())
         .await
@@ -198,12 +199,33 @@ async fn an_unavailable_ownership_end_is_proved_again_and_a_foreign_object_keeps
         host.ownership_ended(),
         Some(OwnershipEnd::Conflict { check: "reproof" })
     );
-    assert!(host.recovery_at().is_none());
-    // The foreign rule's removal does not undo a proven conflict.
-    ip(&["rule", "del", "pref", &priority]);
+    let reread = host.recovery_at().expect("a proven conflict is read again");
+    let wait = reread.saturating_duration_since(std::time::Instant::now());
+    assert!(
+        wait > std::time::Duration::from_secs(50) && wait <= std::time::Duration::from_secs(60),
+        "read again every 60 s, not {wait:?}"
+    );
+    // Read again with the rule still there: still a conflict, the foreign
+    // rule untouched.
     assert!(matches!(host.recover().await, Err(Error::Conflict)));
-    assert!(host.install(desired).await.is_err());
+    assert!(host.ownership().borrow().is_blocked());
+    assert!(host.install(desired.clone()).await.is_err());
+    let rules = std::process::Command::new("/usr/sbin/ip")
+        .args(["rule", "show", "pref", &priority])
+        .output()
+        .unwrap();
+    assert!(
+        !rules.stdout.is_empty(),
+        "a re-read never removes a foreign object"
+    );
     println!("X13_FOREIGN_KEPT=conflict:reproof");
+    // The evidence gone, the next read-only re-proof owns a new term again.
+    ip(&["rule", "del", "pref", &priority]);
+    host.recover().await.unwrap();
+    assert!(host.ownership_ended().is_none() && host.ownership().borrow().is_healthy());
+    host.install(desired).await.unwrap();
+    host.kernel.shared.check().unwrap();
+    println!("RC1_CONFLICT_REREAD=recovered-after-removal");
     drop(host);
     server.abort();
     // A restart (a new Host) owns the same journal again.
@@ -234,7 +256,8 @@ async fn an_unavailable_ownership_end_is_proved_again_and_a_foreign_object_keeps
         host.ownership_ended(),
         Some(OwnershipEnd::Conflict { check: "monitor" })
     );
-    assert!(host.recovery_at().is_none());
+    assert!(host.ownership().borrow().is_blocked());
+    assert!(host.recovery_at().is_some(), "read again every 60 s");
     drop(unreadable);
     ip(&["rule", "del", "pref", &priority]);
     println!("X13_FOREIGN_SEEN=conflict:monitor");

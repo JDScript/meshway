@@ -20,6 +20,18 @@ fn empty_or_truncated_datagrams_end_ownership_as_unavailable() {
     );
 }
 
+/// RC-1 M4 (G6): the monitor's own failure (its state lock, a stopped
+/// worker) reads nothing back: an unavailable end, never a conflict.
+#[test]
+fn a_monitor_internal_failure_ends_ownership_as_unavailable() {
+    assert_eq!(
+        ended(&Error::Worker),
+        crate::OwnershipEnd::Unavailable {
+            check: "monitor_unavailable"
+        }
+    );
+}
+
 #[test]
 fn first_conflict_is_bounded_and_omits_unselected_attributes_and_expected_bytes() {
     let mut address = AddressMessage::default();

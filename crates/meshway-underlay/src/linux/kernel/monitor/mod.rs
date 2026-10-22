@@ -210,15 +210,11 @@ pub(super) async fn run(
     }
 }
 
-/// Lost, truncated or unreadable notifications prove nothing about
-/// ownership; a notification read completely and found foreign does.
+/// Lost, truncated or unreadable notifications, and the monitor's own
+/// failure, prove nothing about ownership; a notification read completely
+/// and found foreign does ([`super::ended`]).
 fn ended(error: &Error) -> crate::OwnershipEnd {
-    match error {
-        Error::Io(_) | Error::Netlink => crate::OwnershipEnd::Unavailable {
-            check: "monitor_unavailable",
-        },
-        _ => crate::OwnershipEnd::Conflict { check: "monitor" },
-    }
+    super::ended("monitor", error)
 }
 
 /// A received datagram the monitor can decode: neither empty nor filling the

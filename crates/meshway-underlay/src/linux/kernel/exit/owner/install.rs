@@ -9,7 +9,9 @@ struct Installing(Option<Arc<crate::linux::protection::Shared>>);
 impl Drop for Installing {
     fn drop(&mut self) {
         if let Some(shared) = self.0.take() {
-            shared.end(crate::OwnershipEnd::Conflict {
+            // A cancelled installation proves no other writer: the Host
+            // re-proves what the journal and the kernel hold.
+            shared.end(crate::OwnershipEnd::Unavailable {
                 check: "install_cancelled",
             });
         }

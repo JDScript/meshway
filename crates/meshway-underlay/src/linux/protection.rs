@@ -73,11 +73,14 @@ pub(super) struct Published {
 /// The first re-proof of an unavailable end, and the longest wait between two.
 const REPROOF: std::time::Duration = std::time::Duration::from_secs(1);
 const REPROOF_MAX: std::time::Duration = std::time::Duration::from_secs(8);
+/// How often a proven conflict is read again (read only).
+const REREAD_CONFLICT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The Host's kernel ownership across its terms (owner #1): one recovery,
 /// fed by every end a term records and by every re-proof, and its health,
 /// live. An unavailable end is retried (re-proved) 1 s after it, doubling to
-/// at most 8 s apart, without a total limit; a proven conflict is blocked.
+/// at most 8 s apart, without a total limit; a proven conflict is blocked
+/// and read again every 60 s.
 pub(super) struct Ownership {
     recovery: Mutex<meshway_model::recovery::Recovery>,
     health: tokio::sync::watch::Sender<meshway_model::recovery::Health>,
@@ -90,7 +93,7 @@ impl Default for Ownership {
                 meshway_model::recovery::Policy {
                     backoff: meshway_model::Backoff::new(REPROOF, REPROOF_MAX),
                     horizon: meshway_model::recovery::Horizon::Unbounded,
-                    reread_blocked: None,
+                    reread_blocked: Some(REREAD_CONFLICT),
                 },
             )),
             health: tokio::sync::watch::channel(Default::default()).0,

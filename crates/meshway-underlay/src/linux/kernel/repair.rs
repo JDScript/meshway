@@ -2,6 +2,17 @@
 //! owner, and the monitor's view of the own rules.
 use super::*;
 
+/// The recovery of a repair whose reads failed: read again every
+/// [`REPAIR_RETRY`], handed to the Host as unavailable after
+/// [`REPAIR_READS_LIMIT`] from the first failure.
+fn owed_repair() -> meshway_model::recovery::Recovery {
+    meshway_model::recovery::Recovery::new(meshway_model::recovery::Policy {
+        backoff: meshway_model::Backoff::new(REPAIR_RETRY, REPAIR_RETRY),
+        horizon: meshway_model::recovery::Horizon::Escalate(REPAIR_READS_LIMIT),
+        reread_blocked: None,
+    })
+}
+
 impl Kernel {
     /// The monitor's view of the capture block's own rules follows the journal.
     pub(super) fn publish_own_rules(&self) -> Result<()> {
@@ -22,9 +33,9 @@ impl Kernel {
     ///
     /// A repair whose reads fail cannot tell what is missing: it stays owed
     /// ([`Self::repair_at`], [`REPAIR_RETRY`] apart, not counted as a
-    /// repair) and after [`MAX_REPAIR_READS`] failed reads ends ownership as
-    /// unavailable. No outcome leaves the owner looking healthy with a
-    /// missing object it was told about.
+    /// repair) and once its reads failed for [`REPAIR_READS_LIMIT`] ends
+    /// ownership as unavailable (the Host re-proves it). No outcome leaves
+    /// the owner looking healthy with a missing object it was told about.
     pub async fn repair(&mut self) -> Result<()> {
         let now = std::time::Instant::now();
         while self
@@ -44,14 +55,22 @@ impl Kernel {
         }
         let (missing, lost) = match self.repair_reads().await {
             Ok(found) => found,
-            Err(error @ (Error::Netlink | Error::Io(_))) => {
-                let failures = self.repair_owed.map_or(0, |(_, failures)| failures) + 1;
-                if failures < MAX_REPAIR_READS {
-                    tracing::warn!(%error, failures, "Owned capture objects unreadable; the repair is retried");
-                    self.repair_owed = Some((now + REPAIR_RETRY, failures));
-                } else {
-                    self.repair_owed = None;
-                    self.end_after("repair", &error);
+            Err(error) if kind(&error) == Kind::Unknown => {
+                let owed = self.repair_owed.get_or_insert_with(owed_repair);
+                match owed.observe(
+                    meshway_model::recovery::Observation::unknown("repair_unavailable", &error),
+                    now,
+                ) {
+                    meshway_model::recovery::Step::Escalate(_) => {
+                        self.repair_owed = None;
+                        self.end_after("repair", &error);
+                    }
+                    _ => {
+                        let failures = owed.attempts();
+                        if owed.transitioned() || failures.is_power_of_two() {
+                            tracing::warn!(%error, failures, "Owned capture objects unreadable; the repair is retried");
+                        }
+                    }
                 }
                 return Err(error);
             }
@@ -87,9 +106,14 @@ impl Kernel {
 
     /// When an owed repair ([`Self::repair`]) is due again.
     pub fn repair_at(&self) -> Option<std::time::Instant> {
-        self.repair_owed
-            .filter(|_| self.shared.ended().is_none())
-            .map(|(at, _)| at)
+        match self.repair_owed.as_ref()?.health() {
+            meshway_model::recovery::Health::Retrying(retrying)
+                if self.shared.ended().is_none() =>
+            {
+                Some(retrying.retry_at)
+            }
+            _ => None,
+        }
     }
 
     /// The journal's rules (in reinstall order) and capture routes the

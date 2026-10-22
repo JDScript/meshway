@@ -138,16 +138,18 @@ pub struct KernelChangePending {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnershipEnd {
     /// An owner could not read its objects back, or a change of them stayed
-    /// unknown, for its whole limit (`check`: `verify_unavailable`,
-    /// `change_unavailable`, `monitor_unavailable`, `install_unavailable`,
+    /// unknown, for its whole limit, or failed without reading anything back
+    /// (`check`: `verify_unavailable`, `change_unavailable`,
+    /// `monitor_unavailable`, `install_unavailable`, `install_cancelled`,
     /// `repair_unavailable`, `drain_unavailable`, `connection_unavailable`,
-    /// `relay_unavailable`). Nothing proved another writer: the Host proves
+    /// `relay_unavailable`, …). Nothing proved another writer: the Host proves
     /// its ownership again (1 s after the end, doubling, at most 8 s apart) and
     /// recovers on its own once the kernel reads back consistent.
     Unavailable { check: &'static str },
-    /// The kernel was read back different from what this Host owns (or an
-    /// owner ended for a reason that is not a read): it stays ended until an
-    /// operator acts (restart).
+    /// The kernel was read back different from what this Host owns: it
+    /// stays ended. The Host reads it again every 60 s (a re-proof that
+    /// never removes or overwrites what it did not record) and recovers once
+    /// the foreign object is gone; an operator may also restart.
     Conflict { check: &'static str },
 }
 
@@ -168,7 +170,7 @@ impl std::fmt::Display for OwnershipEnd {
             ),
             Self::Conflict { check } => write!(
                 f,
-                "kernelOwnership: conflict ({check}); stays failed closed until restart"
+                "kernelOwnership: conflict ({check}); stays failed closed, read again every 60 s"
             ),
         }
     }

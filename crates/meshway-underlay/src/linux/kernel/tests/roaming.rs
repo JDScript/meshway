@@ -406,17 +406,28 @@ async fn a_repair_whose_read_fails_stays_owed_and_completes() {
     host.kernel.verify().await.unwrap();
     host.kernel.shared.check().unwrap();
 
-    // Reads failing on every attempt: the owner ends as unavailable.
+    // Reads failing on every attempt keep the repair owed within 30 s of
+    // the first failure (RC-1 M4: a duration, not a count), then the owner
+    // ends as unavailable.
     remove_one(&host).await;
     tokio::time::timeout(Duration::from_secs(3), repairs.changed())
         .await
         .unwrap()
         .unwrap();
     FAILING_RULE_READS.store(u32::MAX, SeqCst);
-    for _ in 1..super::super::MAX_REPAIR_READS {
+    let first = std::time::Instant::now();
+    for _ in 0..8 {
         assert!(host.repair().await.is_err());
-        assert!(host.repair_at().is_some());
+        assert!(
+            host.repair_at().is_some(),
+            "owed within its limit, however often its reads failed"
+        );
     }
+    assert!(host.ownership_ended().is_none());
+    tokio::time::sleep(
+        (first + Duration::from_secs(30)).saturating_duration_since(std::time::Instant::now()),
+    )
+    .await;
     assert!(host.repair().await.is_err());
     FAILING_RULE_READS.store(0, SeqCst);
     assert_eq!(

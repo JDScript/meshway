@@ -296,13 +296,17 @@ impl Host {
         self.kernel.shared.ended().map(|(cause, _)| cause)
     }
 
-    /// When [`Self::recover`] is due: only after an unavailable end, 1 s
-    /// after it, then doubling to at most 8 s between attempts.
+    /// When [`Self::recover`] is due: after an unavailable end 1 s after
+    /// it, then doubling to at most 8 s between attempts; after a proven
+    /// conflict every 60 s (a read-only re-proof: it never removes or
+    /// overwrites what it did not record, and keeps the conflict while the
+    /// foreign object is there).
     pub fn recovery_at(&self) -> Option<std::time::Instant> {
         self.kernel.shared.ended()?;
         match self.kernel.shared.ending.ownership.health() {
             meshway_model::recovery::Health::Retrying(retrying) => Some(retrying.retry_at),
-            _ => None,
+            meshway_model::recovery::Health::Blocked(blocked) => blocked.reread_at,
+            meshway_model::recovery::Health::Healthy => None,
         }
     }
 
@@ -312,21 +316,20 @@ impl Host {
         self.kernel.shared.ending.ownership.subscribe()
     }
 
-    /// Prove kernel ownership again after an unavailable end. The ended
-    /// term's owners are joined, its TUN closed and its tasks (Control relay
-    /// included) stopped; then a new term opens exactly as at process start:
-    /// every journal is recovered and verified against the kernel as it is
-    /// now. Kernel objects read back as recorded (or a clean start) give a
-    /// new term with the same journal, published channels and relay origin;
-    /// the caller installs its content again. A read or change that fails
-    /// again keeps the end unavailable (`Netlink`/`Io`, retried at
-    /// [`Self::recovery_at`]); anything else read back (a foreign object, an
-    /// unrecoverable journal) is a conflict that stays.
+    /// Prove kernel ownership again after its end. The ended term's owners
+    /// are joined, its TUN closed and its tasks (Control relay included)
+    /// stopped; then a new term opens exactly as at process start: every
+    /// journal is recovered and verified against the kernel as it is now.
+    /// Kernel objects read back as recorded (or a clean start) give a new
+    /// term with the same journal, published channels and relay origin; the
+    /// caller installs its content again. A read or change that fails again
+    /// proves nothing and keeps the end as it was (retried at
+    /// [`Self::recovery_at`]); anything read back different (a foreign
+    /// object, an unrecoverable journal) is a conflict, read again every
+    /// 60 s and kept while that evidence is there.
     pub async fn recover(&mut self) -> Result<()> {
-        match self.kernel.shared.ended() {
-            None => return Ok(()),
-            Some((crate::OwnershipEnd::Conflict { .. }, _)) => return Err(Error::Conflict),
-            Some((crate::OwnershipEnd::Unavailable { .. }, _)) => {}
+        if self.kernel.shared.ended().is_none() {
+            return Ok(());
         }
         if !self.reproof.closed {
             // The exit owner retries its cleanup until the Host's tasks stop.
@@ -396,39 +399,43 @@ impl Host {
         Ok(())
     }
 
-    /// A failed re-proof: a read or change that failed again keeps the end
-    /// unavailable; anything else makes it a conflict.
+    /// A failed re-proof: a read or change that failed again proves nothing
+    /// and keeps the end as it was; a read-back that differs (or a refusal no
+    /// later read changes) makes it a conflict.
     fn reproof_failed(&mut self, error: Error) -> Error {
-        let transient = matches!(error, Error::Netlink | Error::Io(_) | Error::Drain);
+        let proven = kernel::kind(&error) != kernel::Kind::Unknown;
         let failure = error.to_string();
         if self.reproof.failure.as_ref() != Some(&failure) {
-            if transient {
+            if proven {
                 tracing::warn!(
                     attempts = self.reproof.attempts,
                     error = %failure,
-                    "Kernel ownership re-proof unavailable; retrying"
+                    "Kernel ownership re-proof read back a conflict; ownership stays ended, read again every 60 s"
                 );
             } else {
                 tracing::warn!(
                     attempts = self.reproof.attempts,
                     error = %failure,
-                    "Kernel ownership re-proof read back a conflict; ownership stays ended until restart"
+                    "Kernel ownership re-proof unavailable; retrying"
                 );
             }
             self.reproof.failure = Some(failure);
         }
-        if transient {
-            // Unavailable again: the next re-proof waits longer.
-            if let Some((cause, _)) = self.kernel.shared.ended() {
-                self.kernel.shared.ending.ownership.observe(
-                    protection::Ownership::of(cause),
-                    self.reproof.started.unwrap_or_else(std::time::Instant::now),
-                );
+        let started = self.reproof.started.unwrap_or_else(std::time::Instant::now);
+        let ownership = &self.kernel.shared.ending.ownership;
+        match self.kernel.shared.ended() {
+            // Unknown again: the next re-proof waits longer (a proven
+            // conflict keeps its slow re-read).
+            Some((cause, _)) if !proven => {
+                ownership.observe(protection::Ownership::of(cause), started);
             }
-        } else {
-            self.kernel
+            Some((cause @ crate::OwnershipEnd::Conflict { .. }, _)) => {
+                ownership.observe(protection::Ownership::of(cause), started);
+            }
+            _ => self
+                .kernel
                 .shared
-                .end(crate::OwnershipEnd::Conflict { check: "reproof" });
+                .end(crate::OwnershipEnd::Conflict { check: "reproof" }),
         }
         error
     }
