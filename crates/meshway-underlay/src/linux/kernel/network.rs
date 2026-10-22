@@ -4,14 +4,11 @@
 //! Routes are looked up through the real RPDB with this Node's own mark, so
 //! policy tables other than main count as they would for its sockets.
 use crate::{NetworkChange, NetworkChangeClass, PoolOverlap};
-use rtnetlink::{
-    Handle,
-    packet_route::{
-        AddressFamily,
-        address::{AddressAttribute, AddressMessage, AddressScope},
-        link::LinkFlags,
-        route::{RouteAddress, RouteAttribute, RouteMessage, RouteType},
-    },
+use rtnetlink::packet_route::{
+    AddressFamily,
+    address::{AddressAttribute, AddressMessage, AddressScope},
+    link::LinkFlags,
+    route::{RouteAddress, RouteAttribute, RouteMessage, RouteType},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -21,7 +18,7 @@ use std::{
 };
 use tokio::sync::watch;
 
-use super::{super::protection::Shared, collect, monitor};
+use super::{super::protection::Shared, get_addresses, get_links, monitor, rtnl::Handle};
 
 /// A burst of notifications (DHCP, router advertisements, a link flap) this
 /// close together is one change: it is classified once no notification came
@@ -243,8 +240,8 @@ async fn fingerprint(
     mark: u32,
     limit: usize,
 ) -> crate::Result<Fingerprint> {
-    let links = collect(handle.link().get().execute(), limit).await?;
-    let addresses = collect(handle.address().get().execute(), limit).await?;
+    let links = get_links(handle, limit).await?;
+    let addresses = get_addresses(handle, limit).await?;
     let mut print = Fingerprint::default();
     {
         let state = expected.lock().map_err(|_| crate::Error::Worker)?;

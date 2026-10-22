@@ -450,6 +450,30 @@ OPS18（alpha.18 → alpha.19，`meshway-netmap-3` → `meshway-netmap-4`）Serv
 
 Planck 24 行矩阵 `20261022T024402Z-a8ecf31f`（`cce3cf9b`，并行 8，墙钟 1,462 秒，开始时同机无其他矩阵）全部通过。证据 `.meshway/validation/s5/`。
 
+### X16 被中断的 netlink dump 证据 {#x16-dump}
+
+规则见[被中断的 dump](/v2/node/runtime#kernel-change)。
+
+**根因**。N6 两次 `exit/off` 第 15 阶段 echo 299／300 的 E 日志都是 `Kernel netlink operation failed`（`operation: dump`，`errno: 16`）后 `Exit projection operation failed`（`step: route`）：新 (源, 远端) 对的回程规则选位 dump 被内核以 `EBUSY` 拒绝，投影安装失败，首包随该流丢弃。`EBUSY` 不是规则集在变化（那是 `NLM_F_DUMP_INTR`），而是同一 netlink socket 上已有另一个 dump 在进行：Host、egress capture owner 与出口 owner 是三个任务，共用本期的一个请求 socket，各自的 dump 可以同时开始。隔离测试 `linux::kernel::rtnl::tests::dumps_of_one_socket_are_taken_one_at_a_time`（4,000 条规则，同一 socket 同时 16 个 dump）中 rtnetlink 自己的 dump 每次都有 1 个被拒 `EBUSY`，经读取层的 16 个全部完整（6 次运行一致，`.meshway/validation/x16/isolated/`）。
+
+**dump 调用点**（全部经 `kernel/rtnl.rs`）：
+
+| 调用方 | dump | socket |
+| --- | --- | --- |
+| 出口 owner：回程规则与路由（安装、退役、清理及其回读）、`live_probe`、恢复 | 规则、路由、地址、链路 | 本期请求 socket（与 Host 共用） |
+| egress capture owner：初始化、门与路由回读 | 规则、路由 | 同上 |
+| Host：打开一期、RPDB 增删回读（`rpdb.rs`）、归属证明（`proof.rs`）、捕获对象重装（`repair.rs`）、安装（`install.rs`）、`down` | 规则、路由、地址、链路 | 同上 |
+| DNS 锚点：创建与删除；健康检查 | 地址、路由、链路 | 本期请求 socket；锚点自己的读取 socket |
+| observer：变化指纹 | 链路、地址 | observer socket |
+| 不是 dump：带目的地址的路由查询（出口转发判定、指纹路由）、按名称／索引取一个链路 | — | 不受影响 |
+| ctnetlink conntrack dump | — | 另一协议，`NLM_F_DUMP_INTR` 为 `conntrackUnavailable`（F6a B12） |
+
+**测试**。纯逻辑 `linux::kernel::rtnl::tests`：`EBUSY`、任一消息或只有结束消息带 `NLM_F_DUMP_INTR`、结束消息为 `-EBUSY` 均为未完成；拒绝、结束消息带其他 errno、超出对象上限为失败、不重读；中断两次后第三次完成，每次都中断时第 4 次后失败，失败不重读。`exit/off` 组件 `dumps-socket`（上述隔离测试）与 `dumps-exit`：`linux::kernel::exit::tests::dumps::interrupted_dumps_are_read_again_and_the_first_packet_is_answered`（真实 UDP echo）中路由步的第一个 dump 被注入 `EBUSY` 一次→重读、安装成功、首包经出口得到回复；每次都中断→安装在 `route` 步失败、按失败的安装退役、journal 只剩第一条流，同一 tuple 的下一次安装成功并得到回复，第一条流始终保持（`X16_EXIT_DUMPS=interrupted-once-installed-answered,interrupted-always-route-failed-retired,reinstalled-answered-first-kept`）。首包在安装轮期间留在 driver 的 FIFO，不需改 driver。
+
+**矩阵**（Planck，`c66e9b5f` 的产品代码 = `447bab3d`）：`exit/off` 五轮第 15 阶段 echo 全部 300／300、重连 40／40，E 日志无 `errno 16`、无被中断的 dump、投影失败只有第 6 阶段故意关闭 IPv4 转发的两次 `route`（`Target`）：`20261022T040603Z-1703bdf7`（与 udp／tcp／vless 并行 4）、`…042446Z-b865212b`、`…043848Z-e6b71e89`（与 exit6／netmap 两行并行 4）、`…045301Z-5a0b183e`、`…050929Z-9398db58`（11 行队列并行 4，`exit/off` 全程有其他行同时运行）。第一次运行 `…034552Z-798d6fd0` 中三个 runtime 行在 `underlay-roam-overlap` 失败：该测试的外来 socket 改为读取层 socket 后，rtnetlink 自己的地址 dump 读到被转发的结束消息（`6ead4394` 改为经读取层读取）。
+
+24 行矩阵 `20261022T052624Z-929bea24`（`6ead4394`，并行 8）21／24 通过，`exit/off` 803 秒、echo 300／300。三行失败均与 X16 无关：`exit6/off` 按名称的 IPv6 连接已返回服务地址，外部服务在回复后才写访问记录（load 13，与 N6 修过的 IPv4 同一缺陷，`c66e9b5f` 修复）；`roam/relay` hard 格 `newFlowsThroughR`（空窗内 1 个新流未经 R 回复，R4）；`roam/exit` soft 格 `exitReadyAgain`（A 路径变化时在途的 State 报告以网络错误失败后按 5 秒重试，候选 6.8 秒后才确认，与 [X18](#x18-tracker-spin) 记录的同一签名）。复跑 `20261022T055309Z-95d23d24` 中 `roam/relay`、`roam/exit` 通过，`exit6/off` 因同机另一矩阵占满 Docker 地址池未建网；单行 `20261022T060756Z-a0d8ee6d` 通过。证据 `.meshway/validation/x16/`。
+
 ### H4 撤回原因、重装日志、observedAt 与控制中继状态证据 {#h4}
 
 规则见[撤回期间的原因](/v2/node/runtime#ownership-end)、[控制中继不结束归属](/v2/node/runtime#ownership-end)、Status 表的 `observedAt`／`controlObservedAt`／`controlRelay` 与[日志](/v2/logging#事件与字段)。
@@ -480,7 +504,7 @@ Planck 23 行矩阵 `20261017T035656Z-d07a17c4`（`673c17be`，与本分支 `307
 | `20261017T053722Z-1a07d234`、`…060640Z-a914c818` | `roam/flap` | 结束时节点 `down` 超过 fixture 的 10 秒 | fixture：controller 在 `roam-complete` 即退出，`roam-down` 与 `roam-stop` 同时发出；节点的 Control 正有请求在飞时等其 10 秒连接超时。`20261017T091216Z-074139d9` 的 `roam/nat` 同一签名。已修：supervisor 等每个节点 `roam-down` 后才 `roam-stop`（至多 40 秒），controller 服务到 `roam-stop` |
 | `…053722Z-1a07d234`、`…082502Z-2e0eefcf` | `nat/resolved` | 租约到期恢复后 `ping` 60 秒停在 `path_handshake`：R 等待 R→B 认证通道，B 的穿透 `prepare` 一直 `NotAvailable` | 节点时钟超前使 prepare 期限超过 Server 的 10 秒，见 [N6](#n6) |
 | `…064349Z-19673857` | `exit/off` | Docker `all predefined address pools have been fully subnetted` | 已知并发网络数（见 [roam/flap 行](#roam-flap-row)的 `20261015T233743Z-e3b061a6` 记录） |
-| `…070252Z-9b56eb4d`、`…074258Z-6ebe6e29`、`…093221Z-b49150f4` | `exit/off` | 全局方案下新连接 3 秒内未经 E（circuit 3 秒才就绪）；echo 投影峰值 33（上限 32）；echo 299/300 | 分别为 fixture 记录晚于回复、上限低于负载的合法峰值、E 出口投影安装 netlink 失败（X16），见 [N6](#n6) |
+| `…070252Z-9b56eb4d`、`…074258Z-6ebe6e29`、`…093221Z-b49150f4` | `exit/off` | 全局方案下新连接 3 秒内未经 E（circuit 3 秒才就绪）；echo 投影峰值 33（上限 32）；echo 299/300 | 分别为 fixture 记录晚于回复、上限低于负载的合法峰值、E 出口投影安装 netlink 失败（X16，已修，见 [X16](#x16-dump)），见 [N6](#n6) |
 | `…072236Z-ad684c7a`、`…084541Z-e7a66243`（并行 4） | `roam/relay` | `newFlowsThroughR`：0.6–0.75 秒的空窗内新流 0–1 个、未经 R 回复 | 空窗无样本（现为不适用）；`…084541Z` 的一个新流确实丢失（R4），见 [N6](#n6) |
 | `…074258Z-6ebe6e29` | `nat/resolved` | 持续窗口初始 IPv4 UDP 无 echo | 与上面 `nat/resolved` 同一根因（恢复访问后 27 秒 `NotAvailable`），见 [N6](#n6) |
 
@@ -495,7 +519,7 @@ H4 十轮全量的偶发失败逐一归因如下（证据 `.meshway/validation/h
 | `nat/resolved` 租约到期恢复后（`matrix2`、`matrix9`）或恢复访问后（`matrix8`）一端的 `prepare` 一直 `notAvailable`，R 一直等认证通道 | 产品：Control 的 UTC 高水位时钟先读单调时钟后读墙钟，两次读取之间的延迟（抢占、CPU 配额）被永久计入，节点时钟比真实时间快；prepare 以“本机时间＋10 秒”为期限，Server 按自己的时钟拒绝寿命超过 10 秒的请求。只有上下文期限离到期不足 10 秒、把请求期限压下来时才偶尔通过（三次失败的恢复时刻都与此吻合：`matrix2` 05:51:05.45 的请求被上下文期限 05:51:14.468 截住、此前一秒的请求超 26 ms） | 时钟先读墙钟（`Clock::read`）；prepare 期限改以 Server 时间表达（[协调穿透](/v2/node/connectivity)）。确定性单测：第二次读取延迟 50 ms 时高水位不超前（旧顺序下失败），本机时钟快 5 秒时请求期限仍为 Server 读数＋10 秒 |
 | `exit/off` 第 11 阶段 `global:E` 下新连接“未经 E”（`matrix6`） | fixture：E 的抓包显示该连接在 0.14 秒内完成回显；外部服务先回复、后写访问日志，高负载下 fixture 读日志时尚未写入 | 服务在回复前写入访问记录 |
 | `exit/off` 第 15 阶段 echo 投影峰值 33（上限 32，`matrix8`） | fixture 门槛：投影数是速率 × 寿命，寿命含往返时间（该轮 ping 最大 RTT 1.9 秒）；各轮中位数 22–23，负载结束后归零，无泄漏 | 上限改为该负载能同时存活的数目 46（见[第 15 阶段](#exit-scenario)） |
-| `exit/off` 第 15 阶段 echo 299／300（`matrix12`） | 产品：丢失的序号 186 到达 E，但其出口投影安装因 `kernel netlink operation failed` 失败，该包被丢弃 | 未修，登记为 X16（见[剩余边界](#remaining-boundaries)）；本次只增加可诊断性 |
+| `exit/off` 第 15 阶段 echo 299／300（`matrix12`） | 产品：丢失的序号 186 到达 E，但其出口投影安装因 `kernel netlink operation failed` 失败，该包被丢弃 | N6 增加可诊断性；X16 已修，见 [X16](#x16-dump) |
 | `roam/relay` `newFlowsThroughR`，空窗内 0 个新流（`matrix7`，窗口 0.10 秒） | fixture 门槛：新流每 250 ms 一个，短空窗没有样本 | 不适用（`null`），记录 `gapWindowS` |
 | `roam/relay` 同一检查，空窗内 1 个新流无回复（`matrix10`） | 产品：该流发出时 A 的重新穿透已开始（attempt active），新直连通道尚未认证；它从未得到回复，中继 circuit 当时正常 | 未修，登记为 R4（见[剩余边界](#remaining-boundaries)） |
 | `exit/off` Docker 地址池耗尽（`matrix5`） | 运维环境：同机多个矩阵共用默认地址池 | 见[矩阵入口](/v2/development#validation-matrix)，不改产品 |
@@ -618,8 +642,6 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 **长于 30 秒的内核停顿仍 fail closed，停顿结束后自愈**（X13 之后）：变更失败与回读失败共用 30 秒上限（与 DNS owner 一致）。停顿期间每一次回读都失败满 30 秒时，出口审计照旧停止角色（lab sha 限额 45 秒一次：`operation: audit`、`check: verify_unavailable`，清理第 4 次完成后重装），egress capture 以暂态阻断结束宿主内核归属，Host 每 1–8 秒重证、停顿结束后自动重装（[X13](#x13-reproof)）；变更在起点反复失败满 30 秒为 `change_unavailable`，同样按暂态处理。控制中继监听失败与任务容量耗尽不结束归属，由中继自行重试／拒新保旧（X15，见[归属的结束与重证](/v2/node/runtime#ownership-end)）。X11 发现的 `pause` 失败（main 上停机到重启）与并行矩阵中出口 `retire` 超时停止角色已按[内核变更失败](/v2/node/runtime#kernel-change)处理，证据见 [X12](#x12-change)。
 
 **节点持有的 peer 事实可早于其租约到期**（X8 发现，P1 已修复）：此前 Server 只在事实内容变化时唤醒 sync hold、hold 只以租约为界，而事实按报告者 `observedAt` + 60 秒到期，节点在 hold 期间或 Node HTTP 中断时可在租约到期前失去出口就绪事实，新出口流在本地被拒（`netmap_denied`）。现在 hold 也以节点持有事实的最早截止 − 5 秒为界（[sync hold](/v2/node/netmap-design#sync-transport)），且过期的出口就绪事实按最后已知值继续可选（[最后已知事实](/v2/node/connectivity#last-known-facts)）；`exit/off` 第 15 阶段等待 A 取得一次 sync 的绕过已去掉，第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。P1 Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；单行 `exit/off` 复跑 `20261015T065227Z-9645d57c`（行 `20261015T065230Z-44e5de7b`）中 A 关于 E 的事实在首个路径租约到期前 7 秒过期，此后两条链路各 3 个新 UDP 出口流建立、无拒绝（main 上此时 `netmap_denied`）。同批另有两次失败：第 15 阶段 E 在角色重装进行中如实报告未就绪、A 据当前事实拒绝了一次出口 DNS 查询（`20261015T055930Z-782e79b3`；是 fixture 断言过严，第 15 阶段已改为中断窗界定，见[出口场景](#exit-scenario)）；两个 `exit/off` 并发时第 16 阶段 iperf3 超时（`20261015T065357Z-b98749cc`，与 P1 无关）。断言修改后（`f9115a91`）`exit/off` 单跑两次通过：`20261015T123419Z-c3f16022`（行 `20261015T123716Z-7753f918`，A 关于 E 的事实在首个租约到期前 3 秒过期，之后两条链路各 1 个新出口流成功）与 `20261015T125059Z-2a2f87b5`（行 `20261015T125103Z-83765480`，第 15 阶段中断窗 2.5 秒内 3 次查询失败 2 次、上限 7、窗外 0 次）。
-
-**出口投影安装的 netlink 失败丢首包**（X16，未修）：E 为新流安装出口投影时一次内核操作失败，该流的首包被丢弃（不停止角色）。N6 在 `Exit projection operation failed` 日志加了失败步骤 `step`，netlink 失败另记 `errno`／超时，nft 失败记子命令与 stderr；N6 矩阵两次都是 `step: route`、路由规则 dump `errno 16`（EBUSY，dump 期间规则集变化）。按 X12 的“读取失败为未知→重读→重试”口径，首包应留在 held 队列等一次重试。频率约每 10 轮全量一次（`exit/off` 第 15 阶段 echo 299／300）；证据 H4 `matrix12/`，N6 第 1、3 轮。
 
 **重新穿透交接期的新流丢失**（R4，未修）：`roam/relay` 中 A 换上联后，重新穿透已开始（attempt active）而新直连通道尚未认证时发出的单报文新流没有任何回复，同一时刻经 R 的中继流正常。频率约每 10 轮一次；证据 H4 `matrix10/`（行 `20261017T090359Z-49e94e80`，hard 格 flow 151）。
 

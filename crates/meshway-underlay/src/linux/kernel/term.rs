@@ -20,8 +20,7 @@ impl Kernel {
     ) -> Result<Self> {
         // Subscribe before the baseline dump so rule changes cannot disappear
         // between discovery and the monitor's start.
-        let (connection, handle, unsolicited) = rtnetlink::new_connection()?;
-        drop(unsolicited); // request socket has no multicast subscriptions
+        let (connection, handle) = rtnl::connect()?;
         let conflict = CancellationToken::new();
         let ending = Arc::new(super::super::protection::Ending::default());
         // Set once this term opened; a connection that ends before (a failed
@@ -65,8 +64,7 @@ impl Kernel {
         // Observation (change fingerprints, route lookups) has its own
         // request socket: it never queues behind or interleaves with the
         // owner's mutations and their readback dumps.
-        let (observer_connection, observer, unsolicited) = rtnetlink::new_connection()?;
-        drop(unsolicited);
+        let (observer_connection, observer) = rtnl::connect()?;
         let observer_failed = connection_ended("observer");
         tasks.spawn(async move {
             observer_connection.await;
@@ -237,7 +235,7 @@ impl Kernel {
 
 /// Interface aliases of this namespace.
 async fn link_aliases(handle: &Handle, limit: usize) -> Result<Vec<String>> {
-    Ok(collect(handle.link().get().execute(), limit)
+    Ok(get_links(handle, limit)
         .await?
         .into_iter()
         .flat_map(|link| link.attributes)

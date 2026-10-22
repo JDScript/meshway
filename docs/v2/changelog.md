@@ -10,6 +10,13 @@
 
 验证：见 [S5](/v2/node/validation#s5)；Planck 24 行矩阵通过。
 
+被中断的 netlink dump（X16，`x16/exit-ebusy`）：wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
+
+- 修复（不变量：没有完成的读取不证明任何事，失败的读取是未知而不是安装失败；owner：`meshway-underlay` `kernel/rtnl.rs`，规则、路由、地址与链路 dump 的唯一读取层）：出口为新 (源, 远端) 对安装回程规则时的规则 dump 与 Host 或 egress capture owner 在同一 netlink socket 上的 dump 同时开始，内核以 `EBUSY` 拒绝，投影安装失败、首包丢弃（`exit/off` 第 15 阶段 echo 299／300，约每 10 轮全量一次）。现在同一 socket 的 dump 逐个执行并读到结束消息；`EBUSY` 或 `NLM_F_DUMP_INTR`（含只标在结束消息上的）立即重读，至多 4 次，仍中断才按读取失败处理；期限仍为 5 秒。
+- fixture：外部服务的 IPv6 访问也在回复前记录（`exit6/off` 按名称连接的误报）。
+
+验证：见 [X16](/v2/node/validation#x16-dump)。
+
 ## v0.1.0-alpha.20
 
 范围：X18 Status 跟踪任务 DNS guard 电平分支修复，以及 daemon lifecycle watch 关闭后分支禁用；契约不变——`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 8 与 HTTP 契约均不变，Node 与 Server 可按任意顺序普通升级（无断网窗口）。

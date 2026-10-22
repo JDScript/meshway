@@ -72,6 +72,7 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
                 accepted = async { tcp6.as_ref().expect("guarded").accept().await }, if tcp6.is_some() && tasks.len() < 32 => {
                     let (mut stream, peer) = accepted?;
                     visits.push(Visit { protocol: "tcp", peer, local: stream.local_addr()?, bytes: 0 });
+                    write(&cli.evidence.join("access.json"), &visits).await?;
                     tasks.spawn(async move {
                         let mut buffer = [0; 32768];
                         loop {
@@ -89,6 +90,7 @@ pub(super) async fn run(cli: &Cli) -> Result<()> {
                     let (count, peer) = packet?;
                     let socket = udp6.as_ref().expect("guarded");
                     visits.push(Visit { protocol: "udp", peer, local: socket.local_addr()?, bytes: count });
+                    write(&cli.evidence.join("access.json"), &visits).await?;
                     let _ = socket.send_to(&buffer6[..count], peer).await;
                 }
                 packet = subscription.recv_from(&mut subscription_buffer) => {

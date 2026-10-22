@@ -59,12 +59,9 @@ impl super::super::Kernel {
             .map_err(|_| Reason::OwnershipConflict)?
             .probe_tun = None;
         let owned = self.owned_interfaces();
-        let links = super::super::collect(
-            self.handle.link().get().execute(),
-            self.options.max_kernel_objects,
-        )
-        .await
-        .map_err(|_| Reason::RouteConflict)?;
+        let links = super::super::get_links(&self.handle, self.options.max_kernel_objects)
+            .await
+            .map_err(|_| Reason::RouteConflict)?;
         let routes = super::super::get_routes(&self.handle, self.options.max_kernel_objects)
             .await
             .map_err(|_| Reason::RouteConflict)?;

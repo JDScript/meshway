@@ -149,6 +149,9 @@ pub(in crate::linux::kernel) mod faults {
     pub static FAILING_TOOL_READS: AtomicU32 = AtomicU32::new(0);
     /// Netlink rule dumps that fail (no answer within their budget).
     pub static FAILING_RULE_READS: AtomicU32 = AtomicU32::new(0);
+    /// Netlink dump attempts the kernel refuses with `EBUSY` (another dump
+    /// runs on the socket).
+    pub static INTERRUPTED_DUMPS: AtomicU32 = AtomicU32::new(0);
     pub(in crate::linux::kernel) fn take(counter: &AtomicU32) -> bool {
         counter
             .fetch_update(SeqCst, SeqCst, |left| left.checked_sub(1))

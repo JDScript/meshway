@@ -11,8 +11,7 @@ fn isolated() {
 }
 
 async fn foreign() -> (Handle, tokio::task::JoinHandle<()>) {
-    let (connection, handle, unsolicited) = rtnetlink::new_connection().unwrap();
-    drop(unsolicited);
+    let (connection, handle) = rtnl::connect().unwrap();
     (handle, tokio::spawn(connection))
 }
 
@@ -267,14 +266,13 @@ async fn addresses_by_family_and_routes_toward_remotes_classify_the_path() {
         crate::NetworkChangeClass::Path
     );
     let temporary = {
-        use futures_util::TryStreamExt;
-        let mut addresses = handle
-            .address()
-            .get()
-            .set_link_index_filter(temporaries)
-            .execute();
         let mut found = None;
-        while let Some(address) = addresses.try_next().await.unwrap() {
+        for address in get_addresses(&handle, 65_536)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|address| address.header.index == temporaries)
+        {
             let flags = address
                 .attributes
                 .iter()
@@ -468,14 +466,13 @@ async fn an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves() {
     handle
         .address()
         .del({
-            use futures_util::TryStreamExt;
-            let mut addresses = handle
-                .address()
-                .get()
-                .set_link_index_filter(index)
-                .execute();
             let mut found = None;
-            while let Some(address) = addresses.try_next().await.unwrap() {
+            for address in get_addresses(&handle, 65_536)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|address| address.header.index == index)
+            {
                 let pool = address.attributes.iter().any(|attribute| {
                     matches!(attribute, rtnetlink::packet_route::address::AddressAttribute::Local(ip)
                         if *ip == "100.96.9.9".parse::<IpAddr>().unwrap())
