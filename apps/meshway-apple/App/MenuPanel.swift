@@ -20,7 +20,7 @@ struct MenuPanel: View {
             }.scrollIndicators(.hidden).frame(height: 96, alignment: .top)
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
             sectionLabel("设备")
-            Group {
+            VStack(alignment: .leading, spacing: 0) {
             if ConnectionPresentation(model: model).state == .connecting { SkeletonRows(count: max(3, min(peers.count, 5))) }
             else if peers.isEmpty {
                 EmptyStateView(kind: serverEmptyState(model) ?? .devices, compact: true)
@@ -37,7 +37,7 @@ struct MenuPanel: View {
                         .buttonStyle(MenuRowStyle()).font(.system(size: 12))
                 }
             }
-            }.frame(height: expandedPeers ? 300 : 150, alignment: .top)
+            }.frame(height: expandedPeers ? 330 : 180, alignment: .top)
             Divider().padding(.horizontal, 10).padding(.vertical, 5)
             Button("打开 Meshway") { openWindow(id: "main"); NSApp.activate() }.buttonStyle(MenuRowStyle())
             Button { openSettings(); NSApp.activate() } label: {

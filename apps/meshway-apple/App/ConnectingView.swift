@@ -81,12 +81,11 @@ struct ConnectionSwitchStyle: ToggleStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         Button { configuration.isOn.toggle() } label: {
-            Capsule().fill(configuration.isOn ? Color.teal : Color.secondary.opacity(0.25))
-                .frame(width: 34, height: 20)
-                .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                    Circle().fill(.white).frame(width: 16, height: 16).shadow(color: .black.opacity(0.15), radius: 1, y: 1).padding(2)
-                }
-        }.buttonStyle(.plain).accessibilityLabel("连接 Meshway")
+            Circle().fill(.white).frame(width: 16, height: 16).shadow(color: .black.opacity(0.15), radius: 1, y: 1).padding(2)
+                .frame(width: 34, height: 20, alignment: configuration.isOn ? .trailing : .leading)
+        }.buttonStyle(.plain)
+            .background(configuration.isOn ? Color.teal : Color.secondary.opacity(0.25), in: Capsule())
+            .accessibilityLabel("连接 Meshway")
             .accessibilityValue(configuration.isOn ? "开" : "关")
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: configuration.isOn)
     }

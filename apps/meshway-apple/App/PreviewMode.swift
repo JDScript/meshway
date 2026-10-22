@@ -41,7 +41,7 @@ enum PreviewMode {
                     model.previewSection = args[index + 1]
                 }
                 let main = window(MainView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 820, height: 520), title: "Meshway")
-                let panel = window(MenuPanel(model: model), size: NSSize(width: 316, height: 500), title: "Meshway menu panel", panel: true)
+                let panel = window(MenuPanel(model: model), size: NSSize(width: 316, height: 512), title: "Meshway menu panel", panel: true)
                 let settings = window(SettingsView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 580, height: 510), title: "Meshway 设置")
                 windows = [main, panel, settings]
                 main.setFrameOrigin(NSPoint(x: 60, y: 80)); panel.setFrameOrigin(NSPoint(x: 950, y: 160))
@@ -74,7 +74,6 @@ enum PreviewMode {
         host.sizingOptions = []
         window.contentViewController = host
         window.setContentSize(size)
-        if panel { window.setContentSize(host.view.fittingSize) }
         return window
     }
     @MainActor private static func snapshot(_ window: NSWindow, to url: URL) async throws {
