@@ -20,10 +20,10 @@ struct MeshwayApp: App {
         Window("Meshway", id: "main") {
             MainView(model: model)
                 .environment(IconPreferences.shared)
-                .frame(minWidth: 720, minHeight: 620)
+                .frame(minWidth: 780, minHeight: 500)
                 .task { model.startPolling() }
         }
-        .defaultSize(width: 900, height: 720)
+        .defaultSize(width: 820, height: 520)
         .commands {
             #if DEBUG
             CommandMenu("Debug") {
@@ -35,6 +35,10 @@ struct MeshwayApp: App {
         MenuBarExtra("Meshway", systemImage: "network") {
             MenuPanel(model: model).task { model.startPolling() }
         }.menuBarExtraStyle(.window)
+        Settings {
+            SettingsView(model: model).environment(IconPreferences.shared)
+                .task { model.startPolling() }
+        }
     }
 }
 

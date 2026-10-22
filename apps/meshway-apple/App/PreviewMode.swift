@@ -39,20 +39,22 @@ enum PreviewMode {
                     guard AppPage(rawValue: args[index + 1]) != nil else { throw IPCFailure.result }
                     model.previewSection = args[index + 1]
                 }
-                let main = window(MainView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 900, height: 720), title: "Meshway · SAMPLE DATA")
-                let panel = window(MenuPanel(model: model).clipShape(.rect(cornerRadius: 14)), size: NSSize(width: 344, height: 480), title: "Meshway menu panel · SAMPLE DATA", panel: true)
-                windows = [main, panel]
+                let main = window(MainView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 820, height: 520), title: "Meshway")
+                let panel = window(MenuPanel(model: model), size: NSSize(width: 316, height: 420), title: "Meshway menu panel", panel: true)
+                let settings = window(SettingsView(model: model).environment(IconPreferences(defaults: nil)), size: NSSize(width: 580, height: 510), title: "Meshway 设置")
+                windows = [main, panel, settings]
                 main.setFrameOrigin(NSPoint(x: 60, y: 80)); panel.setFrameOrigin(NSPoint(x: 950, y: 160))
                 main.makeKeyAndOrderFront(nil); panel.orderFront(nil); NSApp.activate()
                 if let index = args.firstIndex(of: "--snapshot-dir"), args.count > index + 1 {
                     try await Task.sleep(for: .seconds(2))
                     let directory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (dark ? "-dark" : "-light")
+                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "") + (args.contains("--preview-selected") ? "-selected" : "") + (dark ? "-dark" : "-light")
                     try await snapshot(main, to: directory.appendingPathComponent("\(stem)-main.png"))
                     try await snapshot(panel, to: directory.appendingPathComponent("\(stem)-panel.png"))
+                    try await snapshot(settings, to: directory.appendingPathComponent("\(stem)-settings.png"))
                     print("Preview screenshots saved to \(directory.path)")
-                    main.close(); panel.close(); exit(0)
+                    main.close(); panel.close(); settings.close(); exit(0)
                 }
             } catch { print("Preview failed: \(error)"); exit(1) }
         }
@@ -63,7 +65,7 @@ enum PreviewMode {
         window.isReleasedWhenClosed = false
         if panel { window.isOpaque = false; window.backgroundColor = .clear }
         window.title = title
-        window.contentView = NSHostingView(rootView: view)
+        window.contentViewController = NSHostingController(rootView: view)
         return window
     }
     @MainActor private static func snapshot(_ window: NSWindow, to url: URL) async throws {

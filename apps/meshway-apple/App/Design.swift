@@ -3,7 +3,7 @@ import SwiftUI
 @MainActor @Observable
 final class AppNavigation {
     static let shared = AppNavigation()
-    var page: AppPage? = .overview
+    var page: AppPage? = .peers
 }
 
 // Motion and feedback live in the presentation layer; no optimistic Node state.

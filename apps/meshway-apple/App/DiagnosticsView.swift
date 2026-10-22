@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DiagnosticsView: View {
     @Bindable var model: AppModel
+    var netcheckOnly = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var checking = false
     var body: some View {
@@ -25,7 +26,7 @@ struct DiagnosticsView: View {
                 }.frame(height: 174)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.netcheck != nil)
             }
-            Section("Ping") {
+            if !netcheckOnly { Section("Ping") {
                 HStack {
                     TextField("Node name, IP or domain", text: $model.pingTarget).textFieldStyle(.roundedBorder).onSubmit { model.ping() }
                     ProgressView().controlSize(.small).opacity(model.pingRunning ? 1 : 0).frame(width: 16)
@@ -45,8 +46,8 @@ struct DiagnosticsView: View {
                     } else {
                         placeholder("waveform.path.ecg", title: model.pingRunning ? "Preparing measurement…" : "Follow a packet's path", subtitle: "Local routing decision and measured replies appear here.", active: model.pingRunning)
                     }
-                }.frame(height: 190)
-            }
+                }.frame(height: 136)
+            } }
         }.formStyle(.grouped)
     }
 
