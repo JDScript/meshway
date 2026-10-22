@@ -21,6 +21,8 @@ const MAX_ATTEMPTS: usize = 64;
 const FIRST_PACKET_POLL: Duration = Duration::from_secs(10);
 const RETENTION: Duration = Duration::from_secs(20);
 const MAX_SENDS: usize = 32;
+/// Each direction's share of one packet turn.
+const SHARE: Duration = Duration::from_micros(200);
 /// A packet turn this long is logged (diagnostics).
 const SLOW_TURN: Duration = Duration::from_millis(100);
 
@@ -56,6 +58,9 @@ pub(super) struct Packets {
     pub dropped: u64,
     carrier_wait_logged: Option<Instant>,
     held_logged: Option<Instant>,
+    /// The last turn left ready packets for want of time, not of capacity:
+    /// the next turn is due at once.
+    deferred: bool,
     /// Time this turn spent awaiting carrier sends and TUN writes.
     awaited: Duration,
     scan_remaining: usize,
@@ -192,6 +197,8 @@ impl Packets {
             oldest_local_ms,
             first_waiting = first,
             can_read,
+            deferred = self.deferred,
+            scan_remaining = self.scan_remaining,
             incoming = self.incoming.len(),
             control = self.control.len(),
             local_done,
@@ -204,7 +211,7 @@ impl Packets {
     }
     pub fn wake_at(&self) -> Option<Instant> {
         let now = Instant::now();
-        if self.scan_remaining != 0 || !self.closes.is_empty() {
+        if self.scan_remaining != 0 || self.deferred || !self.closes.is_empty() {
             return Some(now);
         }
         let first = self
@@ -360,6 +367,7 @@ impl Packets {
     ) {
         let local = desired.netmap().node_id;
         let now = Instant::now();
+        self.deferred = false;
         let Some(carriers) = carriers else {
             return;
         };
@@ -433,7 +441,7 @@ impl Packets {
         let local_count = self.local.len().min(per_direction);
         let mut incoming_done = 0;
         let mut local_done = 0;
-        let quantum = std::time::Instant::now();
+        let incoming_share = Share::new(SHARE);
         let mut outgoing = Vec::new();
         let mut ready = Vec::new();
         for _ in 0..incoming_count {
@@ -444,14 +452,17 @@ impl Packets {
             else {
                 break;
             };
-            incoming_done += 1;
-            if secure::is_data_frame(&item.bytes)
-                && (!pool.can_submit_capacity(item.bytes.capacity())
-                    || quantum.elapsed() >= Duration::from_micros(200))
-            {
-                self.incoming.push_front(item);
-                break;
+            if secure::is_data_frame(&item.bytes) {
+                // Capacity returns with the pool's or an output's completion;
+                // time only with the next turn.
+                let spent = incoming_share.spent();
+                if spent || !pool.can_submit_capacity(item.bytes.capacity()) {
+                    self.deferred |= spent;
+                    self.incoming.push_front(item);
+                    break;
+                }
             }
+            incoming_done += 1;
             // Queues are cleared by every apply; only their own bound remains.
             if item.deadline <= Instant::now() {
                 self.drop_packet("cipher_deadline");
@@ -639,6 +650,9 @@ impl Packets {
                     .map_or(info.expires_at.into(), |at| at.min(info.expires_at).into());
             }
         }
+        // Local packets have their own share, never what the incoming half
+        // (with its sends and TUN writes) left over.
+        let local_share = Share::new(SHARE);
         for _ in 0..local_count {
             if self.local.front().is_some_and(|item| {
                 !pool.can_submit_capacity(
@@ -646,8 +660,11 @@ impl Packets {
                         + meshway_dataplane::DEFAULT_HEADROOM
                         + meshway_dataplane::DEFAULT_TAILROOM,
                 )
-            }) || quantum.elapsed() >= Duration::from_micros(200)
-            {
+            }) {
+                break;
+            }
+            if local_share.spent() {
+                self.deferred = true;
                 break;
             }
             let Some(item) = self.local.pop_front() else {
@@ -877,5 +894,49 @@ impl Packets {
             self.deliveries
                 .push(delivery_credits, deliveries, Delivered { count });
         }
+    }
+}
+
+/// One direction's share of a packet turn, from when that direction starts.
+struct Share {
+    started: std::time::Instant,
+    length: Duration,
+}
+
+impl Share {
+    fn new(length: Duration) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            length,
+        }
+    }
+    fn spent(&self) -> bool {
+        self.started.elapsed() >= self.length
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Packets, Share};
+    use std::time::Duration;
+
+    #[test]
+    fn a_turn_left_short_of_time_is_due_again_at_once() {
+        let mut packets = Packets::default();
+        assert_eq!(packets.wake_at(), None);
+        packets.deferred = true;
+        let due = packets.wake_at().expect("due");
+        assert!(due <= tokio::time::Instant::now());
+    }
+
+    #[test]
+    fn each_direction_has_its_own_share_of_a_turn() {
+        // The incoming half spent its share (with its sends and TUN writes);
+        // the local half starts its own.
+        let incoming = Share::new(Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(incoming.spent());
+        let local = Share::new(Duration::from_secs(60));
+        assert!(!local.spent());
     }
 }
