@@ -163,8 +163,8 @@ sha 应用 IPv4
 | --- | --- |
 | 一致 | 保持；此前未知时 INFO `Exit role audit verified again; ownership kept`（`failures`、`unverified_ms`） |
 | 读取失败（工具 2 秒期限、netlink 中断、输出不可读、`nft list table` 失败而表仍在 `nft list tables` 中）| 未知，不证明归属变化：角色与其流保持，一秒后再证，WARN `Exit role audit unavailable; retrying, the role and its flows kept` 一次；探测请求的审计此时回 `netlink`（该次探测报 `ownershipConflict`，角色不撤） |
-| 连续未知 30 秒（`verify_unavailable`）| 角色停止：`Exit owner stopping after a failed kernel operation`（`operation: audit`、`check`、`error`），随后按下述清理并只撤该角色；清理完成后的探测 `ready` 即重装 |
-| 读成功而不符（`objects_changed`、`flow_unowned`、`flow_missing`），表已不存在（`table_missing`），出口自有路由／规则在 owner 之外被删（monitor），或变更的重读读到外来对象 | 已证实的外来改动：角色同样停止并清理，但其所有权记为 `blocked`（[恢复语义](/v2/node/runtime#recovery)）：能力探测与安装报 `ownershipConflict`，每 60 秒只读重读一次，停止角色的清理已移除其全部对象（改动证据已不在）后才允许重装；不影响本节点 phase |
+| 连续未知 30 秒（`verify_unavailable`），表已不存在（`table_missing`）、元素缺失（`flow_missing`），或出口自有路由／规则在 owner 之外被删（monitor）| 角色停止：`Exit owner stopping after a failed kernel operation`（`operation: audit`、`check`、`error`），随后按下述清理并只撤该角色；自有对象只是缺失，清理后不留外来证据，清理完成后的探测 `ready` 即重装 |
+| 读成功而不符（`objects_changed`、`flow_unowned`），或变更的重读读到外来对象 | 已证实的外来改动：角色同样停止并清理，但其所有权记为 `blocked`（[恢复语义](/v2/node/runtime#recovery)）：能力探测与安装报 `ownershipConflict`，每 60 秒只读重读一次，停止角色的清理已移除其全部对象（改动证据已不在）后才允许重装；不影响本节点 phase |
 
 审计之外的内核变更失败按[内核变更失败](/v2/node/runtime#kernel-change)分类：安装失败只拒该流；续期、退役、conntrack 确认失败后对该投影的退役，以及维护，先重读角色——到达目标即记录完成，在起点或其路径上（所属对象与收据、journal 一致）1 秒起翻倍重试至多 30 秒，读取失败为未知、同一期限内重试，读到外来对象立即停止角色。重试期间角色与其他流保持（Status `changePending`）；30 秒内未完成仍停止角色，经下述清理重试与重装恢复。续期的原子批失败时元素仍在则同一批再执行一次，否则只关闭该投影；确认期间 conntrack 查询失败视为未知、继续查到截止。维护每次也完成 journal 中已不在服务的投影的退役。quarantine 过期删除先读回两个 quarantine 集合，只删除仍在其中的元素，已不在的直接从 journal 去掉：内核已执行而回答丢失的删除由重试的 journal 写入完成，不对不存在的元素重复删除直到角色停止。
 

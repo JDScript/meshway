@@ -234,9 +234,9 @@ async fn netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role() {
     host.install(next)
         .await
         .expect("Host protection survives the exit role's failure");
-    // And the role installs again on the same content, once a re-read
-    // finds the removed route's evidence gone.
-    let again = reinstalled_after_reread(&mut host, &role_plan).await;
+    // And the role installs again on the same content at once: a removed
+    // object of its own leaves nothing foreign after its cleanup.
+    let again = host.install_netmap_exit_role(&role_plan).await.unwrap();
     let renewed = exchange(&again, &scope, 4).await;
     again.retire_flow(incarnation(4)).await.unwrap();
     assert!(again.is_active());

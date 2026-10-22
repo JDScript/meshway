@@ -431,7 +431,7 @@ Node 上每个可能 fail closed 的 owner 用同一个状态机 `meshway_model:
 | owner | 未知 | 已证实 |
 | --- | --- | --- |
 | 宿主内核归属（Host） | 1 秒起翻倍、间隔至多 8 秒重证，无总期限 | `blocked`，每 60 秒只读重证 |
-| egress capture、出口审计与变更、自有对象重装的读取（有上级 owner） | 1 秒起翻倍、上限 60 秒；自首次失败满 30 秒交给宿主内核归属，作为暂态结束（从不直接 `blocked`） | egress：结束宿主内核归属为冲突；出口：角色保持撤回，能力报 `ownershipConflict`，每 60 秒只读重读，停止角色的清理已移除其全部对象（外来改动已不在）后才重装（[Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)） |
+| egress capture、出口审计与变更、自有对象重装的读取（有上级 owner） | 1 秒起翻倍、上限 60 秒；自首次失败满 30 秒交给宿主内核归属，作为暂态结束（从不直接 `blocked`） | egress：结束宿主内核归属为冲突；出口：读到外来对象（不只是自有对象缺失）时角色保持撤回，能力报 `ownershipConflict`，每 60 秒只读重读，停止角色的清理已移除其全部对象（外来改动已不在）后才重装（[Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)） |
 | 出口清理、MSS clamp 替换、控制中继、listener（U1） | 1 秒起翻倍、上限 60 秒，无总期限 | 中继外来 socket／`EACCES`、listener `EACCES`：`blocked`，每 60 秒重试 |
 | DNS owner | 每秒重证（固定，守住 resolved 重启 5 秒内恢复），无总期限；系统一侧的 hold／install 失败同样是故障，由 owner 重证 | `blocked`，每 60 秒重证（重证拒绝而不覆盖外来设置） |
 | 网络 worker 的安装 | 5 秒起翻倍、上限 60 秒，无总期限 | 校验、数据面拒绝：`blocked`，下一份 offer 到达即解除 |

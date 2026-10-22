@@ -19,13 +19,18 @@ impl Drop for Installing {
 }
 
 /// The audit proved the role's objects changed, or could not read them for
-/// the whole limit: the owner stops. A proven change is kept with the exit
+/// the whole limit: the owner stops. A foreign change is kept with the exit
 /// role's ownership (it does not install again until a re-read finds that
-/// evidence gone); an unreadable one is the role's own failure, retried by
-/// its reinstallation.
+/// evidence gone); an unreadable or removed one is the role's own failure,
+/// retried by its reinstallation.
 fn audit_ended(check: &'static str, verification: &Verification, proven: &Mutex<Option<String>>) {
     tracing::warn!(operation = "audit", check, error = %verification, "Exit owner stopping after a failed kernel operation");
-    if check == "verify"
+    // An owned object read back changed, or a flow no projection owns, is
+    // someone else's object. One that is only missing (removed outside the
+    // owner) leaves nothing foreign once the role's cleanup is done: the
+    // role installs again then.
+    if let Verification::Changed(what) = verification
+        && !what.ends_with("_missing")
         && let Ok(mut proven) = proven.lock()
     {
         proven.get_or_insert_with(|| verification.to_string());
@@ -117,7 +122,6 @@ impl super::super::super::Kernel {
             expected.exit_tun = None;
             expected.exit_tables.clear();
             expected.exit_stop = None;
-            expected.exit_ownership = None;
             self.exit.take();
         }
         Ok(())
@@ -140,11 +144,7 @@ impl super::super::super::Kernel {
             self.exit = Some(owner);
             return if stopped { Ok(()) } else { result };
         }
-        {
-            let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
-            expected.exit_stop = None;
-            expected.exit_ownership = None;
-        }
+        self.expected.lock().map_err(|_| Error::Worker)?.exit_stop = None;
         match result {
             Ok(()) => Ok(()),
             Err(error) if stopped => {
@@ -344,11 +344,7 @@ impl super::super::super::Kernel {
         };
         let view = Arc::new(RwLock::new(BTreeMap::new()));
         let stop = CancellationToken::new();
-        {
-            let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
-            expected.exit_stop = Some(stop.clone());
-            expected.exit_ownership = Some(self.shared.exit.clone());
-        }
+        self.expected.lock().map_err(|_| Error::Worker)?.exit_stop = Some(stop.clone());
         let routing = Routing {
             handle: self.handle.clone(),
             expected: self.expected.clone(),

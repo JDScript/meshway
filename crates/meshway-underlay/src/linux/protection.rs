@@ -159,7 +159,8 @@ impl Ownership {
 }
 
 /// The exit role's ownership (owner #6), across its installations: blocked
-/// once an exit-owned object was read back changed by someone else; read
+/// once an exit-owned object was read back changed by someone else (a
+/// foreign element, rule or flow; not a removal of its own object); read
 /// again every 60 s, and healthy again once the stopped role's cleanup
 /// removed everything it owned. Unknown reads stay with the role's own
 /// recovery (its audit and change limits); only a proof is kept here.
