@@ -223,6 +223,42 @@ async fn provider_sets_are_verified_bound_by_digest_and_served_only_to_referenci
         response.bytes().await.unwrap().as_ref(),
         newer.artifact.as_slice()
     );
+    // In-flight downloads of one Node are bounded: two admitted and still
+    // held (their bodies unsent), a third is busy with Retry-After until
+    // one is finished or dropped.
+    let netmaps = s.app.netmaps();
+    let first_held = netmaps
+        .artifact(&node_token, newer.digest.to_string())
+        .await
+        .unwrap();
+    let second_held = netmaps
+        .artifact(&node_token, newer.digest.to_string())
+        .await
+        .unwrap();
+    assert_eq!(first_held.bytes, newer.artifact);
+    let busy = artifact(newer.digest.to_string(), node_token.clone())
+        .await
+        .unwrap();
+    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(busy.headers()["retry-after"], "1");
+    assert_eq!(
+        busy.json::<serde_json::Value>().await.unwrap()["problem"]["code"],
+        "busy"
+    );
+    drop(first_held);
+    let admitted = artifact(newer.digest.to_string(), node_token.clone())
+        .await
+        .unwrap();
+    assert_eq!(admitted.status(), StatusCode::OK);
+    assert_eq!(
+        admitted.headers()["content-length"],
+        newer.artifact.len().to_string()
+    );
+    assert_eq!(
+        admitted.bytes().await.unwrap().as_ref(),
+        newer.artifact.as_slice()
+    );
+    drop(second_held);
     let unreferenced = meshway_rules::Digest::of(b"other");
     for (digest, bearer) in [
         (unreferenced.to_string(), node_token.clone()),

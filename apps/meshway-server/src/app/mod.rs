@@ -31,6 +31,7 @@ pub struct App {
     committer: crate::configuration::Committer,
     boot: meshway_model::InstanceId,
     served: Arc<crate::netmap::served::Served>,
+    artifact_downloads: Arc<crate::netmap::downloads::Downloads>,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     /// Sole audience of committed effects; the executor holds it weakly.
     effects: Arc<Effects>,
@@ -378,6 +379,7 @@ impl App {
             observation_maintenance: std::sync::Mutex::default(),
             boot,
             served,
+            artifact_downloads: Arc::default(),
         };
         // Deployment-owned IP datasets live in storage; derived State needs them
         // from the first report on, so loading is part of opening, not a task.
@@ -610,6 +612,7 @@ impl App {
             self.netmap_timing,
             Arc::clone(&self.dns_associations),
             Arc::clone(&self.served),
+            Arc::clone(&self.artifact_downloads),
         )
     }
     /// Starts a netmap signing-key rotation window (see `netmap::signing`).

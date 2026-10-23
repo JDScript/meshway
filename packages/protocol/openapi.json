@@ -12,7 +12,7 @@
           "execution"
         ],
         "summary": "Download one rule-set artifact by digest.",
-        "description": "Requires a Node session. `digest` (`sha256:<64 lowercase hex>`) must be referenced by a netmap the Server stored for the calling Node that can still be under a lease (the current one, or one replaced less than a lease validity ago); otherwise, including an unknown digest, the answer is 404.\nThe body is the immutable artifact; the Node checks its length and digest against the netmap reference before use.",
+        "description": "Requires a Node session. `digest` (`sha256:<64 lowercase hex>`) must be referenced by a netmap the Server stored for the calling Node that can still be under a lease (the current one, or one replaced less than a lease validity ago); otherwise, including an unknown digest, the answer is 404.\nThe body is the immutable artifact; the Node checks its length and digest against the netmap reference before use.\nDownloads in flight are bounded (16 at once, 2 per Node, 64 MiB of artifact bytes together, each held until its body is sent); one that does not fit is `busy`.",
         "operationId": "getRuleSetArtifact",
         "parameters": [
           {
