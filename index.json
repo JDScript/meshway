@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-23T02:22:09.961526+00:00",
+  "updatedAt": "2026-10-23T02:43:40.384231+00:00",
   "runs": [
+    {
+      "id": 39890475377,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "f8b/server-review-fixes",
+      "commit": "456b69cbc12d19d56d36742bba4a4e7bf4e3c601",
+      "message": "http_cli: the service manager first hears the startup renewals, then READY=1",
+      "createdAt": "2026-10-23T02:36:16Z",
+      "updatedAt": "2026-10-23T02:42:35Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39890475377",
+      "jobs": [
+        {
+          "id": 120208742487,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-23T02:36:17Z",
+          "completedAt": "2026-10-23T02:36:21Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39890475377/job/120208742487"
+        },
+        {
+          "id": 120208764266,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-23T02:36:24Z",
+          "completedAt": "2026-10-23T02:39:02Z",
+          "seconds": 158.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39890475377/job/120208764266"
+        },
+        {
+          "id": 120208764358,
+          "name": "cargo",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-23T02:36:21Z",
+          "completedAt": "2026-10-23T02:42:26Z",
+          "seconds": 365.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39890475377/job/120208764358"
+        },
+        {
+          "id": 120208764570,
+          "name": "server-upgrade",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-23T02:39:05Z",
+          "completedAt": "2026-10-23T02:42:34Z",
+          "seconds": 209.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39890475377/job/120208764570"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 39887778275,
       "attempt": 1,
