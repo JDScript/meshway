@@ -45,6 +45,8 @@ v0.1.0 [里程碑 C](../../docs/v2/process.md#v0-1-gate) 的 7 天 prod soak：�
 | planck | ai4ce-planck | 容器 `meshway-planck`；Server 容器 `meshway-prod-server` 也在这里 | zj2631（docker 组） |
 | hk | cn-hk-dmit | 容器 `meshway-hk` | root |
 
+planck 的 sshd 不接受 NYU 以外的入站连接（kr→planck:22 不通），出站 ssh 可用，因此 planck 由其账户 crontab 每分钟在 `flock` 下拉起一条到 kr 的反向隧道（`~/.meshway-soak-gate/tunnel.sh`：`ssh -N -R 127.0.0.1:2222:127.0.0.1:22 ubuntu@193.123.237.166`，专用 key `~/.ssh/meshway-soak-tunnel_ed25519`，kr host key 钉在 `~/.meshway-soak-gate/kr_known_hosts`）。kr 上该 key 的 `authorized_keys` 行为 `restrict,port-forwarding,permitlisten="127.0.0.1:2222",permitopen="127.0.0.1:1",command="/bin/false",from="128.238.177.131"`，只能开这一个监听。采集配置中 planck 为 `target: zj2631@127.0.0.1`、`options: ["-p", "2222", "-o", "HostKeyAlias=ai4ce-planck.dyn.poly.edu"]`，planck 上采集 key 那一行的 `from=` 相应为 `"127.0.0.1,::1"`（`install.sh` 打印的行仍是 kr 的地址，planck 需手工改）。隧道断开时 planck 的样本记为不可达，下一分钟由 cron 重建。
+
 节点 `kind` 只有两种：有 `unit` 的是 systemd 节点（journal、`systemctl`、`MainPID`），有 `container` 的是容器节点（`docker logs`、`docker exec`、容器内唯一的 `meshwayd`）。只有 it7 是出口（`relay_or_exit`）；prod 全直连，没有中继。
 
 ## 采集 key 与 gate
