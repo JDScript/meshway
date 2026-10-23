@@ -356,6 +356,7 @@ DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒�
 | `anchor_ended` | Underlay 锚点仍有效：owner 删除了锚点，或宿主内核归属已结束（`actual` 区分暂态阻断与冲突；具体原因见此前那条 WARN） | Kernel DNS anchor |
 | `anchor_netlink` | 锚点读取所需的 netlink dump 完成（失败或 5 秒超时为 `Backend`，未读回任何东西、可自动恢复；超出对象上限） | `rtnetlink RTM_GETLINK`／`RTM_GETADDR`／`RTM_GETROUTE` |
 | `anchor_link`／`anchor_address`／`anchor_collision`／`anchor_namespace`／`anchor_identity` | 锚点链路、唯一地址、无其他持有该地址的地址或路由、所在 namespace、身份与记录一致 | 对应 dump |
+| `anchor_create`／`anchor_kernel` | 准备时由 Underlay Kernel 取得或创建锚点：Kernel 读回不符（外来同名设备、地址冲突；Kernel 同时以持久冲突结束宿主内核归属）为已证实的 `anchor_kernel`；读取或变更失败为 `anchor_create`（`Backend`，可自动恢复）；锚点地址无效或与已有锚点不符为 `anchor_create`（`Settings`）。`actual` 为 Kernel 的错误 | Underlay Kernel |
 | `resolved_owner`／`resolved_process`／`resolved_namespace` | `org.freedesktop.resolve1` 有 bus owner，且在本 namespace 中运行 | D-Bus `GetNameOwner`／`GetConnectionUnixProcessID`、`/proc/<pid>/ns/net` |
 | `resolv_conf_mode`／`stub_listener` | resolved 报告 `ResolvConfMode=stub`、`DNSStubListener=yes`（后端不支持，error 为 `Unsupported`） | resolve1 Manager 属性 |
 | `resolved_link` | resolved 识别锚点链路 | resolve1 `GetLink` |
