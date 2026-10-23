@@ -168,6 +168,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("notify");
         let receiver = UnixDatagram::bind(&path).unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         let fillers = fill(&path);
         let queued = fillers.len();
         let target = path.clone();
@@ -176,8 +179,10 @@ mod tests {
         let mut buffer = [0; 64];
         let mut received = Vec::new();
         for _ in 0..=queued {
-            let length = receiver.recv(&mut buffer).unwrap();
-            received.push(buffer[..length].to_vec());
+            match receiver.recv(&mut buffer) {
+                Ok(length) => received.push(buffer[..length].to_vec()),
+                Err(_) => break,
+            }
         }
         sender.join().unwrap().unwrap();
         assert_eq!(received.last().map(Vec::as_slice), Some(&b"READY=1"[..]));
