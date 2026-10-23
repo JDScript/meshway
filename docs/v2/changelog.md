@@ -33,6 +33,8 @@ DNS-2 公网主机上的 resolved 后端缺陷（`dns2/resolved-hosts`）：wire
 - D5（不变量：兜底 `~.` 不覆盖其他链路的具体域，显式域仍独占；owner：`SystemDnsPlan::foreign_route`，resolved 后端 `conflicts`）：此前计划含 `~.`（出口方案、`overrideLocal`）时任何其他链路的域都判 `foreign_domain`，OCI 主机的 DHCP 搜索域使全量出口方案整体挂起（`retrying · dns`）。现在其他链路的具体域与兜底共存、由该链路解析，INFO 一次并列在 Status `localDnsDomains`／`meshway status` 的 `Local DNS` 行；覆盖显式域（相等或更具体）或另设 `~.` 仍为冲突。定义见[其他链路的域](/v2/node/dataplane#foreign-domains)。
 - 每个 DNS 行在 Node 之前用该行镜像的真实 resolved、Kernel 锚点与生产 owner 运行 `resolved_backend_installs_beside_foreign_domains_or_names_its_systemd_requirement`（trixie：共存与两类冲突；jammy：明确的不支持）；`exit/off` 第 9 阶段加外来搜索域检查。旧代码失败记录在 `.meshway/validation/dns2/`。
 
+验证（`ac2ca8e7`）：隔离复现 Ubuntu 22.04 的 resolved 249.11 从不把查询送到链路的 `127.0.0.1:<port>`，Ubuntu 24.04（255）与 Debian 12（252.39）送达；Planck 4 行矩阵 `20261023T122956Z-d4a0ca36`（`udp/resolved`、`jammy/resolv-conf`、`udp/resolv-conf`、`exit/off`，全长，并行 4）全部通过——trixie 上 resolved 检查的共存与两类冲突、jammy 上明确的 `probe` 版本要求、`exit/off` 第 9 阶段外来搜索域 0.43 秒列出且 A 始终 running；Planck `mise run --jobs 1 check` 通过；证据 `.meshway/validation/dns2/`。
+
 ## v0.1.0-alpha.22
 
 范围：v0.1.0 soak 候选。RC-1 Node 恢复状态机收敛为共享的 `Recovery` 框架（含 G16 锚点证明只解码命中的 link）；X17 包调度入向与本机两方向各有配额；F7 默认矩阵新增 `fault/throttle` 行；R4 `roam/relay` fixture 的新流使用独立源端口；MIG-2 Server 部署形态（systemd unit `meshway-server.service`、`install.sh --component server`、Release 首次附 Server tar 与 Console 静态文件、离线 `backup`）；F8a／F8b 审阅修复（回退判据为 data-dir 的 `served` 记录、迁移在发布前验证主密钥、artifact 下载预算、登录失败退避、Actions 钉到完整 SHA）；`cargo-deny` 供应链检查。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 9 与 HTTP 契约均不变（F8b 只改两处说明文字），按先 Node 后 Server 普通升级（无断网窗口、无迁移）。

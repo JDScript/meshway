@@ -25,7 +25,7 @@
 
 ## 默认矩阵 {#matrix}
 
-`scripts/validate_matrix.py` 的 `ROWS` 定义 26 行，默认全部运行。**当前状态：25／25 通过，`jammy/resolv-conf`（DNS-2 新增）未在全量矩阵运行**——Planck 矩阵 `20261022T145506Z-d176310c`（`d2cb2f72`，并行 4，墙钟 1,977 秒，启动 load 4.2），私有证据 `.meshway/validation/r4/remote/full/`。下表“报告”列为该矩阵中的行报告 ID。
+`scripts/validate_matrix.py` 的 `ROWS` 定义 26 行，默认全部运行。**当前状态：25／25 通过；DNS-2 新增的 `jammy/resolv-conf` 在 4 行矩阵 `20261023T122956Z-d4a0ca36`（`ac2ca8e7`，与 `udp/resolved`、`udp/resolv-conf`、`exit/off` 一起全长通过，私有证据 `.meshway/validation/dns2/`）通过，尚未进入全量矩阵**——Planck 矩阵 `20261022T145506Z-d176310c`（`d2cb2f72`，并行 4，墙钟 1,977 秒，启动 load 4.2），私有证据 `.meshway/validation/r4/remote/full/`。下表“报告”列为该矩阵中的行报告 ID。
 
 | 行 | 拓扑与承载 | 覆盖 | 门槛摘要 | 报告 | 定义 |
 | --- | --- | --- | --- | --- | --- |
@@ -37,7 +37,7 @@
 | `trojan/off` | 仅 R listener，Trojan TCP/TLS | 共同场景＋精确叶证书 | 同上 | `20261022T150753Z-c13c88f9` | [共同场景](#runtime-共同场景) |
 | `udp/resolv-conf` | Native UDP 静态端点 | 共同场景＋文件代理 DNS | 同上＋DNS 场景 | `20261022T150753Z-2184a347` | [DNS 场景](#dns-场景) |
 | `udp/resolved` | Native UDP 静态端点 | 共同场景＋resolved 后端 | 同上＋resolved 重启 ≤ 5 秒再解析 | `20261022T150843Z-6e527d7c` | [DNS 场景](#dns-场景) |
-| `jammy/resolv-conf` | Native UDP 静态端点，Ubuntu 22.04 DNS 镜像 | 共同场景＋文件代理 DNS；resolved 后端的明确不支持 | 同 `udp/resolv-conf`＋resolved 检查报 `probe` 版本要求 | 未运行 | [DNS 场景](#dns-场景) |
+| `jammy/resolv-conf` | Native UDP 静态端点，Ubuntu 22.04 DNS 镜像 | 共同场景＋文件代理 DNS；resolved 后端的明确不支持 | 同 `udp/resolv-conf`＋resolved 检查报 `probe` 版本要求 | `20261023T123850Z-0024cb8c` | [DNS 场景](#dns-场景) |
 | `nat/off` | A、R 各在端口保持型 SNAT 后 | 共同场景＋协调穿透 | R 只接受 A 的 offer | `20261022T151205Z-2c4d8408` | [穿透场景](#穿透场景) |
 | `nat+fallback/off` | 同上＋A–R Native TCP 退路 | 穿透后切到 TCP 退路 | 同一 socket、circuit 与路径跨切换保留 | `20261022T151255Z-44bbec33` | [穿透场景](#穿透场景) |
 | `nat/resolved` | 同 `nat/off` | 穿透＋resolved | 两场景全部检查 | `20261022T151259Z-757716fd` | [穿透场景](#穿透场景) |
