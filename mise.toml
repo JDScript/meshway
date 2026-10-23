@@ -4,6 +4,7 @@ node = "24.19.0"
 pnpm = "11.24.0"
 python = "3.14.7"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
+"aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 
 [settings.zig]
 use_community_mirrors = false
@@ -25,9 +26,10 @@ description = "Run the complete CI checks: the Cargo chain and the web chain in 
 depends = ["check:cargo", "check:web"]
 
 [tasks."check:cargo"]
-description = "Rust checks, tests, codegen, contract drift and SDK consumers in order (shared Cargo target)"
+description = "Rust checks, cargo-deny, tests, codegen, contract drift and SDK consumers in order (shared Cargo target)"
 run = [
   { task = "check:rust" },
+  { task = "check:deny" },
   { task = "test:rust" },
   { task = "test:codegen" },
   { task = "check:protocol" },
@@ -55,6 +57,10 @@ run = [
   "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
   { task = "check:linux" },
 ]
+
+[tasks."check:deny"]
+description = "cargo-deny: RustSec advisories (fetched fresh), licenses, bans and sources of the locked dependency graph (deny.toml)"
+run = "cargo deny --locked check"
 
 [tasks."check:linux"]
 description = "On macOS, strict Clippy for the Linux musl target so Linux-only modules (underlay, DNS, TUN) are checked before CI"

@@ -1,0 +1,69 @@
+# cargo-deny: RustSec advisories, dependency licenses, bans and sources for
+# the whole workspace (`mise run check:deny`, part of `mise run check`).
+# An ignored advisory names its ID and why it does not apply or cannot be
+# fixed yet; remove the entry once the dependency is upgraded.
+
+[graph]
+all-features = true
+
+[advisories]
+# Unmaintained crates are reported for workspace dependencies only.
+unmaintained = "workspace"
+yanked = "deny"
+ignore = [
+    # maxminddb 0.26: `Reader::open_mmap` is unsound. It exists only with the
+    # `mmap` feature, which is off; the Server reads datasets with
+    # `Reader::from_source(Vec<u8>)`. 0.27 changes the lookup API; upgrade
+    # with the GeoIP code after v0.1.0.
+    { id = "RUSTSEC-2025-0132", reason = "mmap feature disabled; open_mmap is not compiled" },
+    # rustls-pemfile is unmaintained (no vulnerability); 2.2 already parses
+    # with rustls-pki-types. meshway-transport-stream moves to
+    # rustls_pki_types::pem::PemObject after v0.1.0.
+    { id = "RUSTSEC-2025-0134", reason = "unmaintained only; thin wrapper over rustls-pki-types PEM parsing" },
+]
+
+[licenses]
+# Permissive licenses of the current dependency graph. Anything else needs a
+# per-crate exception with a reason.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.93
+exceptions = [
+    # Weak copyleft, file-level: unmodified sources of the Apple bridge's
+    # binding generator; nothing of them is changed or vendored.
+    { allow = ["MPL-2.0"], crate = "uniffi" },
+    { allow = ["MPL-2.0"], crate = "uniffi_bindgen" },
+    { allow = ["MPL-2.0"], crate = "uniffi_core" },
+    { allow = ["MPL-2.0"], crate = "uniffi_internal_macros" },
+    { allow = ["MPL-2.0"], crate = "uniffi_macros" },
+    { allow = ["MPL-2.0"], crate = "uniffi_meta" },
+    { allow = ["MPL-2.0"], crate = "uniffi_pipeline" },
+    { allow = ["MPL-2.0"], crate = "uniffi_udl" },
+]
+
+[licenses.private]
+# Workspace members are unpublished (`publish = false`).
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

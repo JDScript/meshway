@@ -1,6 +1,7 @@
 [package]
 name = "meshway-dataplane-perf"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Explicit layered TUN dataplane performance fixture"

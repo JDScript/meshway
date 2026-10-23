@@ -36,6 +36,7 @@ jobs:
             rust:
               - "Cargo.toml"
               - "Cargo.lock"
+              - "deny.toml"
               - "mise.toml"
               - "mise.lock"
               - ".config/nextest.toml"
