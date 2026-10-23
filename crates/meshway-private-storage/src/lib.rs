@@ -50,6 +50,23 @@ impl Directory {
         }
     }
 
+    /// Create `path` as a new private owner directory and lock it. `None`
+    /// when the name already exists (of any type): an existing directory is
+    /// never adopted, so a caller that removes what it wrote on failure can
+    /// only ever remove its own files.
+    pub fn create_new(path: &Path, lock_name: &str) -> Result<Option<Self>, Error> {
+        name(lock_name)?;
+        #[cfg(unix)]
+        {
+            unix::create_new(path, lock_name)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
     /// Inspect an existing private owner directory without creating any path or
     /// lock file. Missing directories return None; an existing directory whose
     /// lock is missing or invalid remains an ownership error.
