@@ -44,13 +44,19 @@ async fn established(
 /// consumer's queue holds; the rest have to wait somewhere.
 const QUEUE_SLOTS: usize = 64;
 /// Beyond the queue: one read batch waits in the owner and the rest in the
-/// kernel buffer, few enough for an unprivileged default `rmem_max`, where
-/// further datagrams would be the kernel's (counted) drop.
+/// kernel buffer, few enough for Linux' default `rmem_default` (about 90
+/// loopback datagrams of 1,200 B), where more would be the kernel's
+/// (counted) drop.
 const BEYOND_QUEUE: usize = 64;
 
 async fn business(client: &UdpSocket, local: SocketAddr, count: usize) {
-    for _ in 0..count {
-        client.send_to(&[7; 1200], local).await.unwrap();
+    // In bursts with a turn for the owner between them, as a network delivers:
+    // a single burst could overflow the kernel buffer before the owner runs.
+    for burst in 0..count.div_ceil(16) {
+        for _ in 0..16.min(count - burst * 16) {
+            client.send_to(&[7; 1200], local).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
     }
 }
 
