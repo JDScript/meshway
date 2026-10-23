@@ -106,9 +106,81 @@ impl Journal {
         )
     }
 
+    /// Complete the step an ended term or process left pending (its change
+    /// failed or its outcome was never read back) from the kernel as it is
+    /// now: `rules` the live RPDB rules (encoded), `links` the live links'
+    /// index, name and alias. The one recovery of an interrupted step, at
+    /// process start and in a re-proof's new term alike (`open_term`). An
+    /// ended term's Mesh TUN is never adopted and its routes went with it
+    /// (a live route in the private table stays a conflict there), so a
+    /// TUN or route step completes as nothing; a rule step completes as
+    /// what its exact recorded bytes read back; an anchor deletion as the
+    /// device's presence. A half-created DNS anchor whose device is there
+    /// was never recorded (no fingerprint to adopt it by) and stays an
+    /// unrecoverable journal.
+    pub fn settle_pending(
+        &mut self,
+        rules: &[Vec<u8>],
+        links: &[(u32, Option<String>, Option<String>)],
+    ) -> Result<()> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
+        let operation = match &pending {
+            Pending::AddRule { .. } => "AddRule",
+            Pending::DeleteRule { .. } => "DeleteRule",
+            Pending::AddRoute { .. } => "AddRoute",
+            Pending::DeleteRoute { .. } => "DeleteRoute",
+            Pending::CreateTun => "CreateTun",
+            Pending::CreateDnsAnchor => "CreateDnsAnchor",
+            Pending::DeleteDnsAnchor => "DeleteDnsAnchor",
+        };
+        match pending {
+            Pending::CreateTun | Pending::AddRoute { .. } | Pending::DeleteRoute { .. } => {}
+            Pending::AddRule { spec } => {
+                let observed = encode_rule(spec.message());
+                if rules.contains(&observed) && !self.rules.iter().any(|record| record.spec == spec)
+                {
+                    self.rules.push(RuleRecord { spec, observed });
+                }
+            }
+            Pending::DeleteRule { record } => {
+                if !rules.contains(&record.observed) {
+                    self.rules.retain(|existing| existing.spec != record.spec);
+                }
+            }
+            Pending::CreateDnsAnchor => {
+                let name = format!("mwd{}", &self.installation[..10]);
+                let alias = format!("meshway-dns:{}", self.installation);
+                if self.anchor.is_some()
+                    || links.iter().any(|(_, link_name, link_alias)| {
+                        link_name.as_deref() == Some(&name) || link_alias.as_deref() == Some(&alias)
+                    })
+                {
+                    self.pending = Some(Pending::CreateDnsAnchor);
+                    return Err(Error::Journal);
+                }
+            }
+            Pending::DeleteDnsAnchor => {
+                if let Some(anchor) = &self.anchor
+                    && !links.iter().any(|(index, name, _)| {
+                        *index == anchor.identity.index
+                            || name.as_deref() == Some(&anchor.identity.name)
+                    })
+                {
+                    self.anchor = None;
+                }
+            }
+        }
+        tracing::info!(
+            operation,
+            "Interrupted Underlay journal step completed from the kernel's state"
+        );
+        self.validate()
+    }
+
     fn validate(&self) -> Result<()> {
         if self.version != 1
-            || self.pending.is_some()
             || self.installation.len() != 32
             || !self.installation.bytes().all(|b| b.is_ascii_hexdigit())
             || !(1..=128).contains(&self.pool_limit)
@@ -195,6 +267,26 @@ impl Journal {
             {
                 return Err(Error::Journal);
             }
+        }
+        // A pending step names only what this journal owns.
+        let pending = match &self.pending {
+            None | Some(Pending::CreateTun | Pending::CreateDnsAnchor) => true,
+            Some(Pending::AddRule { spec }) => {
+                spec.table == self.table && (self.start..=self.end()).contains(&spec.priority)
+            }
+            Some(Pending::DeleteRule { record }) => self.rules.iter().any(|existing| {
+                existing.spec == record.spec && existing.observed == record.observed
+            }),
+            Some(Pending::AddRoute { spec }) => {
+                spec.table == self.table && self.pools.contains(&spec.pool)
+            }
+            Some(Pending::DeleteRoute { record }) => self.routes.iter().any(|existing| {
+                existing.spec == record.spec && existing.observed == record.observed
+            }),
+            Some(Pending::DeleteDnsAnchor) => self.anchor.is_some(),
+        };
+        if !pending {
+            return Err(Error::Journal);
         }
         if self.pools.iter().enumerate().any(|(index, pool)| {
             pool.addr() != pool.network()
@@ -347,9 +439,15 @@ mod tests {
         assert!(previous.is_none());
         assert!(directory.file(FILE, false).unwrap().is_none());
 
+        // The same boot and namespace: the interrupted step is this
+        // namespace's own, opened for `open_term` to complete it.
         let boot = Identity::current().unwrap().boot;
         directory.replace(FILE, &journal(&boot)).unwrap();
-        assert!(matches!(Store::open(directory).await, Err(Error::Journal)));
+        let (_, previous) = Store::open(directory).await.unwrap();
+        assert!(matches!(
+            previous.unwrap().pending,
+            Some(Pending::CreateTun)
+        ));
     }
 
     #[test]
@@ -456,5 +554,90 @@ mod tests {
             .replace(FILE, &serde_json::to_vec(&journal).unwrap())
             .unwrap();
         assert!(Store::open(directory).await.unwrap().1.is_some());
+    }
+
+    /// U2: a step an ended term left pending is completed from the kernel's
+    /// state by the one recovery `open_term` runs, not refused forever.
+    #[test]
+    fn an_interrupted_step_is_completed_from_what_the_kernel_holds() {
+        let boot = Identity::current().unwrap().boot;
+        let mut base: Journal = serde_json::from_slice(&journal(&boot)).unwrap();
+        base.pending = None;
+        let end = super::super::plan::RuleSpec {
+            kind: super::super::plan::RuleKind::End,
+            priority: base.end(),
+            table: base.table,
+            ipv6: false,
+        };
+        let observed = encode_rule(end.message());
+        let route = RouteRecord {
+            spec: RouteSpec {
+                pool: "100.64.0.0/10".parse().unwrap(),
+                table: base.table,
+                ifindex: 176,
+                source: "100.64.0.1".parse().unwrap(),
+            },
+            observed: Vec::new(),
+        };
+        let route = RouteRecord {
+            observed: encode_route(route.spec.message().unwrap()),
+            ..route
+        };
+
+        // The lab journal: a suspend's route deletion interrupted, its TUN
+        // closed since. The route went with the TUN.
+        let mut deleting = base.clone();
+        deleting.routes.push(route.clone());
+        deleting.pending = Some(Pending::DeleteRoute {
+            record: route.clone(),
+        });
+        deleting.validate().unwrap();
+        deleting.settle_pending(&[], &[]).unwrap();
+        assert!(deleting.pending.is_none());
+
+        // A rule addition: adopted only when its exact bytes read back.
+        for live in [true, false] {
+            let mut adding = base.clone();
+            adding.pending = Some(Pending::AddRule { spec: end.clone() });
+            adding.validate().unwrap();
+            let rules = if live { vec![observed.clone()] } else { vec![] };
+            adding.settle_pending(&rules, &[]).unwrap();
+            assert!(adding.pending.is_none());
+            assert_eq!(adding.rules.len(), usize::from(live));
+        }
+        // A rule deletion: kept while the rule is still there.
+        for live in [true, false] {
+            let mut removing = base.clone();
+            removing.rules.push(RuleRecord {
+                spec: end.clone(),
+                observed: observed.clone(),
+            });
+            removing.pending = Some(Pending::DeleteRule {
+                record: removing.rules[0].clone(),
+            });
+            removing.validate().unwrap();
+            let rules = if live { vec![observed.clone()] } else { vec![] };
+            removing.settle_pending(&rules, &[]).unwrap();
+            assert!(removing.pending.is_none());
+            assert_eq!(removing.rules.len(), usize::from(live));
+        }
+        // A pending step naming what this journal does not own is not one
+        // of its steps.
+        let mut foreign = base.clone();
+        foreign.pending = Some(Pending::DeleteRoute { record: route });
+        assert!(matches!(foreign.validate(), Err(Error::Journal)));
+
+        // A half-created anchor whose device is there has no fingerprint to
+        // adopt it by: still unrecoverable.
+        let mut creating = base.clone();
+        creating.pending = Some(Pending::CreateDnsAnchor);
+        let name = format!("mwd{}", &creating.installation[..10]);
+        assert!(matches!(
+            creating.settle_pending(&[], &[(9, Some(name), None)]),
+            Err(Error::Journal)
+        ));
+        assert!(creating.pending.is_some());
+        creating.settle_pending(&[], &[]).unwrap();
+        assert!(creating.pending.is_none());
     }
 }

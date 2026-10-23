@@ -147,6 +147,8 @@ pub(in crate::linux::kernel) mod faults {
     pub static LOST_CHANGES: AtomicU32 = AtomicU32::new(0);
     /// Reads (no input) that fail before the kernel sees them.
     pub static FAILING_TOOL_READS: AtomicU32 = AtomicU32::new(0);
+    /// Netlink route deletions that fail before the kernel sees them.
+    pub static FAILING_ROUTE_DELETES: AtomicU32 = AtomicU32::new(0);
     /// Netlink rule dumps that fail (no answer within their budget).
     pub static FAILING_RULE_READS: AtomicU32 = AtomicU32::new(0);
     /// Netlink dump attempts the kernel refuses with `EBUSY` (another dump

@@ -301,6 +301,27 @@ impl Kernel {
         .map_err(|_| Error::Drain)?
     }
 
+    /// The result of a Host `operation`. One that failed with its journal
+    /// step still pending left a kernel change whose outcome nothing read
+    /// back: this term ends (unavailable unless the failure read back a
+    /// difference), and the Host's re-proof completes the step from the
+    /// kernel's state in its next term, as a process start does
+    /// ([`journal::Journal::settle_pending`]). Never a journal every later
+    /// operation of this term refuses.
+    pub(super) fn interrupted<T>(&self, operation: &'static str, result: Result<T>) -> Result<T> {
+        if let Err(error) = &result
+            && self.journal.pending.is_some()
+        {
+            tracing::warn!(
+                operation,
+                %error,
+                "Kernel change interrupted with its journal step pending; kernel ownership ends"
+            );
+            self.end_after(operation, error);
+        }
+        result
+    }
+
     /// End ownership after `operation` failed with `error`. An operation
     /// that failed in a term already ended (its monitor stopped, a
     /// connection dropped) failed because of that end and proves nothing
@@ -335,6 +356,9 @@ pub(in crate::linux) fn ended(operation: &'static str, error: &Error) -> crate::
         (_, "pause") => "pause_unavailable",
         (_, "stage") => "stage_unavailable",
         (_, "switch") => "switch_unavailable",
+        (_, "suspend") => "suspend_unavailable",
+        (_, "down") => "down_unavailable",
+        (_, "dns_anchor") => "anchor_unavailable",
         _ => "install_unavailable",
     };
     crate::OwnershipEnd::Unavailable { check }

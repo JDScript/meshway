@@ -89,6 +89,18 @@ impl Kernel {
                 previous = None;
             }
         }
+        // A step the previous term or process left pending completes from
+        // what the kernel holds now, before anything is verified against it.
+        if let Some(journal) = previous
+            .as_mut()
+            .filter(|journal| journal.pending.is_some())
+        {
+            let observed: Vec<_> = rules.iter().cloned().map(encode_rule).collect();
+            journal.settle_pending(
+                &observed,
+                &link_identities(&handle, options.max_kernel_objects).await?,
+            )?;
+        }
         let mut journal = match previous {
             Some(journal)
                 if !journal.rules.is_empty()
@@ -236,6 +248,29 @@ impl Kernel {
             repair_owed: None,
         })
     }
+}
+
+/// Index, name and alias of each interface of this namespace.
+async fn link_identities(
+    handle: &Handle,
+    limit: usize,
+) -> Result<Vec<(u32, Option<String>, Option<String>)>> {
+    use rtnetlink::packet_route::link::LinkAttribute;
+    Ok(get_links(handle, limit)
+        .await?
+        .into_iter()
+        .map(|link| {
+            let (mut name, mut alias) = (None, None);
+            for attribute in link.attributes {
+                match attribute {
+                    LinkAttribute::IfName(value) => name = Some(value),
+                    LinkAttribute::IfAlias(value) => alias = Some(value),
+                    _ => {}
+                }
+            }
+            (link.header.index, name, alias)
+        })
+        .collect())
 }
 
 /// Interface aliases of this namespace.

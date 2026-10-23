@@ -56,6 +56,11 @@ CASES = {
                      "linux::kernel::rtnl::tests::dumps_of_one_socket_are_taken_one_at_a_time"),
     "dumps-exit": ("meshway-underlay-kernel-tests",
                    "linux::kernel::exit::tests::dumps::interrupted_dumps_are_read_again_and_the_first_packet_is_answered"),
+    # U2: a suspend interrupted with its base journal step pending ends the
+    # term; the re-proof (and a restart) completes the step from the kernel's
+    # state and the same content installs again.
+    "pending": ("meshway-underlay-kernel-tests",
+                "linux::kernel::tests::reproof::a_suspend_interrupted_with_its_step_pending_is_reproved_and_installs_again"),
     "changes-egress": ("meshway-underlay-kernel-tests",
                        "linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed"),
     "nft": ("meshway-underlay-kernel-tests",

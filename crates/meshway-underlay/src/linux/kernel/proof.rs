@@ -7,6 +7,12 @@ impl Kernel {
         self.store.settle().await?;
         self.shared.check()?;
         if self.journal.pending.is_some() {
+            // Only a dropped operation leaves its step pending in a term
+            // that holds (a failed one ended it: `Kernel::interrupted`).
+            // The re-proof completes the step in the next term.
+            self.shared.end(crate::OwnershipEnd::Unavailable {
+                check: "install_cancelled",
+            });
             return Err(Error::Journal);
         }
         Ok(())

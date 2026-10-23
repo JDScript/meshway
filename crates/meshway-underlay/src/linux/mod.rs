@@ -472,7 +472,8 @@ impl Host {
     /// owner now holds. A repair whose reads failed stays owed until
     /// [`Self::repair_at`]; repeated failed reads end ownership as unavailable.
     pub async fn repair(&mut self) -> Result<()> {
-        self.kernel.repair().await
+        let result = self.kernel.repair().await;
+        self.kernel.interrupted("repair", result)
     }
     /// When an owed [`Self::repair`] is due again.
     pub fn repair_at(&self) -> Option<std::time::Instant> {
@@ -486,10 +487,12 @@ impl Host {
         &mut self,
         reservation: &meshway_dns::SystemDnsReservation,
     ) -> Result<Arc<dyn meshway_dns::OwnedDnsLink>> {
-        self.kernel.dns_anchor(reservation).await
+        let result = self.kernel.dns_anchor(reservation).await;
+        self.kernel.interrupted("dns_anchor", result)
     }
     pub async fn remove_dns_anchor(&mut self) -> Result<()> {
-        self.kernel.remove_dns_anchor().await
+        let result = self.kernel.remove_dns_anchor().await;
+        self.kernel.interrupted("dns_anchor", result)
     }
     pub fn tun(&self) -> Option<&meshway_tun::Tun> {
         if self.kernel.shared.check().is_err() {
@@ -521,13 +524,16 @@ impl Host {
         self.kernel.clamp(limits)
     }
     pub async fn install(&mut self, desired: Desired) -> Result<()> {
-        self.kernel.install(desired).await
+        let result = self.kernel.install(desired).await;
+        self.kernel.interrupted("install", result)
     }
     pub async fn suspend(&mut self) -> Result<()> {
-        self.kernel.suspend().await
+        let result = self.kernel.suspend().await;
+        self.kernel.interrupted("suspend", result)
     }
     pub async fn down(&mut self) -> Result<()> {
-        self.kernel.down().await
+        let result = self.kernel.down().await;
+        self.kernel.interrupted("down", result)
     }
 
     pub async fn shutdown(mut self, keep_sink: bool) -> Result<()> {

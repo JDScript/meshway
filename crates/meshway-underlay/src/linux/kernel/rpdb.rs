@@ -88,6 +88,12 @@ impl Objects<'_> {
             .iter()
             .any(|route| encode_route(route.clone()) == bytes)
         {
+            #[cfg(test)]
+            if super::tool::command::faults::take(
+                &super::tool::command::faults::FAILING_ROUTE_DELETES,
+            ) {
+                return Err(Error::Netlink);
+            }
             self.expect(false, true, bytes.to_vec())?;
             execute(self.handle.route().del(decode_route(bytes)?).execute()).await?;
         }

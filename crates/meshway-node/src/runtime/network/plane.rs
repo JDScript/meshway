@@ -161,6 +161,14 @@ impl Plane {
         ))
     }
 
+    /// Why a capture installation or suspension failed: why kernel
+    /// ownership ended when it did, else the Host's own error. Never empty.
+    fn host_failure_detail(&self, error: &crate::host::Error) -> String {
+        self.host
+            .ownership_ended()
+            .map_or_else(|| error.to_string(), |end| end.to_string())
+    }
+
     #[track_caller]
     fn fail(&mut self, problem: Problem, failure: ApplyFailure) -> Error {
         tracing::debug!(
@@ -396,12 +404,16 @@ impl meshway_engine::Components for Plane {
         let Some(desired) = desired else {
             return match self.host.suspend().await {
                 Ok(()) => Ok(()),
-                Err(_) => Err(self.fail(Problem::Underlay, ApplyFailure::Underlay)),
+                Err(error) => {
+                    tracing::warn!(%error, "Node capture suspension failed");
+                    self.failure_detail = Some(self.host_failure_detail(&error));
+                    Err(self.fail(Problem::Underlay, ApplyFailure::Underlay))
+                }
             };
         };
         if let Err(error) = self.host.install(desired.clone()).await {
             tracing::warn!(%error, "Node capture installation failed");
-            self.failure_detail = self.host.ownership_ended().map(|end| end.to_string());
+            self.failure_detail = Some(self.host_failure_detail(&error));
             if matches!(error, crate::host::Error::Unsupported(_)) {
                 self.failure_detail = Some(error.to_string());
             }
