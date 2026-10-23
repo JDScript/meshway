@@ -60,7 +60,9 @@ impl Control {
                 if !meshway_configuration::valid_node_hostname(&hostname) {
                     return Err(Error::Lifecycle);
                 }
-                let keys = self.record.keys.as_ref().ok_or(Error::Record)?;
+                let keys = self.record.keys.as_ref().ok_or(Error::Record(
+                    "control.json holds no keys for this identity",
+                ))?;
                 let verifier = identity::random_secret()?;
                 let intent = EnrollmentIntent {
                     id: EnrollmentRequestId::new(random_id()?).map_err(|_| Error::Cryptography)?,
@@ -190,7 +192,9 @@ impl Control {
             .record
             .keys
             .as_ref()
-            .ok_or(Error::Record)?
+            .ok_or(Error::Record(
+                "control.json holds no keys for this identity",
+            ))?
             .matches(&response)?
         {
             return Err(Error::Contract);
@@ -251,7 +255,9 @@ impl Control {
         let pending = self.record.enrollment.as_ref().ok_or(Error::Lifecycle)?;
         let code = pending.code.as_ref().ok_or(Error::Lifecycle)?;
         let existing = pending.intent.existing.clone();
-        let expected_network = pending.approved_network.ok_or(Error::Record)?;
+        let expected_network = pending.approved_network.ok_or(Error::Record(
+            "control.json's approved enrollment names no network",
+        ))?;
         let response = self
             .client
             .redeem_enrollment_request(
@@ -272,7 +278,9 @@ impl Control {
                 .record
                 .keys
                 .as_ref()
-                .ok_or(Error::Record)?
+                .ok_or(Error::Record(
+                    "control.json holds no keys for this identity",
+                ))?
                 .matches(&response)?
         {
             return Err(Error::Contract);
@@ -320,11 +328,14 @@ impl Control {
 
     fn device_signature(&self, operation: &str) -> Result<WireSecret, Error> {
         let pending = self.record.enrollment.as_ref().ok_or(Error::Lifecycle)?;
-        let digest = request_digest(&pending.intent).map_err(|_| Error::Record)?;
+        let digest = request_digest(&pending.intent)
+            .map_err(|_| Error::Record("a pending request does not encode"))?;
         self.record
             .keys
             .as_ref()
-            .ok_or(Error::Record)?
+            .ok_or(Error::Record(
+                "control.json holds no keys for this identity",
+            ))?
             .sign(&enrollment_transcript(pending.intent.id, digest, operation))
     }
     fn device_proof(&self, operation: &str) -> Result<EnrollmentDeviceProof, Error> {

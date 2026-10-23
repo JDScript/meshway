@@ -64,10 +64,10 @@ fn decode(secret: &WireSecret) -> Result<Zeroizing<[u8; 32]>, Error> {
     if secret.expose().len() != 43
         || URL_SAFE_NO_PAD
             .decode_slice(secret.expose(), bytes.as_mut())
-            .map_err(|_| Error::Record)?
+            .map_err(|_| Error::Record("control.json holds a malformed key"))?
             != 32
     {
-        return Err(Error::Record);
+        return Err(Error::Record("control.json holds a malformed key"));
     }
     Ok(bytes)
 }

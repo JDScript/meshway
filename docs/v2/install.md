@@ -194,6 +194,36 @@ compiler: meshway-netmap-4
 
 `wire` 变化时同一路径上新旧节点的帧互不兼容（[数据面 · wire](/v2/node/dataplane)），同样在一个窗口内全部升级。
 
+## 迁到另一个 Server {#move-server}
+
+一个 Node 身份只属于接入它的 Server。迁到另一个 Server 是先在原 Server 注销、再在新 Server 重新接入，得到新的 Node（新密钥、新 Node ID）；身份目录不需要手工删除或改名。
+
+```sh
+sudo meshway logout                    # 原 Server 确认删除；status 无 Identity、phase down
+sudoedit /etc/meshway/meshwayd.env     # MESHWAY_SERVER_URL=https://new-server.example.com
+sudo systemctl restart meshwayd
+sudo meshway up --enrollment-key @/root/enrollment-key   # 新 Server 签发的接入密钥
+```
+
+也可以用 `sudo sh install.sh --version <当前已装 tag> --server https://new-server.example.com` 改写 `MESHWAY_SERVER_URL` 并重启（省略 `--version` 会安装最新版本）。
+
+| 步骤 | 说明 |
+| --- | --- |
+| `logout` | 退出码 0 即原 Server 已删除本节点、本机身份已清除。退出码 1 且 phase 为 `leaving` 时原 Server 尚未回答：保持原 URL 等它完成（daemon 后台重试，`meshway status` 不再显示 Identity 即完成），再改 URL |
+| 改 URL 并重启 | 已注销的身份目录不属于任何 Server，以新 URL 启动即为未接入、`down` |
+| `up` | 与首次接入相同：`--enrollment-key` 或浏览器批准 |
+
+注销未完成就改了 URL，daemon 为 `blocked · storage`，`meshway status` 的 Problem 下一行写明身份仍属于哪个 Server 及处理办法（改回原 URL 让注销完成；仍有接入中的请求时在原 URL 下 `meshway down` 取消它）。原 Server 已永久不可用时注销无法完成：停止服务、把 `/var/lib/meshway/identity` 改名存档后再启动，再 `up`；原 Server 上的旧 Node 记录不会被删除。语义见[自助注销](/v2/configuration-reference/nodes#node-self-leave)与[身份记录与 Server origin](/v2/node/runtime#identity-origin)。
+
+容器节点同样处理：在容器内 `meshway logout`，修改 compose／`docker run` 中的 `MESHWAY_SERVER_URL`（或 `--server`）后重建容器（身份所在的状态卷保留），再接入。接入密钥经 stdin 交给容器内 CLI——`docker cp` 写不进容器的 `/run` 等 tmpfs 挂载，`@/run/...` 会读不到：
+
+```sh
+docker exec <container> meshway logout
+# 修改 MESHWAY_SERVER_URL 后
+docker compose up -d <service>
+docker exec -i <container> meshway up --enrollment-key - < enrollment-key
+```
+
 ## 卸载
 
 ```sh

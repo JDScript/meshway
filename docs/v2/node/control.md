@@ -44,7 +44,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 `status()` 只返回身份、本地持久 intent ID、已保存目标引用和有效控制上下文。`enrollment_request_id` 不表示 Server 已收到请求。`cached_target()` 是私有配置缓存，不是执行许可。
 
 - Ed25519 控制密钥和 X25519 数据面密钥分别生成。签名 transcript／intent digest 与 Server 共用协议实现。
-- Server origin 与已登记的 `controllerId` 固定保存；不同 origin 或不同安装身份的 challenge 不能接管既有密钥。
+- Server origin 与已登记的 `controllerId` 固定保存；不同 origin 或不同安装身份的 challenge 不能接管既有密钥。持有身份或待完成工作的记录不以其他 origin 打开，空身份记录可以，见[身份记录与 Server origin](/v2/node/runtime#identity-origin)。
 - challenge 分配响应不确定时保留同一签名申请；申请已本地到期时使用新申请，session 响应不确定仍保留原 session intent。已本地到期证明遭拒允许重新证明，新鲜证明的凭据拒绝保持终止语义。
 - 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。签名的 netmap 及其租约例外，见 [Netmap 发布](#netmap-发布)。
 - `stop` 停用会话的本机使用资格。仍有效的短期凭据可留在当前进程，显式 `authenticate` 后复用，以免反复启停耗尽 Server 的会话额度；它不能恢复已释放的实例。
@@ -164,7 +164,7 @@ Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复�
 
 缓存文件缺失、格式未知、损坏或绑定不符时忽略，不阻断身份也不生成授权。
 
-[自助注销](/v2/configuration-reference/nodes#node-self-leave)先把注销意图写入 `control.json`，只在 Server 确认删除或拒绝该身份后改写本机状态：先撤回已发布租约并结束 session／instance，等待在途写入，再把 `control.json` 原子改写为只保留 origin 的空身份记录，最后删除 `netmap.json` 与 `peer-facts.json`（`clock.json` 保留）。目录因此仍是已初始化的无身份目录，下一次接入生成新密钥；中途失败按未知写入结果要求重新打开，不回退为旧身份。
+[自助注销](/v2/configuration-reference/nodes#node-self-leave)先把注销意图写入 `control.json`，只在 Server 确认删除或拒绝该身份后改写本机状态：先撤回已发布租约并结束 session／instance，等待在途写入，再把 `control.json` 原子改写为只保留 origin 的空身份记录，最后删除 `netmap.json` 与 `peer-facts.json`（`clock.json` 保留）。目录因此仍是已初始化的无身份目录，下一次接入（可以是另一个 Server）生成新密钥；中途失败按未知写入结果要求重新打开，不回退为旧身份。
 
 `peer-facts.json` 不是授权：它只提供地址候选，每条承载、通道和包的准入仍由已验签 netmap 与认证握手决定，伪造或过时的地址最多连不上。因此它不带 Server 签名或本节点 seal，只要求私有目录与 `0600`。仅当 `netmap.json` 作为执行授权载入时才读取；网络／节点须与身份一致，内容按载入 netmap 的投影过滤（不在投影内的 peer 丢弃，listener 细节只保留本节点可拨的）。`netmap` 与载入内容不一致时不重放。写入失败或中断只留下旧或新的完整文件，不影响 sync。换钥清空内存中的事实；文件与 `netmap.json` 同生命周期。
 

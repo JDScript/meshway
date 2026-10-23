@@ -22,10 +22,12 @@ const RECORD: &str = "control.json";
 const MARKER: &[u8] = b"meshway-control/1\n";
 const VERSION: u8 = 5;
 
+const NO_LOCK: &str = "node-control.lock is missing";
+
 fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error> {
     let file = directory
         .file("node-control.lock", false)?
-        .ok_or(Error::Record)?;
+        .ok_or(Error::Record(NO_LOCK))?;
     let mut bytes = Vec::new();
     file.take((MARKER.len() + 1) as u64)
         .read_to_end(&mut bytes)
@@ -35,13 +37,15 @@ fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error>
     } else if bytes == MARKER {
         Ok(true)
     } else {
-        Err(Error::Record)
+        Err(Error::Record(
+            "node-control.lock does not hold the Meshway control marker",
+        ))
     }
 }
 pub(super) fn ensure_marker(directory: &meshway_private_storage::Directory) -> Result<(), Error> {
     let mut file = directory
         .file("node-control.lock", false)?
-        .ok_or(Error::Record)?;
+        .ok_or(Error::Record(NO_LOCK))?;
     if !marker(directory)? {
         file.write_all(MARKER)
             .map_err(|_| meshway_private_storage::Error::Io)?;
@@ -105,14 +109,15 @@ pub(super) fn read(
         .read_to_end(&mut bytes)
         .map_err(|_| meshway_private_storage::Error::Io)?;
     if bytes.len() > LIMIT {
-        return Err(Error::Record);
+        return Err(Error::Record("a private file exceeds the 16 MiB limit"));
     }
     Ok(Some(bytes))
 }
 
 pub(super) fn encode<T: Serialize>(value: &T) -> Result<Zeroizing<Vec<u8>>, Error> {
     let mut buffer = Buffer(Zeroizing::new(Vec::new()));
-    serde_json::to_writer(&mut buffer, value).map_err(|_| Error::Record)?;
+    serde_json::to_writer(&mut buffer, value)
+        .map_err(|_| Error::Record("a private record exceeds the 16 MiB limit"))?;
     Ok(buffer.0)
 }
 
@@ -124,7 +129,9 @@ impl Record {
         let initialized = marker(directory)?;
         let Some(file) = directory.file(RECORD, false)? else {
             if initialized {
-                return Err(Error::Record);
+                return Err(Error::Record(
+                    "control.json is missing from an initialized identity directory",
+                ));
             }
             // An absent identity record is only a new installation in an empty
             // domain directory. Preserve unknown files and crash staging data.
@@ -136,7 +143,9 @@ impl Record {
                     .file_name()
                     != "node-control.lock"
                 {
-                    return Err(Error::Record);
+                    return Err(Error::Record(
+                        "the identity directory holds other files but no control.json",
+                    ));
                 }
             }
             return Ok(Self {
@@ -154,14 +163,50 @@ impl Record {
         file.sync_all()
             .map_err(|_| meshway_private_storage::Error::Io)?;
         directory.sync()?;
-        let bytes = read(directory, RECORD)?.ok_or(Error::Record)?;
-        let record: Self = decode(&bytes)?;
-        if record.version != VERSION || record.origin != origin {
-            return Err(Error::Record);
+        let bytes = read(directory, RECORD)?
+            .ok_or(Error::Record("control.json disappeared while opening"))?;
+        let mut record: Self = decode(&bytes)
+            .map_err(|_| Error::Record("control.json is not a valid identity record"))?;
+        if record.version != VERSION {
+            return Err(Error::Record(
+                "control.json has an unsupported record version",
+            ));
         }
         record.validate()?;
+        if record.origin != origin {
+            record.rebind(origin)?;
+        }
         ensure_marker(directory)?;
         Ok(record)
+    }
+
+    /// A record without identity or pending work (a Node that left, or
+    /// cancelled its enrollment) binds to no Server: it takes the configured
+    /// origin. Anything else still belongs to its own Server.
+    fn rebind(&mut self, configured: &str) -> Result<(), Error> {
+        let held = if self.leave.is_some() {
+            Some(crate::Held::Leaving)
+        } else if self.binding.is_some() {
+            Some(crate::Held::Identity)
+        } else if self.keys.is_some() || self.enrollment.is_some() {
+            Some(crate::Held::Enrollment)
+        } else {
+            None
+        };
+        if let Some(held) = held {
+            return Err(Error::Origin {
+                held,
+                origin: self.origin.clone(),
+                configured: configured.into(),
+            });
+        }
+        tracing::info!(
+            previous = %self.origin,
+            configured,
+            "Identity record holds no identity; it binds to the configured Server"
+        );
+        configured.clone_into(&mut self.origin);
+        Ok(())
     }
 
     /// The same origin with no identity: the record of a Node that left.
@@ -182,17 +227,23 @@ impl Record {
     fn validate(&self) -> Result<(), Error> {
         let record = self;
         if record.completed_rotation.is_some() && record.binding.is_none() {
-            return Err(Error::Record);
+            return Err(Error::Record(
+                "control.json records a completed key rotation without an identity",
+            ));
         }
         if record.leave.is_some()
             && (record.binding.is_none()
                 || record.rotation.is_some()
                 || record.enrollment.is_some())
         {
-            return Err(Error::Record);
+            return Err(Error::Record(
+                "control.json records a leave without an identity, or beside pending work",
+            ));
         }
         if let Some(rotation) = &record.rotation {
-            rotation.validate(record.binding.as_ref().ok_or(Error::Record)?)?;
+            rotation.validate(record.binding.as_ref().ok_or(Error::Record(
+                "control.json records a key rotation without an identity",
+            ))?)?;
         }
         match (&record.keys, &record.enrollment, &record.binding) {
             (None, None, None) => {}
@@ -204,7 +255,9 @@ impl Record {
                     || pending.code.is_some() != pending.approved_network.is_some()
                     || (pending.access_key.is_some() && pending.code.is_some())
                 {
-                    return Err(Error::Record);
+                    return Err(Error::Record(
+                        "control.json's pending enrollment does not match its keys",
+                    ));
                 }
             }
             (Some(keys), None, Some(binding)) if keys.matches(binding)? => {}
@@ -223,17 +276,21 @@ impl Record {
                             && existing.key_id == binding.keys.control.id
                             && existing.key_generation == binding.keys.control.generation
                     }) => {}
-            _ => return Err(Error::Record),
+            _ => {
+                return Err(Error::Record(
+                    "control.json's keys, pending enrollment and identity do not match",
+                ));
+            }
         }
         Ok(())
     }
 }
 
 pub(super) fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
+    const INVALID: Error = Error::Record("a private record does not decode");
     let mut decoder = serde_json::Deserializer::from_slice(bytes);
-    let value =
-        T::deserialize(meshway_model::wire::MapOnly(&mut decoder)).map_err(|_| Error::Record)?;
-    decoder.end().map_err(|_| Error::Record)?;
+    let value = T::deserialize(meshway_model::wire::MapOnly(&mut decoder)).map_err(|_| INVALID)?;
+    decoder.end().map_err(|_| INVALID)?;
     Ok(value)
 }
 

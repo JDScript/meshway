@@ -93,9 +93,6 @@ enum Command {
         #[arg(long, env = "MESHWAY_DATA_DIR")]
         data_dir: PathBuf,
     },
-    /// Start a netmap signing-key rotation: a new key of the next generation
-    /// becomes current, and for the window every sync answer carries it with
-    /// an endorsement by the replaced key. Rejected while a window is open.
     /// Copy the database and the master key into the new private directory
     /// OUTPUT (0700, files 0600), itself a data directory a Server can be
     /// started on. Together they are every secret of this Server, its
@@ -108,6 +105,9 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Start a netmap signing-key rotation: a new key of the next generation
+    /// becomes current, and for the window every sync answer carries it with
+    /// an endorsement by the replaced key. Rejected while a window is open.
     RotateNetmapKey {
         /// Absolute path to this instance's private data directory.
         #[arg(long, env = "MESHWAY_DATA_DIR")]

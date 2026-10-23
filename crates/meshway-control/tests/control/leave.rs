@@ -81,6 +81,75 @@ async fn an_unanswered_leave_stays_pending_across_reopening_until_confirmed() {
     server.close().await;
 }
 
+/// N7: a Node the Server confirmed leaving binds to no Server: it opens
+/// with another Server URL and enrolls there. A leave its Server has not
+/// confirmed still belongs to that Server, and the refusal names both
+/// Servers and the way out.
+#[tokio::test]
+async fn a_left_node_moves_to_another_server_and_a_leaving_one_names_its_server() {
+    let server = Server::start().await;
+    let owner = server.owner().await;
+    let proxy = Proxy::start(&server.origin).await;
+    // The proxy and the Server itself are two Server URLs.
+    let (old, new) = (&proxy.origin, &server.origin);
+    assert_ne!(
+        meshway_control::server_origin(old).unwrap(),
+        meshway_control::server_origin(new).unwrap()
+    );
+
+    let mut control = server
+        .control(&owner, old, "moving", Default::default())
+        .await;
+    let path = server.path("moving");
+    assert!(matches!(
+        control.leave(request()).await.unwrap(),
+        Left::Confirmed(_)
+    ));
+    control.shutdown().await.unwrap();
+    let mut moved = Control::open(&path, new, meshway_test_server::http())
+        .expect("a Node that left binds to no Server");
+    forgotten(&moved, &path);
+    assert!(moved.begin_enrollment("moved").await.is_ok());
+    moved.shutdown().await.unwrap();
+    // Its pending enrollment now belongs to the new Server.
+    let refused = Control::open(&path, old, meshway_test_server::http())
+        .err()
+        .expect("a pending enrollment stays with its Server");
+    let reason = refused.to_string();
+    assert!(reason.contains("pending enrollment") && reason.contains("meshway down"));
+
+    let mut control = server
+        .control(&owner, old, "unconfirmed", Default::default())
+        .await;
+    let path = server.path("unconfirmed");
+    proxy.fault("/leave", Fault::Unavailable);
+    assert!(control.leave(request()).await.is_err());
+    control.shutdown().await.unwrap();
+    let saved = std::fs::read(path.join("control.json")).unwrap();
+    let refused = Control::open(&path, new, meshway_test_server::http())
+        .err()
+        .expect("an unconfirmed leave stays with its Server");
+    let reason = refused.to_string();
+    for part in [
+        "is leaving",
+        &meshway_control::server_origin(old).unwrap(),
+        &meshway_control::server_origin(new).unwrap(),
+    ] {
+        assert!(reason.contains(part), "{reason}");
+    }
+    assert_eq!(std::fs::read(path.join("control.json")).unwrap(), saved);
+    // Back on its own Server the leave completes; then it may move.
+    let mut control = open(&path, old);
+    assert!(matches!(
+        control.leave(request()).await.unwrap(),
+        Left::Confirmed(_)
+    ));
+    control.shutdown().await.unwrap();
+    open(&path, new).shutdown().await.unwrap();
+    proxy.close().await;
+    server.close().await;
+}
+
 #[tokio::test]
 async fn a_lost_leave_answer_completes_on_the_identity_rejection() {
     let server = Server::start().await;

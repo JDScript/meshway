@@ -168,6 +168,83 @@ fn left(status: &meshway_protocol::ipc::Status) -> bool {
     status.phase == Phase::Down && status.identity.is_none() && !status.desired_up
 }
 
+/// The first Status in phase `blocked`.
+async fn blocked(socket: &std::path::Path) -> meshway_protocol::ipc::Status {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Ok(status) = support::status(socket).await
+            && status.phase == Phase::Blocked
+        {
+            return status;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "never blocked");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// N7 (PROD-1): after a confirmed `logout` the Node moves to another
+/// Server by restarting with its URL and `up`, without touching the
+/// identity directory. A leave its Server has not confirmed keeps the
+/// identity there: the other URL is `blocked · storage` with a reason
+/// naming both Servers, and the original URL completes the leave.
+#[tokio::test]
+async fn a_left_node_moves_to_another_server_and_a_leaving_one_says_why_not() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let old = Server::start(root.join("old")).await;
+    let (old_user, old_network) = old.owner().await;
+    let new = Server::start(root.join("new")).await;
+    let (new_user, new_network) = new.owner().await;
+
+    let moved = root.join("moved");
+    let mut daemon = Process::start(&moved, &old.origin);
+    let ready = enrolled(&old, &old_user, old_network, &daemon.socket).await;
+    assert!(matches!(
+        logout(&daemon.socket, ready.revision).await,
+        ResultBody::Status { .. }
+    ));
+    wait_matching(&daemon.socket, left).await;
+    daemon.exit("-TERM").await;
+    let daemon = Process::start(&moved, &new.origin);
+    let ready = enrolled(&new, &new_user, new_network, &daemon.socket).await;
+    assert_eq!(ready.identity.unwrap().network_id, new_network);
+    assert_eq!(ready.server.trim_end_matches('/'), new.origin);
+    drop(daemon);
+
+    let proxy = Proxy::start(&old.origin).await;
+    let leaving = root.join("leaving");
+    let mut daemon = Process::start(&leaving, &proxy.origin);
+    let ready = enrolled(&old, &old_user, old_network, &daemon.socket).await;
+    proxy.set(Mode::Unavailable);
+    logout(&daemon.socket, ready.revision).await;
+    wait(&daemon.socket, Phase::Leaving).await;
+    daemon.exit("-TERM").await;
+    let mut daemon = Process::start(&leaving, &new.origin);
+    let status = blocked(&daemon.socket).await;
+    assert_eq!(
+        status.last_error,
+        Some(meshway_protocol::ipc::Problem::Storage)
+    );
+    let detail = status
+        .last_error_detail
+        .expect("a blocked Status names its cause");
+    for part in [
+        "is leaving",
+        &meshway_control::server_origin(&proxy.origin).unwrap(),
+        &meshway_control::server_origin(&new.origin).unwrap(),
+    ] {
+        assert!(detail.contains(part), "{detail}");
+    }
+    daemon.exit("-TERM").await;
+    proxy.set(Mode::Forward);
+    let daemon = Process::start(&leaving, &proxy.origin);
+    wait_matching(&daemon.socket, left).await;
+    drop(daemon);
+    proxy.close().await;
+    new.close().await;
+    old.close().await;
+}
+
 #[tokio::test]
 async fn logout_converges_after_a_lost_answer_and_survives_an_unreachable_server() {
     let temp = tempfile::tempdir().unwrap();

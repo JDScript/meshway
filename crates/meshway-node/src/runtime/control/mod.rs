@@ -53,15 +53,32 @@ pub(crate) struct SyncStatus {
     pub error: Option<meshway_protocol::ipc::SyncError>,
 }
 
+/// A Control problem and, when Control names it, why (`lastErrorDetail`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Cause {
+    pub problem: Problem,
+    pub detail: Option<String>,
+}
+
+impl From<Problem> for Cause {
+    fn from(problem: Problem) -> Self {
+        Self {
+            problem,
+            detail: None,
+        }
+    }
+}
+
 fn publish(
     sender: &watch::Sender<Report>,
     plan: &Desired,
     control: Option<&Control>,
     phase: Phase,
     url: Option<String>,
-    problem: Option<Problem>,
+    cause: Option<Cause>,
     retry: Option<Duration>,
 ) {
+    let problem = cause.as_ref().map(|cause| cause.problem);
     let previous = sender.borrow();
     let changed = previous.revision != plan.revision
         || previous.phase != phase
@@ -72,6 +89,7 @@ fn publish(
             revision = plan.revision.get(),
             ?phase,
             ?problem,
+            detail = cause.as_ref().and_then(|cause| cause.detail.as_deref()),
             retry_ms = retry.map(|d| d.as_millis() as u64),
             "Node control problem"
         );
@@ -88,6 +106,7 @@ fn publish(
         control: control.map(Control::snapshot),
         enrollment_url: url,
         problem,
+        problem_detail: cause.and_then(|cause| cause.detail),
         retry_at: retry
             .and_then(|d| chrono::Duration::from_std(d).ok())
             .map(|d| chrono::Utc::now() + d),
@@ -154,7 +173,7 @@ enum Ended {
     /// A failure that only a new operator revision can retry. `withdraw`
     /// ends the data plane too (decoded withdrawal or unknown storage);
     /// otherwise the held netmap keeps running to its lease end.
-    Blocked { problem: Problem, withdraw: bool },
+    Blocked { cause: Cause, withdraw: bool },
     /// The network worker stopped.
     Worker,
 }
@@ -238,7 +257,7 @@ pub(super) async fn run(
                             None,
                             phase,
                             None,
-                            Some(failure.problem),
+                            Some(failure.problem.into()),
                             delay,
                         );
                         backoff = (backoff * 2).min(BACKOFF_MAX);
@@ -265,7 +284,7 @@ pub(super) async fn run(
                         None,
                         Phase::Blocked,
                         None,
-                        Some(problem),
+                        Some(problem.into()),
                         None,
                     );
                     wait_change(&mut desired, &plan, None).await;
@@ -294,9 +313,9 @@ pub(super) async fn run(
                     control = Some(Arc::new(Mutex::new(value)));
                 }
                 other => {
-                    let problem = match other {
-                        Ok(Err(error)) => failure(error, true).problem,
-                        _ => Problem::Worker,
+                    let cause = match other {
+                        Ok(Err(error)) => failure(error, true).cause(),
+                        _ => Problem::Worker.into(),
                     };
                     publish(
                         &reported,
@@ -304,7 +323,7 @@ pub(super) async fn run(
                         None,
                         Phase::Blocked,
                         None,
-                        Some(problem),
+                        Some(cause),
                         None,
                     );
                     wait_change(&mut desired, &plan, None).await;
@@ -387,7 +406,7 @@ pub(super) async fn run(
                         Some(&driver),
                         Phase::Blocked,
                         None,
-                        Some(failure(error, true).problem),
+                        Some(failure(error, true).cause()),
                         None,
                     );
                     drop(driver);
@@ -428,7 +447,7 @@ pub(super) async fn run(
                 }
                 // The intent stays and is retried: no Server answer yet.
                 Err(error) if pending => {
-                    problem = Some(failure::at("leave", error, true).problem);
+                    problem = Some(failure::at("leave", error, true).cause());
                     Err(meshway_protocol::ipc::ErrorCode::Leaving)
                 }
                 Err(error) => Err(leave_error(error)),
@@ -501,7 +520,7 @@ pub(super) async fn run(
                     Phase::Blocked
                 },
                 None,
-                cleanup.err(),
+                cleanup.err().map(Cause::from),
                 None,
             );
             drop(driver);
@@ -526,7 +545,7 @@ pub(super) async fn run(
             });
             match ended {
                 Ended::Changed => {}
-                Ended::Blocked { problem, withdraw } => {
+                Ended::Blocked { cause, withdraw } => {
                     let mut driver = shared.lock().await;
                     if withdraw {
                         stop(&mut driver, false).await;
@@ -540,7 +559,7 @@ pub(super) async fn run(
                         Some(&driver),
                         Phase::Blocked,
                         None,
-                        Some(problem),
+                        Some(cause),
                         None,
                     );
                     drop(driver);
@@ -555,7 +574,7 @@ pub(super) async fn run(
                         Some(&driver),
                         Phase::Blocked,
                         None,
-                        Some(Problem::Worker),
+                        Some(Problem::Worker.into()),
                         None,
                     );
                     drop(driver);
@@ -832,7 +851,7 @@ async fn session(
                             Phase::Blocked
                         },
                         None,
-                        Some(error.problem),
+                        Some(error.cause()),
                         delay,
                     );
                     offer(&driver, network.as_deref());
@@ -868,7 +887,7 @@ async fn session(
             Ok(Online::Restart) => continue,
             Err(error) if !error.retry => {
                 return Ended::Blocked {
-                    problem: error.problem,
+                    cause: error.cause(),
                     withdraw: error.withdraw,
                 };
             }
@@ -972,11 +991,11 @@ async fn online_session(
                 offer(&driver, network.as_deref());
                 if !failure.retry {
                     break Err(Some(Ended::Blocked {
-                        problem: failure.problem,
+                        cause: failure.cause(),
                         withdraw: failure.withdraw,
                     }));
                 }
-                publish(reported, plan, Some(&driver), Phase::Retrying, None, Some(failure.problem), None);
+                publish(reported, plan, Some(&driver), Phase::Retrying, None, Some(failure.cause()), None);
                 break Err(None);
             },
             changed = error_rx.changed(), if errors_open => {
@@ -1102,7 +1121,7 @@ async fn maintain(
             offer(control, network.as_deref());
             if !failure.retry {
                 return Err(Ended::Blocked {
-                    problem: failure.problem,
+                    cause: failure.cause(),
                     withdraw: failure.withdraw,
                 });
             }
@@ -1140,7 +1159,7 @@ async fn maintain(
                 Some(control),
                 Phase::Retrying,
                 None,
-                Some(failure.problem),
+                Some(failure.cause()),
                 Some(delay),
             );
             Ok(())

@@ -110,7 +110,8 @@ impl Control {
             });
         }
         let intent = self.authentication.clone().ok_or(Error::Lifecycle)?;
-        let digest = request_digest(&intent).map_err(|_| Error::Record)?;
+        let digest = request_digest(&intent)
+            .map_err(|_| Error::Record("a pending request does not encode"))?;
         let request = NodeChallengeRequest {
             network_id: binding.network_id,
             node_id: binding.node_id,
@@ -140,7 +141,9 @@ impl Control {
             .record
             .keys
             .as_ref()
-            .ok_or(Error::Record)?
+            .ok_or(Error::Record(
+                "control.json holds no keys for this identity",
+            ))?
             .sign(&challenge_request_transcript(&challenge_intent))?;
         let challenge_start = Started::now(&self.clock)?;
         let client = self.client.clone();
@@ -200,7 +203,9 @@ impl Control {
             .record
             .keys
             .as_ref()
-            .ok_or(Error::Record)?
+            .ok_or(Error::Record(
+                "control.json holds no keys for this identity",
+            ))?
             .sign(&proof_transcript(&challenge))?;
         let started = Started::now(&self.clock)?;
         let client = self.client.clone();

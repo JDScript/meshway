@@ -496,10 +496,14 @@ fail closed 针对的是未知归属或不一致的本地存储。`daemon.json` 
 | 空目录、只有 `daemon.lock`（含 `install.sh --uninstall --purge` 后重装） | 启动，未接入 |
 | lock＋`underlay.json`（空或记录了资源）＋`underlay.json.stale-*`／其他 Underlay 文件 | 启动，未接入；`tun` 模式下由 Underlay 按[既有规则](#持久与重建)回收 journal：上一 boot／其他 namespace 的归档，同 namespace 且驻留的资源先核验再在未接入的 down 中删除，空 journal 无事可做。`control-only` 不打开 Underlay，journal 原样保留 |
 | 残留 `control.sock`／`underlay-bootstrap.sock` | 启动；无监听者的旧 socket 按 socket 身份规则回收，活跃 socket 仍报错退出 |
-| `logout` 后的 `identity/`（空身份 `control.json`、`clock.json`、lock）＋journal | 启动，未接入；身份目录由 Control 载入为无身份记录 |
+| `logout` 后的 `identity/`（空身份 `control.json`、`clock.json`、lock）＋journal | 启动，未接入；身份目录由 Control 载入为无身份记录，可用任一 Server origin（[身份记录与 Server origin](#identity-origin)） |
 | 以上之外的任何名称、符号链接、类型不符（如目录名为 `underlay.json`、普通文件名为 `identity`） | 拒绝，目录原样保留 |
 
 自己留下的 journal 不是拒绝启动的理由：它存在的目的就是让下一次启动回收上一实例的资源。手工删除身份文件后 systemd 不再陷入每 5 秒重启的循环；重新接入仍需显式 `up`。
+
+#### 身份记录与 Server origin {#identity-origin}
+
+owner：Control 的身份存储（`meshway_control::storage`）。`control.json` 记录写入它的 Server origin。记录中没有身份也没有待完成工作（Server 已确认注销或已拒绝该身份、接入请求已取消）时它不属于任何 Server：以另一个 `--server`／`MESHWAY_SERVER_URL` 启动即载入为该 origin 的无身份记录，未接入、可 `up`（INFO `Identity record holds no identity; it binds to the configured Server`，`previous`／`configured`），步骤见[迁到另一个 Server](/v2/install#move-server)。记录仍持有身份、待 Server 确认的注销意图（`leaving`）、接入请求或换钥时，另一个 origin 是已证实的不一致：Control 不打开，daemon `blocked`／`lastError=storage`，`lastErrorDetail` 写明记录所属的 origin、配置的 origin 与处理办法（改回原 URL 后 `meshway logout`、等注销完成或 `meshway down` 取消接入），记录原样保留；只有期望状态改变或重启才重读。`control.json` 本身不一致（格式、版本、密钥与接入／绑定不符、初始化目录中缺失）同样为 `blocked`／`storage`，`lastErrorDetail` 为 `private control record is invalid: <原因>`。
 
 ## 生命周期
 

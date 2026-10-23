@@ -4,6 +4,15 @@
 
 ## 未发布
 
+N7 节点迁到另一个 Server（`n7/server-move`）：wire 6、IPC 13（字段不变，`lastErrorDetail` 多一类文本）、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+
+- Node（不变量：Server 已确认注销的身份不再绑定任何 Server；owner：Control 身份存储 `meshway_control::storage`）：没有身份也没有待完成工作的 `control.json` 以任一 Server origin 打开，未接入、可 `up`。此前 `logout` 后改 `MESHWAY_SERVER_URL` 即 `blocked · storage`（PROD-1 it7、planck），只能手工改名身份目录。仍持有身份、注销待确认（`leaving`）、接入或换钥待完成的记录遇到另一个 origin 仍为已证实不一致：`blocked`／`storage`，记录原样保留。见[身份记录与 Server origin](/v2/node/runtime#identity-origin)、[迁到另一个 Server](/v2/install#move-server)。
+- Status（不变量：`blocked`／`retrying` 的 Control 存储问题带原因；owner：Control 存储与 daemon Status 投影）：`storage` 时 `lastErrorDetail` 给出 Control 的原因——origin 不符时写明记录所属与配置的 origin 及处理办法，记录本身不一致时为 `private control record is invalid: <原因>`（锁标记、缺失、格式、版本、密钥与接入／绑定不符等逐项命名）；此前为 null。WARN `Node control operation failed` 另带 `detail`。
+- Server：`meshway-server --help` 中 `backup` 与 `rotate-netmap-key` 各自显示自己的说明（此前 `backup` 显示换钥文字、`rotate-netmap-key` 为空）。
+- 文档：[迁到另一个 Server](/v2/install#move-server)，含容器节点与经 stdin 交接入密钥（`docker cp` 写不进 `/run` tmpfs）。
+
+旧代码失败记录在 `.meshway/validation/n7/`。
+
 CORS-1 Console 跨源部署（`cors1/console-origin`）：wire、IPC、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
 
 - Server：`--console-origin` 与委托客户端 origin 一样进入 CORS 白名单（仅 `/api/v1/`，`GET`／`POST`／`DELETE`，`Authorization`／`Content-Type`／`Last-Event-ID`，暴露 `x-request-id`／`Date`，无 cookie），Console 可托管在 Server 以外的 origin；两者都未配置时仍不发送 CORS 头。规则见 [Server · 跨源访问](/v2/server#cors)。

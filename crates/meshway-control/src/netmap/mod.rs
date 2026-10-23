@@ -387,7 +387,9 @@ impl Control {
     ) -> Result<(), Error> {
         self.ready()?;
         let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
-        let keys = self.record.keys.as_ref().ok_or(Error::Record)?;
+        let keys = self.record.keys.as_ref().ok_or(Error::Record(
+            "control.json holds no keys for this identity",
+        ))?;
         let bytes = store::encode(netmap, lease, signature, binding, keys)?;
         if let Some(previous) = self.netmap_write.take() {
             let _ = previous.await;

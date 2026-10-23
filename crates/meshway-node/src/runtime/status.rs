@@ -20,6 +20,8 @@ pub(super) struct Report {
     pub control: Option<StatusSnapshot>,
     pub enrollment_url: Option<String>,
     pub problem: Option<Problem>,
+    /// Why, when Control names the cause of `problem`.
+    pub problem_detail: Option<String>,
     pub retry_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
     pub rotation: Option<RotationOutcome>,
@@ -33,6 +35,7 @@ impl Report {
             control: None,
             enrollment_url: None,
             problem: None,
+            problem_detail: None,
             retry_at: None,
             observed_at: Utc::now(),
             rotation: None,
@@ -460,12 +463,14 @@ impl View {
             peers,
             sockets,
             last_error: report.problem.or(network_error.as_ref().map(|e| e.problem)),
-            // Each cause stays with its own failure: the packet plane's
-            // is `lastErrorDetail` when it is `lastError`, else beside it.
-            last_error_detail: network_error
-                .as_ref()
-                .filter(|_| report.problem.is_none())
-                .and_then(|failure| failure.detail.clone()),
+            // Each cause stays with its own failure: Control's when it is
+            // `lastError`; the packet plane's when it is, else beside it.
+            last_error_detail: match report.problem {
+                Some(_) => report.problem_detail.clone(),
+                None => network_error
+                    .as_ref()
+                    .and_then(|failure| failure.detail.clone()),
+            },
             network_error: network_error.filter(|_| report.problem.is_some()),
             retry_at: if current && desired.up {
                 report.retry_at

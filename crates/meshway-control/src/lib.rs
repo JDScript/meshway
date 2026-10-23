@@ -81,8 +81,19 @@ pub enum Error {
     Endpoint,
     #[error("control storage operation failed: {0}")]
     Storage(#[from] meshway_private_storage::Error),
-    #[error("private control record is invalid or belongs to a different origin")]
-    Record,
+    /// A proven inconsistency of the private record; the reason names it.
+    #[error("private control record is invalid: {0}")]
+    Record(&'static str),
+    /// The record holds an identity or pending work of another Server. A
+    /// record without either (a Node that left) binds to no Server.
+    #[error("{}", held.mismatch(origin, configured))]
+    Origin {
+        held: Held,
+        /// The Server the record belongs to.
+        origin: String,
+        /// The Server this Node is configured to use.
+        configured: String,
+    },
     #[error("the previous durable write has an unknown outcome; reopen control storage")]
     ReloadRequired,
     #[error("control operation is not valid in the current lifecycle state")]
@@ -107,6 +118,37 @@ pub enum Error {
     Expired,
     #[error("Server operation failed: {0}")]
     Server(#[from] ClientError<ErrorResponse>),
+}
+
+/// What a record of another Server still holds there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Held {
+    /// An enrolled identity.
+    Identity,
+    /// An enrolled identity whose leave that Server has not confirmed.
+    Leaving,
+    /// An enrollment request (or key rotation) awaiting that Server.
+    Enrollment,
+}
+
+impl Held {
+    fn mismatch(self, origin: &str, configured: &str) -> String {
+        let (what, remedy) = match self {
+            Self::Identity => ("is enrolled with", "run `meshway logout` there first"),
+            Self::Leaving => (
+                "is leaving",
+                "keep it until that Server confirms the leave (`meshway status` shows no identity)",
+            ),
+            Self::Enrollment => (
+                "has a pending enrollment with",
+                "run `meshway down` there to cancel it",
+            ),
+        };
+        format!(
+            "this Node {what} {origin}, not the configured Server {configured}; \
+             to move it, set the Server URL back to {origin} and {remedy}"
+        )
+    }
 }
 
 impl From<clock::Error> for Error {
@@ -523,7 +565,9 @@ impl Error {
 
     pub fn recovery(&self) -> Recovery {
         match self {
-            Self::Storage(_) | Self::Record | Self::ReloadRequired => Recovery::Storage,
+            Self::Storage(_) | Self::Record(_) | Self::Origin { .. } | Self::ReloadRequired => {
+                Recovery::Storage
+            }
             Self::Server(error) if identity_rejected(error) => {
                 Recovery::Withdrawn { identity: true }
             }

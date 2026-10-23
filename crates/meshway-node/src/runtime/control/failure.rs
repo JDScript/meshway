@@ -7,6 +7,9 @@ use std::time::Duration;
 
 pub(super) struct Failure {
     pub problem: Problem,
+    /// Why, for a local storage failure (no remote text or secret): Status
+    /// `lastErrorDetail`.
+    pub detail: Option<String>,
     pub retry: bool,
     /// The old runtime context (session, instance) is gone and is re-acquired
     /// at once; the data plane follows netmap authority regardless.
@@ -58,13 +61,17 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         Error::Lifecycle | Error::Pending | Error::StateScopeChanged | Error::StaleReport => {
             Problem::Apply
         }
-        Error::Storage(_) | Error::Record | Error::ReloadRequired => Problem::Storage,
+        Error::Storage(_) | Error::Record(_) | Error::Origin { .. } | Error::ReloadRequired => {
+            Problem::Storage
+        }
         Error::Endpoint => Problem::Configuration,
         _ => Problem::Contract,
     };
+    let detail = (problem == Problem::Storage).then(|| error.to_string());
     tracing::warn!(
         operation,
         authenticating,
+        detail = detail.as_deref(),
         error_kind = kind,
         http_status = status,
         ?server_request_id,
@@ -77,10 +84,20 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
     );
     Failure {
         problem,
+        detail,
         retry,
         reset,
         withdraw,
         retry_after,
+    }
+}
+
+impl Failure {
+    pub fn cause(&self) -> super::Cause {
+        super::Cause {
+            problem: self.problem,
+            detail: self.detail.clone(),
+        }
     }
 }
 
@@ -108,7 +125,9 @@ fn details(error: &Error) -> (&'static str, Option<u16>, Option<&'static str>) {
         Error::Contract => ("contract", None, None),
         Error::StateScopeChanged => ("state_scope_changed", None, None),
         Error::StaleReport => ("stale_report", None, None),
-        Error::Storage(_) | Error::Record | Error::ReloadRequired => ("storage", None, None),
+        Error::Storage(_) | Error::Record(_) | Error::Origin { .. } | Error::ReloadRequired => {
+            ("storage", None, None)
+        }
         _ => ("local", None, None),
     }
 }
@@ -201,7 +220,7 @@ mod tests {
             withdrawn.withdraw && withdrawn.retry,
             "keeps polling for a new netmap"
         );
-        for error in [Error::Record, Error::ReloadRequired] {
+        for error in [Error::Record("test"), Error::ReloadRequired] {
             let failed = failure(error, false);
             assert!(failed.withdraw && !failed.retry);
         }

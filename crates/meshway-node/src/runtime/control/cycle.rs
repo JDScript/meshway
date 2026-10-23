@@ -91,6 +91,7 @@ pub(super) async fn online(
                             EnrollmentPhase::Withdrawn => Problem::EnrollmentWithdrawn,
                             _ => Problem::EnrollmentCancelled,
                         },
+                        detail: None,
                         retry: false,
                         reset: false,
                         withdraw: false,
@@ -166,6 +167,7 @@ pub(super) async fn online(
                     };
                     return Err(Failure {
                         problem,
+                        detail: None,
                         retry: false,
                         reset: false,
                         withdraw: false,
@@ -188,6 +190,7 @@ pub(super) async fn online(
                 if let Some(problem) = problem {
                     return Err(Failure {
                         problem,
+                        detail: None,
                         retry: false,
                         reset: false,
                         withdraw: false,

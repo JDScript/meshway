@@ -32,7 +32,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
             &server.origin,
             meshway_test_server::client::http_client_builder().unwrap()
         ),
-        Err(Error::Record)
+        Err(Error::Record(_))
     ));
     fs::write(path.join("control.json"), &saved).unwrap();
     fs::set_permissions(path.join("control.json"), fs::Permissions::from_mode(0o600)).unwrap();
@@ -42,7 +42,10 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
             "https://different.example",
             meshway_test_server::client::http_client_builder().unwrap()
         ),
-        Err(Error::Record)
+        Err(Error::Origin {
+            held: meshway_control::Held::Enrollment,
+            ..
+        })
     ));
     assert!(fs::read(path.join("control.json")).unwrap() == saved);
     for invalid in [b"{".as_slice(), b"{}".as_slice(), b"[]".as_slice()] {
@@ -53,7 +56,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
                 &server.origin,
                 meshway_test_server::client::http_client_builder().unwrap()
             ),
-            Err(Error::Record)
+            Err(Error::Record(reason)) if !reason.is_empty()
         ));
         assert!(fs::read(path.join("control.json")).unwrap() == invalid);
     }

@@ -33,13 +33,18 @@ impl Rotation {
             || request.node_id != binding.node_id
             || request.key_id != binding.keys.control.id
             || request.operation != ProofOperation::Rotate
-            || request.request_digest != request_digest(&self.intent).map_err(|_| Error::Record)?
+            || request.request_digest
+                != request_digest(&self.intent)
+                    .map_err(|_| Error::Record("a pending request does not encode"))?
         {
-            return Err(Error::Record);
+            return Err(Error::Record(
+                "control.json's pending key rotation does not match its identity",
+            ));
         }
         if let Some(challenge) = &self.challenge {
-            self.validate_challenge(challenge, binding)
-                .map_err(|_| Error::Record)?;
+            self.validate_challenge(challenge, binding).map_err(|_| {
+                Error::Record("control.json's pending key rotation does not match its identity")
+            })?;
         }
         Ok(())
     }
@@ -131,7 +136,8 @@ impl Control {
                     node_id: binding.node_id,
                     key_id: binding.keys.control.id,
                     operation: ProofOperation::Rotate,
-                    request_digest: request_digest(&intent).map_err(|_| Error::Record)?,
+                    request_digest: request_digest(&intent)
+                        .map_err(|_| Error::Record("a pending request does not encode"))?,
                 },
                 expires_at_ms: self
                     .clock
@@ -151,14 +157,20 @@ impl Control {
             .record
             .rotation
             .as_ref()
-            .ok_or(Error::Record)?
+            .ok_or(Error::Record("control.json holds no pending key rotation"))?
             .challenge
             .is_none()
         {
             self.prepare_rotation(&binding).await?;
         }
-        let pending = self.record.rotation.as_ref().ok_or(Error::Record)?;
-        let request = pending.request(self.record.keys.as_ref().ok_or(Error::Record)?)?;
+        let pending = self
+            .record
+            .rotation
+            .as_ref()
+            .ok_or(Error::Record("control.json holds no pending key rotation"))?;
+        let request = pending.request(self.record.keys.as_ref().ok_or(Error::Record(
+            "control.json holds no keys for this identity",
+        ))?)?;
         let expires = pending.allocation.expires_at_ms;
         // A submitted rotation can retire all current execution. Stop old local
         // authority before sending, including when delivery becomes uncertain.
@@ -192,7 +204,11 @@ impl Control {
                 return Err(Error::Server(error));
             }
         };
-        let pending = self.record.rotation.as_ref().ok_or(Error::Record)?;
+        let pending = self
+            .record
+            .rotation
+            .as_ref()
+            .ok_or(Error::Record("control.json holds no pending key rotation"))?;
         let generation = binding
             .keys
             .control
@@ -209,7 +225,11 @@ impl Control {
         {
             return Err(Error::Contract);
         }
-        let pending = self.record.rotation.take().ok_or(Error::Record)?;
+        let pending = self
+            .record
+            .rotation
+            .take()
+            .ok_or(Error::Record("control.json holds no pending key rotation"))?;
         self.record.keys = Some(pending.keys);
         self.record.binding = Some(EnrollmentResponse {
             keys: keys.clone(),
@@ -226,25 +246,39 @@ impl Control {
 
     async fn prepare_rotation(&mut self, binding: &EnrollmentResponse) -> Result<(), Error> {
         let now = self.clock.now()?;
-        let pending = self.record.rotation.as_mut().ok_or(Error::Record)?;
+        let pending = self
+            .record
+            .rotation
+            .as_mut()
+            .ok_or(Error::Record("control.json holds no pending key rotation"))?;
         if pending.allocation.expires_at_ms <= now {
             pending.allocation.id =
                 ChallengeId::new(random_id()?).map_err(|_| Error::Cryptography)?;
             pending.allocation.expires_at_ms = now.checked_add(59_000).ok_or(Error::Expired)?;
             self.persist().await?;
         }
-        let pending = self.record.rotation.as_ref().ok_or(Error::Record)?;
+        let pending = self
+            .record
+            .rotation
+            .as_ref()
+            .ok_or(Error::Record("control.json holds no pending key rotation"))?;
         let request = SignedNodeChallengeRequest {
             intent: pending.allocation.clone(),
             signature: self
                 .record
                 .keys
                 .as_ref()
-                .ok_or(Error::Record)?
+                .ok_or(Error::Record(
+                    "control.json holds no keys for this identity",
+                ))?
                 .sign(&challenge_request_transcript(&pending.allocation))?,
         };
         let challenge = self.client.create_node_challenge(&request).await?;
-        let pending = self.record.rotation.as_mut().ok_or(Error::Record)?;
+        let pending = self
+            .record
+            .rotation
+            .as_mut()
+            .ok_or(Error::Record("control.json holds no pending key rotation"))?;
         pending.validate_challenge(&challenge, binding)?;
         pending.challenge = Some(challenge);
         // Persist the exact recovery challenge BEFORE the first rotate request.

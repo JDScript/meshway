@@ -603,6 +603,28 @@ fn version_names_the_build_and_its_schema_range() {
     );
 }
 
+/// Each maintenance command's help line describes that command (PROD-1:
+/// `backup` showed the key rotation text and `rotate-netmap-key` none).
+#[test]
+fn help_describes_each_maintenance_command() {
+    let output = Command::new(env!("CARGO_BIN_EXE_meshway-server"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let summary = |command: &str| {
+        text.lines()
+            .find_map(|line| line.trim_start().strip_prefix(command))
+            .map(str::trim)
+            .unwrap_or_else(|| panic!("{command} is listed: {text}"))
+            .to_owned()
+    };
+    assert!(summary("migrate ").starts_with("Migrate the database"));
+    assert!(summary("backup ").starts_with("Copy the database and the master key"));
+    assert!(summary("rotate-netmap-key ").starts_with("Start a netmap signing-key rotation"));
+}
+
 /// `Type=notify`: the start timeout renewed while the storage opens,
 /// readiness once it is open and the listener bound, and the stop as it begins.
 #[cfg(target_os = "linux")]
