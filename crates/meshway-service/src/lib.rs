@@ -2,6 +2,9 @@
 //! one implementation the Node daemon and the Server share. Without
 //! `NOTIFY_SOCKET` (foreground, containers, other platforms) this is a no-op;
 //! a failed notification is logged and never changes the caller's behavior.
+//! Notifications are best effort and never wait: a service manager whose
+//! queue is full (or that is not reading) loses that one, it never stalls
+//! the caller's lifecycle.
 #![forbid(unsafe_code)]
 
 use std::time::Duration;
@@ -51,6 +54,7 @@ fn send(target: &std::ffi::OsStr, state: &str) -> std::io::Result<()> {
         }
     };
     let socket = net::UnixDatagram::unbound()?;
+    socket.set_nonblocking(true)?;
     let sent = socket.send_to_addr(state.as_bytes(), &address)?;
     if sent != state.len() {
         return Err(std::io::Error::new(
@@ -94,5 +98,33 @@ mod tests {
         assert_eq!(&buffer[..length], b"STOPPING=1");
 
         assert!(send("relative".as_ref(), "READY=1").is_err());
+    }
+
+    /// F8a F9: a service manager that does not read its full queue loses
+    /// the notification; the sender returns at once instead of blocking.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_full_notification_queue_does_not_block_the_sender() {
+        use std::os::unix::net::UnixDatagram;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notify");
+        let receiver = UnixDatagram::bind(&path).unwrap();
+        let filler = UnixDatagram::unbound().unwrap();
+        filler.set_nonblocking(true).unwrap();
+        let mut queued = 0;
+        while filler.send_to(b"WATCHDOG=1", &path).is_ok() {
+            queued += 1;
+            assert!(queued < 100_000, "the receiver queue never filled");
+        }
+        let (done, finished) = std::sync::mpsc::channel();
+        let target = path.clone();
+        std::thread::spawn(move || {
+            let _ = done.send(send(target.as_os_str(), "STOPPING=1"));
+        });
+        let result = finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the notification blocked on a full queue");
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        drop(receiver);
     }
 }
