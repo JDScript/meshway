@@ -34,6 +34,10 @@ CASES = {
                 "exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again"),
     "audit": ("meshway-underlay-kernel-tests",
               "linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry"),
+    # F8a F1: the dual-stack program's three tables are its own on a retried
+    # cleanup and on a start recovering a CREATE whose receipt was not saved.
+    "cleanup6": ("meshway-underlay-kernel-tests",
+                 "linux::kernel::exit::tests::cleanup::dual_stack_exit_cleanup_retries_and_a_create_without_receipt_is_recovered"),
     # X12: a failed kernel change proves neither outcome; the owner reads
     # back and completes it from the target or the start (each change path
     # injected applied-then-failed and failed-unseen), or fails closed on a

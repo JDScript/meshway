@@ -224,13 +224,14 @@ impl Backend {
     }
     /// Cleanup from what the kernel holds now: an earlier attempt may have
     /// removed part of it. Tables gone after a closing journal released
-    /// every route, rule and projection are a completed removal; both tables
-    /// present are closed again from the start (each step re-reads and
-    /// skips what is already gone); anything else is not this owner's to
-    /// remove.
+    /// every route, rule and projection are a completed removal; every
+    /// table of the program present (two, or three with IPv6) is closed
+    /// again from the start (each step re-reads and skips what is already
+    /// gone); anything else is not this owner's to remove.
     pub async fn close_observed(&mut self, monitored: bool) -> Result<()> {
         let _write = self.store.settle().await;
         let _command = self.commands.settle().await;
+        let tables = self.ledger.program.tables().len();
         match objects::present(&mut self.commands, &self.ledger.program).await? {
             0 if self.ledger.rules.is_empty()
                 && self.ledger.routes.is_empty()
@@ -242,7 +243,7 @@ impl Backend {
                 self.ledger.pending = false;
                 self.store.persist(&self.ledger).await
             }
-            2 => self.close(monitored).await,
+            present if present == tables => self.close(monitored).await,
             _ => Err(Error::Conflict),
         }
     }

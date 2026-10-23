@@ -30,7 +30,9 @@ pub(in crate::linux::kernel) async fn recover(
         directory: store.directory.clone(),
         installation: ledger.program.installation.clone(),
     });
-    if ledger.receipt.is_none() && objects::present(&mut commands, &ledger.program).await? == 2 {
+    if ledger.receipt.is_none()
+        && objects::present(&mut commands, &ledger.program).await? == ledger.program.tables().len()
+    {
         if !ledger.projections.is_empty() || !ledger.rules.is_empty() || !ledger.routes.is_empty() {
             return Err(Error::Journal);
         }

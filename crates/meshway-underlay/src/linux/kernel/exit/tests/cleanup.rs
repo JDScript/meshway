@@ -7,16 +7,42 @@ use std::sync::atomic::Ordering::SeqCst;
 
 /// A projection-free exit backend on a fresh TUN, as the owner creates it.
 pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backend::Backend {
-    let mut nonce = [0; 16];
-    getrandom::fill(&mut nonce).unwrap();
-    let mark = if kernel.journal.mark.mask != 1 { 1 } else { 2 };
-    let namespace = crate::linux::kernel::namespace::Identity::current().unwrap();
+    let ledger = ledger(kernel, tun, vec![ExitFamily::Ipv4]);
     let (store, previous) = storage::Store::open(kernel.store.directory())
         .await
         .unwrap();
     // A second installation follows a removed one only.
     assert!(previous.is_none_or(|ledger| ledger.removed));
-    let ledger = storage::Ledger {
+    backend::Backend::create(
+        store,
+        ledger,
+        routing(kernel),
+        Arc::new(RwLock::new(BTreeMap::new())),
+        vec![Ipv4Addr::LOCALHOST.into()],
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap()
+}
+
+fn routing(kernel: &Kernel) -> routing::Routing {
+    routing::Routing {
+        handle: kernel.handle.clone(),
+        expected: kernel.expected.clone(),
+        limit: 16384,
+        start: kernel.journal.start,
+        end: kernel.journal.end(),
+    }
+}
+
+/// The journal of a projection-free exit installation of `families` on `tun`.
+fn ledger(kernel: &Kernel, tun: &meshway_tun::Tun, families: Vec<ExitFamily>) -> storage::Ledger {
+    let ipv6 = families.contains(&ExitFamily::Ipv6);
+    let mut nonce = [0; 16];
+    getrandom::fill(&mut nonce).unwrap();
+    let mark = if kernel.journal.mark.mask != 1 { 1 } else { 2 };
+    let namespace = crate::linux::kernel::namespace::Identity::current().unwrap();
+    storage::Ledger {
         version: 2,
         boot: namespace.boot,
         namespace_device: namespace.device,
@@ -27,7 +53,7 @@ pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backe
         node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
         plan: crate::target::RoleIdentity {
             generation: Digest::from_bytes([1; 32]),
-            families: vec![ExitFamily::Ipv4],
+            families: families.clone(),
             nat: ExitNat::Masquerade,
         },
         program: program::Program {
@@ -37,8 +63,12 @@ pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backe
             interface_name: tun.name().to_owned(),
             mark,
             pools: vec!["100.96.0.0/11".parse().unwrap()],
-            families: vec![ExitFamily::Ipv4],
-            pools6: Vec::new(),
+            families,
+            pools6: if ipv6 {
+                vec!["fd79::/48".parse().unwrap()]
+            } else {
+                Vec::new()
+            },
         },
         tun_name: tun.name().to_owned(),
         mtu: tun.mtu(),
@@ -52,24 +82,7 @@ pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backe
         closing: false,
         removed: false,
         pending: true,
-    };
-    let routing = routing::Routing {
-        handle: kernel.handle.clone(),
-        expected: kernel.expected.clone(),
-        limit: 16384,
-        start: kernel.journal.start,
-        end: kernel.journal.end(),
-    };
-    backend::Backend::create(
-        store,
-        ledger,
-        routing,
-        Arc::new(RwLock::new(BTreeMap::new())),
-        vec![Ipv4Addr::LOCALHOST.into()],
-        CancellationToken::new(),
-    )
-    .await
-    .unwrap()
+    }
 }
 
 /// An exit TUN the monitor expects, as the owner creates it.
@@ -225,6 +238,114 @@ async fn exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_
     drop(second_tun);
     kernel.quiesce().await.unwrap();
     println!("X11_EXIT_REINSTALL=installed-again,tables-gone-completed");
+    kernel.down().await.unwrap();
+    drop(kernel);
+    tasks.shutdown().await.unwrap();
+}
+
+/// F8a F1: a dual-stack program owns three tables. A cleanup whose first
+/// read fails keeps all three and the retry removes them; a CREATE that
+/// committed before its receipt was saved is recovered at the next start.
+#[tokio::test]
+#[ignore = "requires an isolated Linux NFT/TUN namespace and NET_ADMIN"]
+async fn dual_stack_exit_cleanup_retries_and_a_create_without_receipt_is_recovered() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let directory = Arc::new(Directory::open(temp.path(), "node.lock").unwrap());
+    let tasks = Tasks::new(64);
+    let mut kernel = Kernel::open(directory, Default::default(), tasks.clone())
+        .await
+        .unwrap();
+    kernel
+        .retain_negative(&["100.96.0.0/11".parse().unwrap()])
+        .await
+        .unwrap();
+    let dual = vec![ExitFamily::Ipv4, ExitFamily::Ipv6];
+    let first_tun = tun(&kernel);
+    kernel.quiesce().await.unwrap();
+    let (store, _) = storage::Store::open(kernel.store.directory())
+        .await
+        .unwrap();
+    let mut backend = backend::Backend::create(
+        store,
+        ledger(&kernel, &first_tun, dual.clone()),
+        routing(&kernel),
+        Arc::new(RwLock::new(BTreeMap::new())),
+        vec![
+            Ipv4Addr::LOCALHOST.into(),
+            std::net::Ipv6Addr::LOCALHOST.into(),
+        ],
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(backend.ledger.program.tables().len(), 3);
+    assert_eq!(
+        objects::present(&mut backend.commands, &backend.ledger.program)
+            .await
+            .unwrap(),
+        3
+    );
+    objects::FAILING_READS.store(1, SeqCst);
+    assert!(matches!(backend.close(true).await, Err(Error::Netlink)));
+    assert_eq!(
+        objects::present(&mut backend.commands, &backend.ledger.program)
+            .await
+            .unwrap(),
+        3,
+        "the failed attempt removed nothing"
+    );
+    assert!(!removed(&kernel).await);
+    backend.close_observed(true).await.unwrap();
+    assert_eq!(
+        objects::present(&mut backend.commands, &backend.ledger.program)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(removed(&kernel).await);
+    drop(backend);
+    drop(first_tun);
+    kernel.quiesce().await.unwrap();
+    println!("F8A_EXIT6_CLEANUP_RETRY=three-tables-kept,retry-removed");
+
+    // The CREATE committed; the receipt was never saved.
+    let second_tun = tun(&kernel);
+    kernel.quiesce().await.unwrap();
+    let (mut store, _) = storage::Store::open(kernel.store.directory())
+        .await
+        .unwrap();
+    let ledger = ledger(&kernel, &second_tun, dual);
+    store.persist(&ledger).await.unwrap();
+    drop(store);
+    let mut commands = command::Commands::default();
+    objects::mutate(&mut commands, &ledger.program.create())
+        .await
+        .unwrap();
+    assert_eq!(
+        objects::present(&mut commands, &ledger.program)
+            .await
+            .unwrap(),
+        3
+    );
+    drop(second_tun);
+    kernel.quiesce().await.unwrap();
+    recovery::recover(&kernel.handle, kernel.store.directory(), 16384)
+        .await
+        .unwrap();
+    assert_eq!(
+        objects::present(&mut commands, &ledger.program)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(removed(&kernel).await);
+    println!("F8A_EXIT6_CREATE_RECOVERY=receipt-recovered,three-tables-removed");
     kernel.down().await.unwrap();
     drop(kernel);
     tasks.shutdown().await.unwrap();
