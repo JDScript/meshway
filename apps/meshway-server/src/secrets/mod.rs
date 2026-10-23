@@ -326,6 +326,13 @@ pub(crate) fn initialize(
     Ok(sealer)
 }
 
+/// The published master key of `directory` is the one the database of
+/// `connection` is bound to; nothing is created, published or written.
+pub(crate) fn check(connection: &Connection, directory: &Directory) -> Result<(), KeyError> {
+    let bytes = directory.read_key(false)?.ok_or(KeyError::Missing)?;
+    decode_key(&bytes)?.check_binding(connection)
+}
+
 fn decode_key(bytes: &[u8]) -> Result<Sealer, KeyError> {
     if bytes.len() != 53 || &bytes[..5] != KEY_HEADER {
         return Err(KeyError::Invalid);

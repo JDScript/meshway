@@ -38,7 +38,11 @@ pub async fn backup(data_dir: PathBuf, output: PathBuf) -> Result<Backup, AppErr
 
 fn run(data_dir: &Path, output: &Path) -> Result<Backup, AppError> {
     let mut source = Directory::open(data_dir)?;
-    schema::migrate::prepare(&mut source, Migration::Refuse)?;
+    schema::migrate::prepare(
+        &mut source,
+        Migration::Refuse,
+        &crate::app::startup::Progress::none(),
+    )?;
     let mut database = open(&source.database_path()).map_err(|_| AppError::Database)?;
     database
         .pragma_update(None, "query_only", true)

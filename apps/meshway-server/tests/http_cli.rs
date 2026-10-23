@@ -486,7 +486,7 @@ async fn migrate_and_persistent_storage_blocks_have_their_own_exit_status() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Database is already at this build's schema; nothing migrated.\n"
+        "Migration state: current\nDatabase is already at this build's schema; nothing migrated.\n"
     );
     let backup = temp.path().canonicalize().unwrap().join("backup");
     let output = maintenance(&["backup", "--output", backup.to_str().unwrap()]);

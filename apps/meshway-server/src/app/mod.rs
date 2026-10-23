@@ -8,6 +8,8 @@ use crate::secrets::{self, KeyError, Sealer};
 use crate::settings::Settings;
 use crate::store::{Executor, ExecutorError, OpenError, Options, schema};
 
+pub(crate) mod startup;
+
 const MAX_DIRECTORY_PREPARATIONS: u32 = 4;
 static DIRECTORY_PREPARATIONS: Semaphore =
     Semaphore::const_new(MAX_DIRECTORY_PREPARATIONS as usize);
@@ -221,6 +223,10 @@ impl App {
             .await
             .map_err(|_| AppError::Worker)?;
         let migration = settings.migration;
+        // The whole storage opening, migration and startup compilation, under
+        // one renewal of the service manager's start timeout.
+        let startup = startup::Startup::start("Opening the database");
+        let progress = startup.progress();
         let (directory, migrated) = tokio::task::spawn_blocking(move || {
             // The task retains its budget through completion even if its caller
             // cancels: a started migration completes or fails as a whole. An
@@ -228,7 +234,7 @@ impl App {
             // worker has not been opened at this stage.
             let _permit = permit;
             let mut directory = Directory::open(&settings.data_dir)?;
-            let migrated = schema::migrate::prepare(&mut directory, migration)?;
+            let migrated = schema::migrate::prepare(&mut directory, migration, &progress)?;
             Ok::<_, AppError>((directory, migrated))
         })
         .await
@@ -240,8 +246,10 @@ impl App {
             downloads,
             settings.console_origin.map(Arc::new),
             Arc::new(settings.delegation_clients),
+            startup.progress(),
         )
         .await?;
+        drop(startup);
         app.public_origin = settings.public_origin.map(Arc::new);
         app.migrated = migrated;
         app.stun = crate::stun::Hosted::start(stun_sockets)?;
@@ -257,7 +265,9 @@ impl App {
         downloads: Arc<crate::resources::downloads::Downloads>,
         console_origin: Option<Arc<crate::settings::Url>>,
         delegation: Arc<crate::accounts::delegation::DelegationClients>,
+        progress: startup::Progress,
     ) -> Result<Self, AppError> {
+        progress.status("Checking the database");
         // The netmap reader needs the sealer opened with the database; it is
         // bound once the executor has opened (see `netmaps` below).
         let netmaps = Arc::new(crate::store::netmap::LateNetmaps::default());
@@ -368,7 +378,7 @@ impl App {
                 crate::error::Error::Storage(_) => AppError::Database,
                 _ => AppError::StorageIntegrity,
             })?;
-        app.refresh_netmaps().await?;
+        app.refresh_netmaps(&progress).await?;
         Ok(app)
     }
 
@@ -376,7 +386,7 @@ impl App {
     /// compilation of its current inputs (`store::netmap::refresh`), one
     /// transaction per network. A network that cannot be compiled keeps its
     /// stored netmaps and is logged; its next input change compiles again.
-    async fn refresh_netmaps(&self) -> Result<(), AppError> {
+    async fn refresh_netmaps(&self, progress: &startup::Progress) -> Result<(), AppError> {
         let started = std::time::Instant::now();
         let handle = self.executor.handle();
         let networks = handle
@@ -384,7 +394,12 @@ impl App {
             .await
             .map_err(|_| AppError::Database)?;
         let mut changed = 0;
-        for network in &networks {
+        for (index, network) in networks.iter().enumerate() {
+            progress.status(&format!(
+                "Compiling stored netmaps with this build: network {} of {}",
+                index + 1,
+                networks.len()
+            ));
             let (network, sealer) = (*network, Arc::clone(&self.sealer));
             let result = handle
                 .transact(rusqlite::TransactionBehavior::Immediate, move |tx| {
@@ -715,6 +730,8 @@ impl From<ExecutorError> for AppError {
             ExecutorError::InvalidQueueCapacity | ExecutorError::InvalidBusyTimeout => {
                 Self::InvalidSettings
             }
+            // SQLITE_CORRUPT, SQLITE_NOTADB: see `schema::damaged`.
+            ExecutorError::Sqlite { code: 11 | 26, .. } => Self::StorageIntegrity,
             ExecutorError::Sqlite { .. } | ExecutorError::ConnectionConfiguration => Self::Database,
             ExecutorError::ThreadStart
             | ExecutorError::Closed

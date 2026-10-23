@@ -165,13 +165,23 @@ pub(crate) fn location() -> (tempfile::TempDir, PathBuf) {
 fn fixture_directory() -> (tempfile::TempDir, PathBuf) {
     let (parent, path) = location();
     let directory = Directory::open(&path).unwrap();
-    let db = Connection::open(directory.database_path()).unwrap();
+    let mut db = Connection::open(directory.database_path()).unwrap();
     db.pragma_update(None, "foreign_keys", true).unwrap();
-    db.execute_batch(&format!(
-        "BEGIN; {} PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = 8; {FIXTURE_V8} COMMIT;",
-        history(8).unwrap()
-    ))
-    .unwrap();
+    // The binding is the one of a real master key, published beside it.
+    let fixture = FIXTURE_V8.replace(
+        "INSERT INTO master_key_binding VALUES (1, x'00000000000000000000000000000001', randomblob(61));\n",
+        "",
+    );
+    assert_ne!(fixture, FIXTURE_V8);
+    let transaction = db.transaction().unwrap();
+    transaction
+        .execute_batch(&format!(
+            "{} PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = 8; {fixture}",
+            history(8).unwrap()
+        ))
+        .unwrap();
+    crate::secrets::initialize(&transaction, &directory, true).unwrap();
+    transaction.commit().unwrap();
     // Every table of the oldest supported version has rows to migrate.
     for table in tables(&db, "main").unwrap() {
         let rows: i64 = db
@@ -289,7 +299,7 @@ fn assert_migrated(path: &Path, from_backup: &str) {
 
 fn migrate_directory(path: &Path) -> Result<Option<Migrated>, AppError> {
     let mut directory = Directory::open(path)?;
-    prepare(&mut directory, Migration::Automatic)
+    prepare(&mut directory, Migration::Automatic, &Progress::none())
 }
 
 #[test]
@@ -371,10 +381,34 @@ fn unsupported_damaged_or_refused_databases_are_left_unchanged() {
     let before = digest(&path.join("controller.sqlite"));
     let mut directory = Directory::open(&path).unwrap();
     assert_eq!(
-        prepare(&mut directory, Migration::Refuse),
+        prepare(&mut directory, Migration::Refuse, &Progress::none()),
         Err(AppError::MigrationRequired)
     );
     assert_eq!(digest(&path.join("controller.sqlite")), before);
+}
+
+/// A master key that does not open the database is found before anything
+/// is published: the database name keeps the old file, no backup or staging
+/// file is left, and the matching key migrates it afterwards.
+#[test]
+fn a_mismatched_master_key_publishes_nothing() {
+    let (_parent, path) = fixture_directory();
+    let (_other_parent, other) = fixture_directory();
+    let key = std::fs::read(path.join("master-key")).unwrap();
+    std::fs::copy(other.join("master-key"), path.join("master-key")).unwrap();
+    let before = digest(&path.join("controller.sqlite"));
+    let entries = names(&path);
+    let failed = migrate_directory(&path);
+    assert_eq!(failed, Err(AppError::MasterKey));
+    assert!(AppError::MasterKey.is_persistent());
+    assert_eq!(digest(&path.join("controller.sqlite")), before);
+    assert_eq!(names(&path), entries);
+    let old = Connection::open(path.join("controller.sqlite")).unwrap();
+    validate_as(&old, 8, history(8).unwrap()).unwrap();
+    drop(old);
+    std::fs::write(path.join("master-key"), key).unwrap();
+    migrate_directory(&path).unwrap().unwrap();
+    assert_migrated(&path, &backups(&path)[0]);
 }
 
 /// Interrupted at any step, the database name holds the complete old file;
@@ -468,7 +502,7 @@ fn committed_wal_frames_of_the_old_database_are_migrated_and_not_left_behind() {
     db.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
     db.execute("INSERT INTO users VALUES (x'00000000000000000000000000000012', 'wal@example.test', '$argon2id$v=19$test', 1, 1000, NULL)", []).unwrap();
     // A copy taken while the writer is alive: the row is only in the WAL.
-    for name in ["controller.sqlite", "controller.sqlite-wal"] {
+    for name in ["controller.sqlite", "controller.sqlite-wal", "master-key"] {
         std::fs::copy(source.join(name), path.join(name)).unwrap();
         std::fs::set_permissions(path.join(name), std::fs::Permissions::from_mode(0o600)).unwrap();
     }
@@ -572,19 +606,34 @@ fn a_chain_of_levels_equals_its_levels_one_after_another() {
     };
     let (_one, chained) = fixture_directory();
     let mut directory = Directory::open(&chained).unwrap();
-    let migrated = prepare_as(&mut directory, Migration::Automatic, &ten)
-        .unwrap()
-        .unwrap();
+    let migrated = prepare_as(
+        &mut directory,
+        Migration::Automatic,
+        &ten,
+        &Progress::none(),
+    )
+    .unwrap()
+    .unwrap();
     drop(directory);
     assert_eq!((migrated.from, migrated.to), (8, 10));
     let (_two, stepped) = fixture_directory();
     let mut directory = Directory::open(&stepped).unwrap();
-    prepare_as(&mut directory, Migration::Automatic, &nine)
-        .unwrap()
-        .unwrap();
-    prepare_as(&mut directory, Migration::Automatic, &ten)
-        .unwrap()
-        .unwrap();
+    prepare_as(
+        &mut directory,
+        Migration::Automatic,
+        &nine,
+        &Progress::none(),
+    )
+    .unwrap()
+    .unwrap();
+    prepare_as(
+        &mut directory,
+        Migration::Automatic,
+        &ten,
+        &Progress::none(),
+    )
+    .unwrap()
+    .unwrap();
     drop(directory);
     // The fixtures differ only in random bytes: the same tables and rows.
     assert_eq!(contents(&chained), contents(&stepped));
@@ -654,4 +703,42 @@ pub(crate) fn downgrade_to_v8(path: &Path) {
     for name in ["controller.sqlite-wal", "controller.sqlite-shm"] {
         let _ = std::fs::remove_file(path.join(name));
     }
+}
+
+/// The outcome a failed `migrate` reports is read back from the directory.
+#[test]
+fn the_outcome_of_an_attempt_is_read_from_the_directory() {
+    let (_parent, path) = fixture_directory();
+    let since = crate::store::execution::now().unwrap();
+    // Refused before publishing (wrong key): unchanged.
+    let key = std::fs::read(path.join("master-key")).unwrap();
+    let (_other_parent, other) = fixture_directory();
+    std::fs::copy(other.join("master-key"), path.join("master-key")).unwrap();
+    assert!(migrate_directory(&path).is_err());
+    assert_eq!(
+        outcome(&path, since),
+        MigrationOutcome::Unpublished { schema: 8 }
+    );
+    std::fs::write(path.join("master-key"), key).unwrap();
+    // Published: whatever fails afterwards, the record names the backup.
+    let migrated = migrate_directory(&path).unwrap().unwrap();
+    assert_eq!(
+        outcome(&path, since),
+        MigrationOutcome::Published {
+            from: 8,
+            backup: migrated.backup.clone()
+        }
+    );
+    // A migration before this attempt is not this attempt's.
+    let later = crate::store::execution::now().unwrap() + 1;
+    assert_eq!(
+        outcome(&path, later),
+        MigrationOutcome::Unpublished { schema: VERSION }
+    );
+    // In use, or not a database: unknown.
+    let held = Directory::open(&path).unwrap();
+    assert_eq!(outcome(&path, since), MigrationOutcome::Unknown);
+    drop(held);
+    std::fs::write(path.join("controller.sqlite"), b"not a database").unwrap();
+    assert_eq!(outcome(&path, since), MigrationOutcome::Unknown);
 }
