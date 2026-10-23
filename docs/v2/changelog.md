@@ -4,6 +4,22 @@
 
 ## 未发布
 
+里程碑 D 审阅的 Server／部署／供应链修复（F8b，`f8b/server-review-fixes`）：wire、IPC、`compilerVersion`、Server schema 9 不变；HTTP 契约只改 `login`／`getRuleSetArtifact` 的说明文字（两者原已声明 503 `busy`）。
+
+- 修复（不变量：升级只在新 Server 从未签发租约时回退，依据必须是持久事实；owner：Server `netmap::served`＋`dist/install.sh`）：进程在第一个 sync 回答**之前**把 data-dir 的 `served`（`boot`、`build`、`at_ms`，0600）原子替换并 fsync，写不成功则该 sync 503、不发租约；`install.sh` 在旧服务停稳后读它作基准，启动失败后（及停止后）再比较，不同或读不出即不回退。journal 的 `First Node sync answered` 只作诊断——此前 `journalctl | grep` 查询失败或日志丢失都被当作“未 sync”而回退。见[回退边界](/v2/install#server-rollback)。
+- 修复（不变量：迁移失败不留下两个版本都打不开的库；owner：`store::schema::migrate`）：迁移在发布前以旧库的主密钥绑定证明 `master-key`，不匹配以 78 退出、什么也不发布；此前先原子替换为 schema 9 再在打开时发现主密钥不匹配，旧版本随后以 `Unsupported` 拒绝。`meshway-server migrate` 新增 `Migration state: current|published <备份>|unpublished|unknown` 行，失败时从 data-dir（文件头＋`schema_migrations`）读回；`install.sh` 据它与文件头处理（未发布→重启原服务；已发布→持锁放回备份；未知→都不启动），不再凭退出状态认定旧库仍在。见 [Server · 存储迁移](/v2/server#存储迁移)。
+- 修复（不变量：停止未被证明之前不动程序、unit 与库；owner：`dist/install.sh`）：升级、回退与卸载的 `systemctl stop` 不再 `|| true`，失败或 60 秒内未停稳（含 activating／deactivating）即退出；放回备份与 `--purge` 删除 data-dir 只在以 `flock` 取得存储锁后进行；`--artifact` tarball 只读取一次进私有工作目录，校验与解包都用该副本（此前校验副本、解包原路径）。
+- 修复（不变量：失败的备份只删自己写的文件；owner：`meshway_server::backup`；`meshway-private-storage` 只新增 API）：输出目录以新增的 `Directory::create_new`（`mkdir`，同名存在即拒绝，不接管已有目录）创建；失败时只删库、日志、主密钥与锁，目录中他人的文件保留。
+- 修复（不变量：持续推进的存储打开不被启动超时杀掉；owner：`app::startup`）：一个续期任务覆盖整个存储打开（迁移＋启动重编译），每 30 秒发 `EXTEND_TIMEOUT_USEC`（120 秒），步骤只更新 `STATUS`，完成或失败即停止并 join；此前只按步骤续期，单步超过 120 秒即被杀。
+- 修复（不变量：已证实的损坏是持久阻断；owner：`store::schema`／`AppError`）：`SQLITE_CORRUPT`／`SQLITE_NOTADB` 以 78 退出（此前归为暂态，服务管理器反复重启）；I/O、busy、磁盘满仍为暂态。
+- 修复（不变量：Node 下载占用的 Server 内存有界；owner：`netmap::downloads`）：artifact 在途下载全局 16、每节点 2、字节合计 64 MiB，按存储长度在读出前接纳，许可由响应体持有到发送完毕或断开；超出为 503 `busy`＋`Retry-After`。
+- 修复（不变量：口令猜测有界且不永久锁定；owner：`accounts::throttle`）：同一邮箱＋同一直接对端（IPv6 按 /64，不读转发头）连续 5 次失败后 1 秒起倍增、最长 5 分钟内返回 `busy` 且不计算口令哈希，同一键同时一次尝试；成功或 15 分钟无失败清零。见[登录失败退避](/v2/api/authentication#login-backoff)；反向代理部署的建议见[安装 · Console 与 TLS](/v2/install#server-proxy)。
+- 供应链：`cargo-deny` 0.20.2（锁在 `mise.lock`，`mise run check:deny`，属于 `check:cargo`）检查 advisories、licenses、bans、sources；首轮把 rustls 升到 0.23.46、rustls-webpki 0.103.16、webpki-root-certs 1.0.10（RUSTSEC-2026-0346/0347/0348/0349/0382/0383），RUSTSEC-2025-0132（maxminddb `open_mmap`，`mmap` feature 未启用）与 RUSTSEC-2025-0134（rustls-pemfile 停止维护）在 `deny.toml` 写明理由豁免；workspace 成员标为 `publish = false`。所有 workflow 默认 `contents: read`，只有推送 tag 时运行的 `publish` job 有写权限；全部 Action 钉到完整 commit。CI 以最近 release tag 与 main 合并基比较 `history/v*.sql`，只允许新增（`scripts/ci/schema-history.py`）。
+- 发布门槛 `scripts/ci/server-upgrade.py`：基线用上一版的 Node，先保留身份升级 Node（`compilerVersion` 变化或未知时期望 `Contract` 窗口并核对身份不变、仍为 up），再升 Server 并要求 Node 自行恢复；所有 Server／Node 在同一 `finally` 停止，只有必需检查全部完成且通过才 `passed`；没有 Server 资产的上一版用其 tag 自己锁定的工具链构建，报告记录 commit、工具链与各程序 SHA-256。
+- 文档：[安装 · 信任模型](/v2/install#trust-model)（HTTPS＋Release 发布权限＋同仓 `SHA256SUMS`，无独立签名，独立签名在 v0.1.0 之后）；[DNS 出口的信任域](/v2/permissions#dns-exit-trust)（指定的 DNS 出口可为所服务的源提交名称规则匹配的公网地址作为可信关联，Server 不独立验证 DNS 真实性）。
+
+验证：`meshway-vm` 上的独立实例（`127.0.0.1:18420`，不接现场节点）演练回退依据、停止失败与错配主密钥，新旧脚本／程序对照（见[安装 · 验收记录](/v2/install#server-validation-f8b)）；回归测试在去掉对应修复后全部失败；证据 `.meshway/validation/f8b/`。
+
 R4 `roam/relay` 空窗新流无回复（`r4/handoff-flows`）：产品代码、wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
 
 - 定位：失败的“新流”不是新流。fixture 每个单报文流由内核选临时源端口、收到回显即关闭，Linux 随机复用这些端口（此前 43 轮的 9,751 个流中 38 次在 60 秒内复用）；A 流表 60 秒空闲内的同一 5 元组就是原流，按 D7 留在直连 circuit 上等重新获取，它的包与 100 pps 旧直连流共用 B 的首包队列（每目标 32 个），空窗内队列已满而被丢弃。与通道认证时机和 G14 无关：失败格中 A 在新通道认证（`authenticated_ready`）前没有 B 的承载，真正的新 5 元组都经 R 得到回复；h4/matrix10 与 x16 两次失败的流 B 都没有收到，同一时刻 B 收到的恰是队列释放的 32 个旧流包。

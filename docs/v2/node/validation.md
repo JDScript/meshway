@@ -291,6 +291,15 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | G14 | `fault/throttle`：B 限额解除后 running，A→B 回显 5.3–9.5 秒后才恢复 | 中继对下一跳换 boot 时仍在握手的 circuit 留下死 CID，源端每 250 ms 的 INIT 重试被当作重放，直到源端约 10 秒的期限 | 未发布（RC-1） | `a_restarted_terminal_lets_a_handshaking_origin_retry_through_the_relay_at_once`；`fault/throttle` 包流 ≤ 0.3 秒 |
 | G15 | `fault/throttle`：限额解除瞬间多一次约 150 ms 撤回／重装 | 重装的 hold 之后、install 之前观察失败的故障在成功的 install 之后仍在 | 未发布（RC-1） | `a_successful_installation_supersedes_an_earlier_fault`；`fault/throttle` `withdrawalsAtRestore` 0 |
 | <a id="x17-starvation"></a>X17 | `exit/off` 第 16 阶段压力步开始时 A 的新出口流（echo、iperf3 SYN）0.9–8 秒无回复，15 轮中 4 次 ≥ 0.9 秒；严重时 iperf3 超时（X17b） | 刚结束的出口流的迟到帧在 A 被逐个拒绝，吃掉一次包处理的唯一 200 µs 配额（含其发送与 TUN 写），本机方向每轮 0 个；本机＋入向超过读取上限后 TUN 与载体数据不再读取，worker 睡到 1 秒节拍或下一批迟到帧 | 未发布（X17） | `each_direction_has_its_own_share_of_a_turn`、`a_turn_left_short_of_time_is_due_again_at_once`；`exit/off` 第 16 阶段 `Local packets held` 的 `oldest_local_ms` |
+| <a id="f8b-server"></a>F8b D3-1 | Server 升级在 journal 丢失或查询失败时回退到旧库，而新 Server 已签发过租约 | 回退判据是 `journalctl \| grep` 的日志行 | 未发布（F8b） | `the_first_answer_is_preceded_by_the_durable_served_record`；VM 演练（`LogLevelMax` 丢日志，新脚本拒绝回退） |
+| F8b D3-2 | 主密钥错配的 v8 库迁移后新旧版本都打不开 | 迁移先发布 schema 9 再在打开时检查主密钥 | 未发布（F8b） | `a_mismatched_master_key_publishes_nothing`、`the_outcome_of_an_attempt_is_read_from_the_directory`；VM 演练 |
+| F8b D3-3 | 停止失败时升级回退与卸载仍替换程序／unit | `systemctl stop … \|\| true`；卸载只查 `active` | 未发布（F8b） | VM 演练（`RefuseManualStop`） |
+| F8b D1-H1 | `--artifact` 校验后解包原路径 | 校验与解包读的不是同一份文件 | 未发布（F8b） | `install.sh` 只读一次进私有目录 |
+| F8b D3-4 | 备份失败删除输出目录中他人的文件 | 先查不存在再 `open`（接管已有目录），失败时删全部文件 | 未发布（F8b） | `a_failed_backup_removes_only_what_it_wrote`、`a_new_directory_is_created_once_and_an_existing_name_is_never_adopted` |
+| F8b D3-5 | 单个迁移步骤超过 120 秒即被启动超时杀掉 | 只按步骤续期 | 未发布（F8b） | `a_step_longer_than_the_budget_is_renewed_throughout` |
+| F8b D3-6 | 损坏的库被服务管理器反复重启 | `SQLITE_CORRUPT`／`SQLITE_NOTADB` 归为暂态 | 未发布（F8b） | `damaged_database_pages_are_a_persistent_block`、`rejected_database_is_not_replaced_or_reset` |
+| F8b D1-M2 | artifact 下载并发无上限，Server 内存随请求增长 | 无在途预算 | 未发布（F8b） | `downloads_are_bounded_per_node_in_number_and_in_bytes_until_released`、`provider_sets_are_verified_bound_by_digest_and_served_only_to_referencing_nodes` |
+| F8b D1-M3 | 登录可无限速猜测口令 | 无失败退避 | 未发布（F8b） | `failed_logins_of_one_account_and_address_back_off`、`accounts::throttle::tests::*` |
 
 ## 剩余边界 {#remaining-boundaries}
 

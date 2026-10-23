@@ -438,6 +438,21 @@ Node 系统服务在 OrbStack Ubuntu 24.04 machine（aarch64，systemd 255，sys
 
 恢复一个较旧的库（迁移延长测试之后放回之前的 v9 库）后，该 Node 的 Node session 不在库中，`sync` 先报 `reconnecting (credentials)`，约 30 s 内重新认证并恢复，未重新接入。证据 `.meshway/validation/mig2/vm/`。
 
+### Server（F8b） {#server-validation-f8b}
+
+2026-10-23，同一 `meshway-vm` 上的独立实例（`127.0.0.1:18420`，与 dev Server 及现场节点无关）与一个同机 control-only Node（独立 data-dir）。程序为本分支 `92330a8c` 的 aarch64 musl release 构建，打包成 `meshway-server-<target>.tar.gz`＋`SHA256SUMS` 经 `install.sh --component server --artifact` 安装；对照组为 main `975e19b5` 的 `install.sh` 与 Server、alpha.20（schema 8）Server。故障产物：W1 让真实 Server 作 shell 的子进程运行（`READY=1` 不来自主进程，unit `TimeoutStartSec=20s`，`LogLevelMax=notice` 使全部日志行丢失）；W3 在 18421 端口服务（健康检查失败），unit 带 `RefuseManualStop=yes`（停止失败）。
+
+| 场景 | 结果 |
+| --- | --- |
+| 回退依据，日志丢失（W1，Node 在新进程上 sync） | 旧脚本：`served` 已换成 W1 进程的 `boot`、journal 中 0 行，仍回退。新脚本：`served` 变化即拒绝回退（`not rolled back. Fix forward`），`.previous` 保留；随后以修正产物前进升级成功 |
+| 回退依据，无 sync（W1，Node 停止） | 新脚本：`served` 不变，回退并重新启动原程序 |
+| 停止失败（W3，回退时 `systemctl stop` 被拒） | 新脚本：`did not stop; not rolled back, nothing else was changed`，程序、unit、库与 `served` 不变。旧脚本：照常放回 `.previous` 程序与原 unit，而 W3 进程（同一 MainPID）仍在运行 |
+| 停止失败时卸载（`--uninstall --purge`） | 新脚本：`nothing was changed`，unit 仍 enabled，data-dir、设置与用户都在。旧脚本：删除 unit 与程序后报 `still active`，进程仍在运行 |
+| 错配主密钥的 v8 库（alpha.20 → 本分支） | 新脚本：`migrate` 以 78 失败、`Migration state: unpublished`，文件头仍为 8、库 SHA-256 不变、无备份或 staging 文件，新程序未安装；放回正确主密钥后 alpha.20 启动，同一密码登录、revision 不变。旧程序与旧脚本：先发布 schema 9 再报主密钥不匹配，脚本却输出 `the database is unchanged`；放回正确主密钥后 alpha.20 以 `Unsupported` 失败，需手动放回备份 |
+| 正确主密钥的 v8 → 9 升级 | 0.65 s，`Database migrated from schema 8 to 9`，备份 `controller.sqlite.v8-<ms>`，登录与配置不变 |
+
+证据 `.meshway/validation/f8b/vm/`，构建脚本与故障产物生成脚本 `.meshway/validation/f8b/vm-artifacts.sh`。
+
 ### OrbStack 与 WARP 出网的路由 MTU {#orbstack-warp}
 
 常驻验收 VM `meshway-vm` 的环境 workaround，不是产品要求。OrbStack（2.2.4）machine 的出网 NAT 不保留 DF：VM 发出的带 DF 外层报文在 Mac 上照常转发；Mac 经 Cloudflare WARP（2026.7.1343，MASQUE，`utun` MTU 1,300）出网，超过 1,300 B 的报文在 Mac 分片、由 Cloudflare 重组后送达对端（对端 `IpReasmReqds` 为 0）。VM 的路由 MTU 仍是 eth0 的 1,500，认证路径 MTU 探测因此报 `1500/1386`，满长 Mesh 报文全部被分片，见[路径 MTU 限制](/v2/node/connectivity#path-mtu)。
