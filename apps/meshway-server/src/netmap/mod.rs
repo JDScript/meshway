@@ -13,6 +13,7 @@
 pub(crate) mod associations;
 mod hub;
 pub(crate) mod records;
+pub(crate) mod served;
 pub mod signing;
 mod sync;
 
@@ -331,6 +332,7 @@ pub struct Netmaps {
     signer: Arc<signing::NetmapSigningKeys>,
     timing: SyncTiming,
     associations: associations::Shared,
+    served: Arc<served::Served>,
 }
 
 impl Netmaps {
@@ -344,6 +346,7 @@ impl Netmaps {
         signer: Arc<signing::NetmapSigningKeys>,
         timing: SyncTiming,
         associations: associations::Shared,
+        served: Arc<served::Served>,
     ) -> Self {
         Self {
             handle,
@@ -354,6 +357,7 @@ impl Netmaps {
             signer,
             timing,
             associations,
+            served,
         }
     }
 
@@ -432,6 +436,7 @@ impl Netmaps {
         let answered = |response: SyncResponse, reason: &'static str| {
             // From here a Node may hold a lease of this process: an upgrade
             // can no longer be rolled back (docs/v2/install.md#server-rollback).
+            // The durable record is `served`; this line is diagnostics.
             FIRST_ANSWER.call_once(|| {
                 tracing::info!(
                     network_id = %principal.network,
@@ -492,6 +497,7 @@ impl Netmaps {
                     None
                 };
             if let Some(lacking) = lacking {
+                self.served.ensure().await?;
                 return Ok(answered(response, lacking));
             }
             let facts_changed = async move {
@@ -515,6 +521,7 @@ impl Netmaps {
         }
         // Woken, replaced, closing or timed out: one final answer with a fresh lease.
         let response = self.read(token, &request).await?.0;
+        self.served.ensure().await?;
         Ok(answered(response, reason))
     }
 

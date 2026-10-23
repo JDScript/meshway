@@ -14,6 +14,9 @@ pub(crate) struct Directory {
 
 const DATABASE: &str = "controller.sqlite";
 pub(crate) const LOCK: &str = "controller.lock";
+/// Names the Server process that last answered a Node sync (see
+/// `netmap::served`).
+const SERVED: &str = "served";
 /// Prefix of a migration's unpublished staging files (with their SQLite
 /// journals); they are never read, only removed.
 const STAGING: &str = "controller.sqlite.migrating.";
@@ -55,6 +58,12 @@ impl Directory {
             "controller.sqlite-journal",
         ] {
             private.file(name, false)?;
+        }
+        // An interrupted served-record replacement left its unpublished file.
+        for name in private.names()? {
+            if meshway_private_storage::is_staging(&name) {
+                private.remove_staging(&name)?;
+            }
         }
         let database = private.file(DATABASE, true)?.ok_or(DirectoryError::Io)?;
         Ok(Self {
@@ -181,6 +190,11 @@ impl Directory {
             }
         }
         Ok(())
+    }
+
+    /// Durably replaces the served record (owner-only, atomic rename).
+    pub(crate) fn record_served(&self, record: &[u8]) -> Result<(), DirectoryError> {
+        self.private.replace(SERVED, record)
     }
 
     pub(crate) fn path(&self) -> &Path {

@@ -30,6 +30,7 @@ pub struct App {
     sealer: Arc<Sealer>,
     committer: crate::configuration::Committer,
     boot: meshway_model::InstanceId,
+    served: Arc<crate::netmap::served::Served>,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     /// Sole audience of committed effects; the executor holds it weakly.
     effects: Arc<Effects>,
@@ -268,6 +269,10 @@ impl App {
         progress: startup::Progress,
     ) -> Result<Self, AppError> {
         progress.status("Checking the database");
+        let boot = meshway_model::InstanceId::new(
+            crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
+        )
+        .map_err(|_| AppError::Cryptography)?;
         // The netmap reader needs the sealer opened with the database; it is
         // bound once the executor has opened (see `netmaps` below).
         let netmaps = Arc::new(crate::store::netmap::LateNetmaps::default());
@@ -280,6 +285,13 @@ impl App {
         });
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
+        // The served record (see `netmap::served`) is written in the same
+        // directory while the worker holds it.
+        let directory = Arc::new(directory);
+        let served = Arc::new(crate::netmap::served::Served::new(
+            Arc::downgrade(&directory),
+            boot,
+        ));
         let (executor, sealer) = Executor::open_with_effects(
             directory.database_path(),
             options,
@@ -364,10 +376,8 @@ impl App {
             public_origin: None,
             migrated: None,
             observation_maintenance: std::sync::Mutex::default(),
-            boot: meshway_model::InstanceId::new(
-                crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
-            )
-            .map_err(|_| AppError::Cryptography)?,
+            boot,
+            served,
         };
         // Deployment-owned IP datasets live in storage; derived State needs them
         // from the first report on, so loading is part of opening, not a task.
@@ -599,6 +609,7 @@ impl App {
             Arc::clone(&self.netmap_signer),
             self.netmap_timing,
             Arc::clone(&self.dns_associations),
+            Arc::clone(&self.served),
         )
     }
     /// Starts a netmap signing-key rotation window (see `netmap::signing`).

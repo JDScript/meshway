@@ -358,3 +358,66 @@ async fn a_hold_answers_before_the_lease_the_node_holds_ends() {
     }
     app.shutdown().await.unwrap();
 }
+
+/// No sync answer leaves without the durable served record naming this
+/// process; a record that cannot be written fails the answer, and the next
+/// sync writes it and is answered.
+#[tokio::test]
+async fn the_first_answer_is_preceded_by_the_durable_served_record() {
+    use std::os::unix::fs::PermissionsExt;
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (dir, app, network, a, _, ak, _, signer_a, _) = fixture().await;
+    let data = dir.path().canonicalize().unwrap().join("data");
+    let record = data.join("served");
+    let token = session(&app.execution(), network, a, &ak, &signer_a).await;
+    let service = app.netmaps();
+    // Opening and authenticating wrote nothing: no answer was sent yet.
+    assert!(!record.exists());
+
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let writable = std::fs::write(data.join("probe"), b"").is_ok();
+    if !writable {
+        assert_eq!(
+            service.sync(token.token.expose(), holding(None)).await,
+            Err(crate::error::Error::Unavailable(
+                crate::error::Unavailability::ServedRecord
+            ))
+        );
+        assert!(!record.exists());
+    }
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _ = std::fs::remove_file(data.join("probe"));
+
+    service
+        .sync(token.token.expose(), holding(None))
+        .await
+        .unwrap();
+    let written = std::fs::read_to_string(&record).unwrap();
+    assert!(written.starts_with("meshway-server served\n"), "{written}");
+    assert!(written.contains(&format!("\nboot={}\n", app.boot.as_uuid())));
+    assert!(written.contains(&format!("\nbuild={}\n", meshway_build::identity())));
+    assert_eq!(
+        std::fs::metadata(&record).unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+    // Written once per process: later answers leave it as it is.
+    service
+        .sync(token.token.expose(), holding(None))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), written);
+
+    // Another process (a new boot) replaces it with its own.
+    app.shutdown().await.unwrap();
+    let reopened = App::open(Settings::new(data.clone())).await.unwrap();
+    let token = session(&reopened.execution(), network, a, &ak, &signer_a).await;
+    reopened
+        .netmaps()
+        .sync(token.token.expose(), holding(None))
+        .await
+        .unwrap();
+    let replaced = std::fs::read_to_string(&record).unwrap();
+    assert_ne!(replaced, written);
+    assert!(replaced.contains(&format!("\nboot={}\n", reopened.boot.as_uuid())));
+    reopened.shutdown().await.unwrap();
+}
