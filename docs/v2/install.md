@@ -214,7 +214,7 @@ Server（`meshway-server`）作为 systemd 系统服务运行在一台 Linux 主
 | 架构 | x86_64 或 aarch64；静态链接的 musl 程序 |
 | init | systemd，unit 使用 `Type=notify` |
 | 用户 | 安装脚本创建静态系统用户 `meshway-server`；不用 `DynamicUser`：它的 `StateDirectory` 经 `/var/lib/private` 符号链接暴露，与 data-dir 不接受符号链接的检查冲突，离线命令也需要以同一 UID 运行 |
-| 前置代理 | Server 只监听明文 HTTP；TLS 与 Console 静态文件由同源的前置反向代理提供，见 [Console 与 TLS](#server-proxy) |
+| 前置代理 | Server 只监听明文 HTTP；TLS 由前置反向代理终结，Console 静态文件由同一代理或静态托管（Cloudflare Pages）提供，见 [Console 与 TLS](#server-proxy) |
 | 工具 | `curl`、`sha256sum`、`tar`、`od`、`runuser`、`useradd`、`flock`（util-linux；Debian／Ubuntu 默认具备） |
 | 磁盘 | 迁移需要 data-dir 所在文件系统有不少于库大小 110% 的余量 |
 
@@ -267,7 +267,16 @@ MESHWAY_SERVER_OPTIONS=
 
 ### Console 与 TLS {#server-proxy}
 
-Server 不提供静态文件。Console 是纯 SPA，要求与 `/api` 同源：前置反向代理终结 TLS，把 `/api/` 与 `/agent-api/` 转发到 Server，其余路径为 Console 静态文件、未知路径回退到 `index.html`。Caddy 示例：
+Server 不提供静态文件。Console 是纯 SPA，有两种托管形态；两者都把 `MESHWAY_CONSOLE_ORIGIN` 设为浏览器打开 Console 的 origin（设备批准链接也指向它）。
+
+| 形态 | Console 调用 API 的 origin | Server 侧 |
+| --- | --- | --- |
+| 反向代理同源 | 页面自己的 origin（构建不设 `VITE_MESHWAY_API_ORIGIN`） | 不需要 CORS |
+| 静态托管（Cloudflare Pages）＋ CORS | 构建期 `VITE_MESHWAY_API_ORIGIN` 指定的 Server origin | `--console-origin` 放行该 Console origin 的[跨源访问](/v2/server#cors) |
+
+`VITE_MESHWAY_API_ORIGIN` 为 `https://host[:port]`（loopback 上可为 `http`），不含路径、查询、片段或凭据，格式不符时构建失败；未设置或为空时使用页面自己的 origin。它只用于 `/api/v1`（含 SSE），添加节点页的安装命令另由 `VITE_MESHWAY_SERVER_URL` 给出 Node 的 `--server`。
+
+**反向代理同源**：前置反向代理终结 TLS，把 `/api/` 与 `/agent-api/` 转发到 Server，其余路径为 Console 静态文件、未知路径回退到 `index.html`。Caddy 示例：
 
 ```text
 meshway.example.com {
@@ -285,7 +294,9 @@ meshway.example.com {
 }
 ```
 
-Console 静态文件来自 Release 的 `meshway-console.tar.gz`（解包到 `root` 目录）。`MESHWAY_CONSOLE_ORIGIN` 设为该站点的 origin（`https://meshway.example.com`），Node 的 `--server` 用同一 origin。用户事件流（SSE）需要代理不缓冲响应（Caddy 对 `text/event-stream` 自动立即转发）。
+Console 静态文件来自 Release 的 `meshway-console.tar.gz`（解包到 `root` 目录，同源构建）。`MESHWAY_CONSOLE_ORIGIN` 设为该站点的 origin（`https://meshway.example.com`），Node 的 `--server` 用同一 origin。用户事件流（SSE）需要代理不缓冲响应（Caddy 对 `text/event-stream` 自动立即转发）。
+
+**静态托管＋CORS**：Console 以 `VITE_MESHWAY_API_ORIGIN=<Server origin>` 构建后上传到静态托管；构建产物带 `_redirects`（`/* /index.html 200`），Cloudflare Pages 据它把客户端路由回退到 `index.html`（反向代理托管时它只是一个不被引用的文件）。Server 仍需前置代理终结 TLS（`/api/` 与 `/agent-api/` 转发到 Server），`MESHWAY_CONSOLE_ORIGIN` 设为 Pages 的自定义域名（如 `https://meshway.example.com`），Node 的 `--server` 用 Server 的 origin。仓库的构建与部署脚本、自定义域名绑定见 `dist/console-pages/README.md`（`mise run deploy:console-pages`）。`*.pages.dev` 预览部署的 origin 不等于 `MESHWAY_CONSOLE_ORIGIN`，因此能加载但不能登录该 Server。
 
 **登录限速**：Server 对同一邮箱、同一来源连续 5 次登录失败后按 1 秒起倍增、最长 5 分钟退避（[认证 · 登录失败退避](/v2/api/authentication#login-backoff)），来源只取 TCP 直接对端，不读 `X-Forwarded-For`。经反向代理时所有客户端的来源都是代理地址，退避因此按账户生效（攻击者可让某个账户的登录最长 5 分钟内返回 `busy`，但不会永久锁定）。按客户端限速应在代理上做，例如 nginx `limit_req zone=$binary_remote_addr` 作用于 `/api/v1/auth/login`，或 Caddy 的 rate-limit 插件；代理同时应限制请求体大小与并发连接。
 

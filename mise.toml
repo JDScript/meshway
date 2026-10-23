@@ -208,6 +208,10 @@ run = "pnpm --filter @meshway/web-console test"
 description = "Build the Web Console SPA"
 run = "pnpm --filter @meshway/web-console build"
 
+[tasks."deploy:console-pages"]
+description = "Build the Web Console for a cross-origin Server and deploy it to Cloudflare Pages (dist/console-pages/README.md)"
+run = "sh dist/console-pages/deploy.sh"
+
 [tasks."check:ui"]
 description = "Check the shared UI package's types, lint and formatting"
 run = "pnpm --filter @meshway/ui check"

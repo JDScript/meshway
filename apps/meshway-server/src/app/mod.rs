@@ -508,6 +508,10 @@ impl App {
             self.downloads.clone(),
         )
     }
+    /// The origin serving the Console, if configured.
+    pub fn console_origin(&self) -> Option<&crate::settings::Url> {
+        self.console_origin.as_deref()
+    }
     /// The origin delegation clients should use for this Server, if configured.
     pub fn public_origin(&self) -> Option<&crate::settings::Url> {
         self.public_origin.as_deref()

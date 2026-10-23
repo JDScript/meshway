@@ -52,7 +52,7 @@ routes/
 
 | Folder | Holds |
 | --- | --- |
-| `api/client.ts`, `api/failure.ts`, `api/traced-fetch.ts` | The one `ControlClient` (same origin, its requests noted while the debug mode is on); `authed` adds this tab's session and turns a 401 into a rejection; failures worded by problem code. |
+| `api/client.ts`, `api/failure.ts`, `api/traced-fetch.ts` | The one `ControlClient` (same origin, or the build's `VITE_MESHWAY_API_ORIGIN` from `lib/api-origin.ts`; its requests noted while the debug mode is on); `authed` adds this tab's session and turns a 401 into a rejection; failures worded by problem code. |
 | `api/queries/` | Query options and keys per resource. Every reader and the live stream use the same keys. |
 | `api/live/` | The network's SSE stream: a pure reducer (`reducer.ts`) and the runtime that applies its effects to the query cache (`stream.ts`), telling the debug mode which reads each event touched, and the controls the debug panel uses. |
 | `state/` | Client stores (below). |

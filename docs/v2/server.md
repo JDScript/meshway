@@ -54,7 +54,9 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 | `--listen`／`MESHWAY_LISTEN` | `127.0.0.1:8420` | HTTP 监听地址；端口 0 分配临时端口 |
 | `--registration-enabled`／`MESHWAY_REGISTRATION_ENABLED` | `true` | 是否允许自助注册新账户；关闭后已有账户仍可登录、建网和接受加入链接 |
 | `--session-ttl-seconds`／`MESHWAY_SESSION_TTL_SECONDS` | `86400` | 用户会话寿命，整秒，60–2592000 |
-| `--console-origin`／`MESHWAY_CONSOLE_ORIGIN` | 未设置 | 浏览器访问 Console 的 origin，见下文 |
+| `--console-origin`／`MESHWAY_CONSOLE_ORIGIN` | 未设置 | 浏览器访问 Console 的 origin，见下文；同时放行该 origin 的[跨源访问](#cors) |
+| `--delegation-client NAME=ORIGIN`／`MESHWAY_DELEGATION_CLIENTS` | 空 | 可重复（环境变量以逗号分隔），声明可取得[委托会话](/v2/api/authentication#delegation)的浏览器客户端；ORIGIN 遵守 Console origin 规则，同时放行[跨源访问](#cors) |
+| `--public-origin`／`MESHWAY_PUBLIC_ORIGIN` | 未设置 | 客户端访问本 Server 的 origin，随委托会话交给客户端；规则同 Console origin |
 | `--stun-listen IP:PORT` | 空 | 可重复，显式绑定独立 STUN UDP 服务；最多 4 个，端口非零，不可为多播／广播或重复地址 |
 | `--stun-server KEY=HOST:PORT` | 空 | 可重复，发布 hosted 或外部 STUN 端点；KEY 为 1–64 个 ASCII 字母、数字、`_`、`-` 且不可重复，IPv6 使用方括号；最多 4 个 |
 | `--netmap-validity`／`MESHWAY_NETMAP_VALIDITY` | `86400` | 每次 [netmap 同步](/v2/execution#netmap-同步)签发的租约时长，整秒，60–86400 |
@@ -65,6 +67,22 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 60 秒下限是防止运维误设过短导致 Server 抖动即全网 fail closed 的可用性保护，不是安全边界；更短的 validity 只会让撤销更快生效。接收端仍校验租约为正且不超过 24 h，不因短于配置下限扩大授权。
 
 **Console origin** 为 `https://host[:port]`，或 `http://localhost`／`http://127.0.0.1`／`http://[::1]`（可带端口）；不含路径、查询、片段或凭据。Server 据此生成交给设备的浏览器链接：设备授权 `authorizationUrl` 为 `<origin>/authorize-device/<enrollmentRequestId>`。未配置时这些字段为 null，设备得不到链接，Node 与 Console 均不自行拼接。`reset-password` 的 `--console-origin` 遵守同一规则。
+
+### 跨源访问 {#cors}
+
+浏览器从 Console origin 或任一委托客户端 origin 调用 Server 时，Server 回复 CORS 头；Console 与 Server 同源（反向代理）时浏览器不需要它们，托管在其他 origin（如 Cloudflare Pages，见[安装 · Console 托管](/v2/install#server-proxy)）时必须把 Console 的 origin 设为 `--console-origin`。
+
+| 项 | 规则 |
+| --- | --- |
+| 放行的 origin | `--console-origin` 与各 `--delegation-client` 的 origin，逐字比较；其他 origin 不带任何 CORS 头 |
+| 路径 | 只有 `/api/v1/` 下的路径（含用户事件流 SSE）；`/agent-api/v1` 与其他路径不放行 |
+| 方法 | `GET`、`POST`、`DELETE` |
+| 请求头 | `Authorization`（bearer 会话）、`Content-Type`、`Last-Event-ID` |
+| 暴露的响应头 | `x-request-id`、`Date` |
+| 凭据 | 不放行 cookie（无 `Access-Control-Allow-Credentials`）；认证只靠 `Authorization` |
+| 预检缓存 | `Access-Control-Max-Age: 600` |
+
+两者都未配置时 Server 不发送任何 CORS 头。CORS 只决定浏览器是否把响应交给页面，不是授权：每个请求仍按其会话检查权限。
 
 空库初始化属于正常启动，不提供首用户认领／实例初始化 API，首个公开账户不取得全局管理权限。部署配置、存储和 Node 信任的切换须协调，不通过任意数据库错误自动清库。
 

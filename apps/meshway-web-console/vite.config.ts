@@ -3,12 +3,15 @@ import { paraglideVitePlugin } from "@inlang/paraglide-js"
 import tailwindcss from "@tailwindcss/vite"
 import { tanstackRouter } from "@tanstack/router-plugin/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig, type UserConfig } from "vite"
+import { defineConfig, loadEnv, type UserConfig } from "vite"
 
-// Same origin in development as in production, where the controller serves
-// this build: the browser only ever talks to `/api` on its own origin. The
-// development server proxies it to the V2 controller named here; there is no
-// default, so it never reaches another controller by accident.
+import { configuredApiOrigin } from "./src/lib/api-origin.ts"
+
+// The API is same-origin, or on the origin a build names in
+// `VITE_MESHWAY_API_ORIGIN` (`src/lib/api-origin.ts`). In development the
+// browser always talks to `/api` on its own origin: the development server
+// proxies it to the Server named here; there is no default, so it never
+// reaches another Server by accident.
 const controller = process.env.MESHWAY_CONTROLLER_URL
 
 const config = {
@@ -55,10 +58,16 @@ const config = {
   },
 } satisfies UserConfig
 
-export default defineConfig(({ command }) => {
-  if (command === "serve" && !controller)
+export default defineConfig(({ command, mode, isPreview }) => {
+  // `vite preview` serves a build, which carries its own API origin.
+  if (command === "serve" && !isPreview && !controller)
     throw new Error(
       "Set MESHWAY_CONTROLLER_URL to the V2 controller's origin (http://127.0.0.1:<port>)."
+    )
+  // A malformed API origin fails the build rather than the browser.
+  if (command === "build")
+    configuredApiOrigin(
+      loadEnv(mode, import.meta.dirname, "VITE_").VITE_MESHWAY_API_ORIGIN
     )
   return config
 })

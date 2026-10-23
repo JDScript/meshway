@@ -4,9 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 3001 --strictPort",
+    "dev": "vite --host 127.0.0.1 --port 3001 --strictPort",
     "build": "pnpm run i18n && tsc -b && vite build",
-    "preview": "vite preview --port 3001 --strictPort",
+    "preview": "vite preview --host 127.0.0.1 --port 3001 --strictPort",
     "i18n": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy localStorage preferredLanguage baseLocale --emit-ts-declarations --silent",
     "typecheck": "pnpm run i18n && tsr generate && tsc -b",
     "lint": "eslint --max-warnings=0 --cache --cache-location node_modules/.cache/eslint/ .",

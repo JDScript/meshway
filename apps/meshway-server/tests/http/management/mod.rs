@@ -93,6 +93,8 @@ mod account;
 
 mod configuration;
 
+mod console_origin;
+
 mod delegation;
 
 mod identity;

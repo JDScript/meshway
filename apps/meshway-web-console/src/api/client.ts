@@ -5,16 +5,18 @@ import {
   type ErrorResponse,
 } from "@meshway/control-client"
 
+import { apiOrigin } from "@/lib/api-origin"
 import { currentSession, rejectSession } from "@/state/session"
 
 import { tracedFetch } from "./traced-fetch"
 
 /**
- * The controller serves this console, so the API is always same-origin.
- * Its requests are noted while the debug mode is on (`traced-fetch.ts`).
+ * The API is on this console's origin, or on the one the build names
+ * (`lib/api-origin.ts`); the event stream uses the same client. Its
+ * requests are noted while the debug mode is on (`traced-fetch.ts`).
  */
 export const client = new ControlClient({
-  baseUrl: window.location.origin,
+  baseUrl: apiOrigin(import.meta.env, window.location.origin),
   fetch: tracedFetch(globalThis.fetch.bind(globalThis)),
 })
 

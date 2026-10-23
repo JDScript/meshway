@@ -375,7 +375,11 @@ pub fn router(app: &App) -> Router {
         ))
         .merge(resources::router(app.resources()))
         .merge(observations::router(app.observations()))
-        .layer(cors(app.accounts().delegation_clients()))
+        .layer(cors(
+            app.console_origin()
+                .into_iter()
+                .chain(app.accounts().delegation_clients().origins()),
+        ))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request| {
@@ -391,18 +395,20 @@ pub fn router(app: &App) -> Router {
         )
 }
 
-/// Browsers on a configured delegation client's origin may call `/api/v1`
-/// with a bearer token; nothing else is reachable cross-origin and cookies
-/// never take part. Without clients no CORS headers are sent at all.
-fn cors(clients: &crate::accounts::delegation::DelegationClients) -> tower_http::cors::CorsLayer {
+/// Browsers on the configured Console origin or a delegation client's origin
+/// may call `/api/v1` with a bearer token; nothing else is reachable
+/// cross-origin and cookies never take part. Without such origins no CORS
+/// headers are sent at all.
+fn cors<'a>(
+    allowed: impl Iterator<Item = &'a crate::settings::Url>,
+) -> tower_http::cors::CorsLayer {
     use tower_http::cors::{AllowOrigin, CorsLayer};
-    if clients.is_empty() {
-        return CorsLayer::new();
-    }
-    let origins: Vec<HeaderValue> = clients
-        .origins()
+    let origins: Vec<HeaderValue> = allowed
         .filter_map(|origin| HeaderValue::from_str(origin.as_str().trim_end_matches('/')).ok())
         .collect();
+    if origins.is_empty() {
+        return CorsLayer::new();
+    }
     CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(move |origin, parts| {
             parts.uri.path().starts_with("/api/v1/") && origins.iter().any(|o| o == origin)

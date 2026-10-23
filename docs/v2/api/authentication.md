@@ -106,7 +106,7 @@ token 为随机不透明凭据，Server 只存摘要；HTTP 使用 `Authorizatio
 - 委托会话 1 小时到期、不续期，`AccountSessionView.delegationClient` 为客户端名；出现在账户会话列表里，可被用户的普通会话单独撤销，自己只能 logout。普通会话 logout 不影响它；改密码、撤销全部会话使其随之失效。
 - 委托会话拥有用户的全部网络权限，但不能改密码、改邮箱、撤销其他会话，也不能再签发委托：这些返回 403 `permission_denied`。
 - 兑换响应带 `server`：客户端访问本 Server 的 origin，由 `--public-origin` 配置，未配置为 null。
-- 配置了委托客户端时，Server 对这些 origin 的 `/api/v1` 请求（含 SSE）回复 CORS 头：允许 `Authorization`、`Content-Type`、`Last-Event-ID`，暴露 `x-request-id` 与 `Date`，不带 cookie；`/agent-api/v1` 和其他 origin 不放行。未配置时没有任何 CORS 头。
+- 委托客户端的 origin 可跨源调用 `/api/v1`（含 SSE），规则与 Console origin 相同，见 [Server · 跨源访问](/v2/server#cors)。
 - 每次授权在账户活动中记为 `session.delegate`，目标为授权时使用的会话；兑换记为该委托会话的 `session.login`。
 
 ## Node 的三层凭据

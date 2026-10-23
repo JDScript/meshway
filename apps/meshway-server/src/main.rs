@@ -45,7 +45,8 @@ struct Arguments {
     session_ttl_seconds: u64,
     /// Browser Console origin (https, or http on loopback), such as
     /// https://console.example.com. Device-authorization links are built on
-    /// it; without it the Server hands devices no link.
+    /// it; without it the Server hands devices no link. Requests from it to
+    /// /api/v1 are answered cross-origin.
     #[arg(long, env = "MESHWAY_CONSOLE_ORIGIN", value_parser = meshway_server::console_origin)]
     console_origin: Option<meshway_server::settings::Url>,
     /// A browser client allowed to obtain delegated sessions, as
