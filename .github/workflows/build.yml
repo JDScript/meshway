@@ -25,6 +25,10 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job reads; only the job that creates a Release writes (release.yml).
+permissions:
+  contents: read
+
 jobs:
   node-linux:
     # Cross-compiles release Node and Server binaries for both Linux targets on
@@ -37,13 +41,13 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Tags make `meshway version` report a git description, not a bare hash.
           fetch-depth: 0
       - name: Record git description
         run: echo "MESHWAY_GIT_DESCRIBE=$(git describe --tags --always --dirty --abbrev=8)" >> "$GITHUB_ENV"
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.8.14
           install_args: --locked
@@ -59,7 +63,7 @@ jobs:
         run: |
           out=target/${{ matrix.target }}/release
           { echo "## ${{ matrix.target }}"; for b in meshwayd meshway meshway-rules meshway-server ip-datasets reset-password; do printf '%s %s bytes sha256=%s\n' "$b" "$(stat -c %s $out/$b)" "$(sha256sum $out/$b | cut -c1-16)"; done; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: node-${{ matrix.target }}-${{ github.sha }}
           path: |
@@ -67,7 +71,7 @@ jobs:
             target/${{ matrix.target }}/release/meshway
             target/${{ matrix.target }}/release/meshway-rules
           retention-days: 14
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: server-${{ matrix.target }}-${{ github.sha }}
           path: |
