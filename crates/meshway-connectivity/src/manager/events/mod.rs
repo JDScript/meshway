@@ -66,9 +66,75 @@ fn capacity(event: &Event) -> usize {
     }
 }
 
+/// Frame and storage permits awaited for one exact group of events.
+pub(super) struct Reservation {
+    frames: OwnedSemaphorePermit,
+    bytes: OwnedSemaphorePermit,
+    count: usize,
+    size: usize,
+}
+
 impl Sender {
     pub fn capacity(&self) -> usize {
         self.frames.available_permits()
+    }
+
+    /// Wait until the queue has room for exactly `events` (at most 32), and
+    /// hold that room. Room is made only by the consumer dequeuing or
+    /// dropping earlier groups; `None` once the queue closed.
+    pub fn reserve<'a>(
+        &self,
+        events: impl IntoIterator<Item = &'a Event>,
+    ) -> impl std::future::Future<Output = Option<Reservation>> + Send + 'static {
+        let (count, size) = events.into_iter().fold((0, 0), |(count, size), event| {
+            (count + 1, size + capacity(event))
+        });
+        let sender = self.clone();
+        async move {
+            if count == 0 || count > 32 || size > sender.limit {
+                return None;
+            }
+            let frames = tokio::select! { biased;
+                _ = sender.inner.closed() => return None,
+                permit = sender.frames.clone().acquire_many_owned(count as u32) => permit.ok()?,
+            };
+            let bytes = tokio::select! { biased;
+                _ = sender.inner.closed() => return None,
+                permit = sender.bytes.clone().acquire_many_owned(size as u32) => permit.ok()?,
+            };
+            Some(Reservation {
+                frames,
+                bytes,
+                count,
+                size,
+            })
+        }
+    }
+
+    /// Publish the exact group `reservation` was awaited for.
+    pub fn send_reserved(
+        &self,
+        reservation: Reservation,
+        events: Vec<Event>,
+    ) -> Result<(), mpsc::error::TrySendError<Vec<Event>>> {
+        let size: usize = events.iter().map(capacity).sum();
+        if events.len() != reservation.count || size != reservation.size {
+            return Err(mpsc::error::TrySendError::Full(events));
+        }
+        self.inner
+            .try_send(Queued {
+                events: events.into(),
+                _frames: reservation.frames,
+                _bytes: reservation.bytes,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(queued) => {
+                    mpsc::error::TrySendError::Full(queued.events.into())
+                }
+                mpsc::error::TrySendError::Closed(queued) => {
+                    mpsc::error::TrySendError::Closed(queued.events.into())
+                }
+            })
     }
 
     /// Give an already notified owner an extra turn once two receive quanta

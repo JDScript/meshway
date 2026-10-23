@@ -39,6 +39,12 @@ const ROAM_ANSWER: Duration = Duration::from_millis(1500);
 /// New sources challenged at once: per channel, and per socket.
 const MAX_ROAM_SOURCES: usize = 2;
 const MAX_ROAM_CHALLENGES: usize = 8;
+/// How long read business frames may wait for room in the Manager event
+/// queue before this owner reads its socket again and drops what has no room
+/// (see [`receive::Backlog`]). Until then the socket is not read, so health,
+/// handshake and probe datagrams behind them wait too: at most this bound
+/// plus the drain of the kernel receive buffer, one [`RETRY`] interval.
+const RECEIVE_STALL: Duration = RETRY;
 
 /// Bounded retransmission of one short control exchange: at most `max`
 /// sends, `interval` apart. Each protocol keeps its own deadline, signature
@@ -204,6 +210,7 @@ struct Owner {
     roams: tokio::sync::watch::Receiver<u64>,
     /// Challenges of new sources, keyed by the source.
     roaming: BTreeMap<SocketAddr, RoamChallenge>,
+    backlog: receive::Backlog,
 }
 
 impl Channel {
@@ -307,6 +314,7 @@ impl Owner {
         Ok(Self {
             roams,
             roaming: BTreeMap::new(),
+            backlog: receive::Backlog::default(),
             shared,
             id,
             local,
@@ -383,14 +391,24 @@ impl Owner {
                 Tick,
                 Frame(Result<Vec<Frame>, ReceiveError>, std::time::Instant),
                 Command(Option<super::traversal::Command>),
+                Room(Option<super::events::Reservation>),
+                Stalled,
             }
+            // Business frames already read wait for room in the event queue;
+            // until then the socket is not read (pressure stays in the kernel
+            // buffer). Only the consumer's dequeue, or the stall bound, resumes it.
+            let blocked = self.backlog.blocked();
+            let room = self.shared.events.reserve(self.backlog.waiting());
+            let stall_at = self.backlog.stall_at().unwrap_or_else(Instant::now);
             let work = lifetime.run(async {
                 tokio::select! { biased;
                     changed = plans.changed() => changed.map(|_| Work::Reconfigured).map_err(|_| Error::Cancelled),
                     changed = self.roams.changed() => changed.map(|_| Work::Roamed).map_err(|_| Error::Cancelled),
                     _ = tick.tick() => Ok(Work::Tick),
                     command = async { match &mut self.commands { Some(commands) => commands.recv().await, None => std::future::pending().await } } => Ok(Work::Command(command)),
-                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv_batch() => Ok(Work::Frame(frame, std::time::Instant::now())),
+                    reservation = room, if blocked => Ok(Work::Room(reservation)),
+                    _ = tokio::time::sleep_until(stall_at), if blocked => Ok(Work::Stalled),
+                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv_batch(), if !blocked => Ok(Work::Frame(frame, std::time::Instant::now())),
                 }
             }).await;
             let operation = async {
@@ -404,6 +422,8 @@ impl Owner {
                     Work::Command(Some(command)) => self.traversal_command(command)?,
                     Work::Command(None) => self.commands = None,
                     Work::Tick => self.tick().await?,
+                    Work::Room(reservation) => self.make_room(reservation),
+                    Work::Stalled => self.stalled(),
                     Work::Frame(Ok(frames), received_at) => {
                         self.receive_batch(frames, received_at).await?;
                     }

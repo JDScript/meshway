@@ -121,3 +121,32 @@ async fn batch_drain_preserves_fifo_and_partial_group_storage_across_publication
     assert_eq!(tx.bytes.available_permits(), 40);
     assert_eq!(rx.recv_many(&mut events, 32).await, 0);
 }
+
+#[tokio::test]
+async fn a_reservation_waits_for_the_consumer_holds_its_room_and_fits_only_its_group() {
+    let (tx, mut rx) = channel(4, 64);
+    tx.try_send_batch(vec![frame(8), frame(8), frame(8)])
+        .unwrap();
+    let group = vec![frame(8), frame(8)];
+    let mut room = Box::pin(tx.reserve(&group));
+    assert!(futures_util::poll!(room.as_mut()).is_pending());
+    let mut events = Vec::new();
+    assert_eq!(rx.recv_many(&mut events, 1).await, 1);
+    // Room returns only once the whole earlier group is dequeued.
+    assert!(futures_util::poll!(room.as_mut()).is_pending());
+    events.clear();
+    assert_eq!(rx.recv_many(&mut events, 32).await, 2);
+    let reservation = room.await.unwrap();
+    assert_eq!(tx.capacity(), 2);
+    // The held room is not taken by another publisher.
+    tx.try_send_batch(vec![frame(8), frame(8)]).unwrap();
+    assert!(matches!(
+        tx.try_send(frame(8)),
+        Err(mpsc::error::TrySendError::Full(_))
+    ));
+    tx.send_reserved(reservation, group).unwrap();
+    assert_eq!(tx.capacity(), 0);
+    let other = tx.reserve(&[frame(8)]);
+    rx.close();
+    assert!(other.await.is_none(), "a closed queue ends the wait");
+}

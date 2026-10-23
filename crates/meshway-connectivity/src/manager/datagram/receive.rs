@@ -45,7 +45,7 @@ impl Owner {
                 // already-read suffix across a fair turn, then recheck its
                 // original channel when dispatch resumes.
                 meshway_logging::profile::event("manager.udp.dispatch", "quantum_yield");
-                self.dispatch_batch(std::mem::take(&mut events));
+                self.publish(std::mem::take(&mut events));
                 tokio::task::yield_now().await;
                 started = std::time::Instant::now();
                 checked.clear();
@@ -73,7 +73,7 @@ impl Owner {
                 }
             }
         }
-        self.dispatch_batch(events);
+        self.publish(events);
         // One fair scheduling turn per bounded batch, rather than one per
         // rejected business packet while control waits in the socket backlog.
         tokio::task::yield_now().await;
@@ -156,28 +156,150 @@ impl Owner {
         }
     }
 
-    fn dispatch_batch(&self, mut events: Vec<Event>) {
-        if events.is_empty() {
-            return;
-        }
-        let count = events.len();
-        let accepted = count.min(self.shared.events.capacity());
-        events.truncate(accepted);
-        let mut dropped = count - accepted;
-        let mut reason = "event_full";
-        if accepted != 0 {
-            match self.shared.events.try_send_batch(events) {
-                Ok(()) => meshway_logging::profile::event("manager.event_queue", "publish_batch"),
-                Err(error) => {
-                    if matches!(error, mpsc::error::TrySendError::Closed(_)) {
-                        reason = "event_closed";
+    /// Queue this read batch's business events behind any still waiting and
+    /// publish what the event queue has room for.
+    fn publish(&mut self, events: Vec<Event>) {
+        self.backlog.events.extend(events);
+        self.flush();
+    }
+
+    /// Publish the backlog in groups of at most 32. A group the queue has no
+    /// room for waits, with the rest behind it, and [`Backlog::blocked`]
+    /// stops reading the socket until [`Owner::make_room`] or the stall bound.
+    /// While shedding, as before this bound, the part without room is dropped.
+    pub(super) fn flush(&mut self) {
+        while !self.backlog.events.is_empty() {
+            let mut count = self.backlog.events.len().min(32);
+            if self.backlog.shedding {
+                count = count.min(self.shared.events.capacity());
+                if count == 0 {
+                    let rest = std::mem::take(&mut self.backlog.events);
+                    self.shed(rest.len(), "event_full");
+                    break;
+                }
+            }
+            let group: Vec<_> = self.backlog.events.drain(..count).collect();
+            match self.shared.events.try_send_batch(group) {
+                Ok(()) => {
+                    meshway_logging::profile::event("manager.event_queue", "publish_batch");
+                    self.backlog.accepted();
+                    self.backlog.since = None;
+                }
+                Err(mpsc::error::TrySendError::Full(group)) if !self.backlog.shedding => {
+                    for event in group.into_iter().rev() {
+                        self.backlog.events.push_front(event);
                     }
-                    dropped += accepted;
+                    meshway_logging::profile::event("manager.udp", "backpressure");
+                    self.backlog.since.get_or_insert_with(Instant::now);
+                    return;
+                }
+                Err(mpsc::error::TrySendError::Full(group)) => self.shed(group.len(), "event_full"),
+                Err(mpsc::error::TrySendError::Closed(group)) => {
+                    let rest = std::mem::take(&mut self.backlog.events);
+                    self.shed(group.len() + rest.len(), "event_closed");
                 }
             }
         }
-        for _ in 0..dropped {
+        self.backlog.since = None;
+    }
+
+    /// The room awaited for the backlog's first group is now held.
+    pub(super) fn make_room(&mut self, reservation: Option<super::super::events::Reservation>) {
+        let Some(reservation) = reservation else {
+            // Closed: the Manager is stopping.
+            let rest = std::mem::take(&mut self.backlog.events);
+            self.shed(rest.len(), "event_closed");
+            self.backlog.since = None;
+            return;
+        };
+        let count = self.backlog.events.len().min(32);
+        let group: Vec<_> = self.backlog.events.drain(..count).collect();
+        match self.shared.events.send_reserved(reservation, group) {
+            Ok(()) => {
+                meshway_logging::profile::event("manager.event_queue", "publish_batch");
+                self.backlog.accepted();
+                self.backlog.since = None;
+                self.flush();
+            }
+            Err(mpsc::error::TrySendError::Full(group)) => {
+                // Not this group's reservation; wait again for the same group.
+                for event in group.into_iter().rev() {
+                    self.backlog.events.push_front(event);
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(group)) => {
+                let rest = std::mem::take(&mut self.backlog.events);
+                self.shed(group.len() + rest.len(), "event_closed");
+                self.backlog.since = None;
+            }
+        }
+    }
+
+    /// The consumer made no room within [`RECEIVE_STALL`]: control frames
+    /// behind this backlog in the socket must not wait for it any longer.
+    pub(super) fn stalled(&mut self) {
+        meshway_logging::profile::event("manager.udp", "receive_stall");
+        self.backlog.shedding = true;
+        self.backlog.shed_since = Some(Instant::now());
+        self.flush();
+    }
+
+    /// Count `count` business events already taken from the backlog as dropped.
+    fn shed(&mut self, count: usize, reason: &'static str) {
+        if self.backlog.shedding {
+            self.backlog.dropped = self.backlog.dropped.saturating_add(count as u64);
+        }
+        for _ in 0..count {
             meshway_logging::profile::event("manager.udp.drop", reason);
+        }
+    }
+}
+
+/// Business events of the last read batch that the Manager event queue had no
+/// room for. While any wait, this owner reads nothing more from its socket:
+/// the backlog stays within one receive batch and further arrivals wait in
+/// the kernel receive buffer, whose overflow the kernel counts.
+#[derive(Default)]
+pub(super) struct Backlog {
+    events: VecDeque<Event>,
+    /// When the first waiting group found the queue full.
+    since: Option<Instant>,
+    /// The consumer made no room for [`RECEIVE_STALL`]: read again and drop
+    /// what has no room until the queue accepts a group again.
+    shedding: bool,
+    shed_since: Option<Instant>,
+    dropped: u64,
+}
+
+impl Backlog {
+    /// Reading stops while a group waits for room, unless shedding.
+    pub(super) fn blocked(&self) -> bool {
+        !self.events.is_empty() && !self.shedding
+    }
+
+    /// The first group still waiting for room, at most 32 events.
+    pub(super) fn waiting(&self) -> impl Iterator<Item = &Event> {
+        self.events.iter().take(32)
+    }
+
+    /// When waiting for room ends in shedding.
+    pub(super) fn stall_at(&self) -> Option<Instant> {
+        self.since.map(|since| since + RECEIVE_STALL)
+    }
+
+    fn accepted(&mut self) {
+        if !self.shedding {
+            return;
+        }
+        self.shedding = false;
+        let since = self.shed_since.take();
+        let dropped = std::mem::take(&mut self.dropped);
+        if dropped != 0 && diagnostic_event() {
+            tracing::warn!(
+                dropped,
+                stalled_ms = since.map_or(0, |since| since.elapsed().as_millis() as u64),
+                "Connectivity event queue made no room; business frames dropped while it was stalled"
+            );
         }
     }
 }
