@@ -47,9 +47,10 @@ run = [
 ]
 
 [tasks."check:rust"]
-description = "Check test file bounds, Rust formatting and strict Clippy for every target/feature"
+description = "Check test file bounds, schema snapshots against trusted baselines, Rust formatting and strict Clippy for every target/feature"
 run = [
   "python3 scripts/check_test_files.py",
+  "python3 scripts/ci/schema-history.py",
   "cargo fmt --all --check",
   "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
   { task = "check:linux" },

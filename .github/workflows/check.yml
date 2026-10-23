@@ -78,6 +78,9 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Schema snapshots are compared with the last release tag and main.
+          fetch-depth: 0
       - uses: jdx/mise-action@v4
         with:
           version: 2026.8.14
