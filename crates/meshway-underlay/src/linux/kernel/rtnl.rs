@@ -164,7 +164,9 @@ where
 
 /// Read one attempt's answers to their end. An answer after the limit, an
 /// interruption or a failure is still read: the socket's next dump starts
-/// only after this one ended in the kernel.
+/// only after this one ended in the kernel. Only a successful `NLMSG_DONE`
+/// completes the dump: answers that end without one (the socket closed or
+/// its stream ended) are a read that failed, never the whole table.
 async fn read<T>(
     mut answers: impl Stream<Item = NetlinkMessage<RouteNetlinkMessage>> + Unpin,
     take: fn(RouteNetlinkMessage) -> Option<T>,
@@ -173,6 +175,7 @@ async fn read<T>(
     let mut objects = Vec::new();
     let mut interrupted = false;
     let mut failed = None;
+    let mut done = false;
     while let Some(answer) = answers.next().await {
         interrupted |= answer.header.flags & NLM_F_DUMP_INTR != 0;
         match answer.payload {
@@ -185,13 +188,13 @@ async fn read<T>(
                     failed.get_or_insert(Error::Netlink);
                 }
             },
-            NetlinkPayload::Done(done) if done.code == 0 => {}
-            NetlinkPayload::Done(done) if -done.code == EBUSY => interrupted = true,
+            NetlinkPayload::Done(end) if end.code == 0 => done = true,
+            NetlinkPayload::Done(end) if -end.code == EBUSY => interrupted = true,
             NetlinkPayload::Error(error) if -error.raw_code() == EBUSY => interrupted = true,
-            NetlinkPayload::Done(done) => {
+            NetlinkPayload::Done(end) => {
                 tracing::debug!(
                     operation = "dump",
-                    errno = -done.code,
+                    errno = -end.code,
                     "Kernel netlink operation failed"
                 );
                 failed.get_or_insert(Error::Netlink);
@@ -210,7 +213,15 @@ async fn read<T>(
     match failed {
         Some(error) => Attempt::Failed(error),
         None if interrupted => Attempt::Interrupted,
-        None => Attempt::Complete(objects),
+        None if done => Attempt::Complete(objects),
+        None => {
+            tracing::debug!(
+                operation = "dump",
+                objects = objects.len(),
+                "Kernel dump ended without its end message"
+            );
+            Attempt::Failed(Error::Netlink)
+        }
     }
 }
 
@@ -606,6 +617,25 @@ mod tests {
         assert!(matches!(
             attempt(vec![link(1, 0), link(2, NLM_F_DUMP_INTR), done(0, 0)], 1).await,
             Attempt::Failed(Error::Capacity)
+        ));
+    }
+
+    /// F8a F8: only a successful end completes a dump. Answers that stop
+    /// without one, after some objects or at once, are a failed read
+    /// (unavailable), never the whole table.
+    #[tokio::test]
+    async fn a_dump_without_its_end_is_a_failed_read_not_a_complete_one() {
+        assert!(matches!(
+            attempt(vec![link(1, 0), link(2, 0)], 8).await,
+            Attempt::Failed(Error::Netlink)
+        ));
+        assert!(matches!(
+            attempt(Vec::new(), 8).await,
+            Attempt::Failed(Error::Netlink)
+        ));
+        assert!(matches!(
+            attempt(vec![done(0, 0)], 8).await,
+            Attempt::Complete(links) if links.is_empty()
         ));
     }
 
