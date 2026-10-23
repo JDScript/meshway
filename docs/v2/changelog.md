@@ -4,11 +4,13 @@
 
 ## 未发布
 
-N8 Control 打开失败的重证（`n8/control-open-retry`）：wire 6、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+CORS-1 Console 跨源部署（`cors1/console-origin`）：wire、IPC、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
 
-- Node（不变量：只有已证实的不一致才持久阻断；owner：Node runtime 的 Control 循环，判定 `meshway_control::Error::open_recovery`）：`Control::open` 遇到身份目录锁被另一进程持有或读取失败（I/O、`EACCES`）时为 `retrying`／`storage`（`lastErrorDetail` 为原因，`retryAt` 为下一次），按 1–15 秒有界退避重开，打开后载入同一缓存 netmap，无需再次 `up`。此前一律 `blocked`，等期望状态改变。记录、origin、路径、属主、类型或权限不符仍为 `blocked`；运行期写入结果不确定仍是唯一例外。见[恢复语义](/v2/node/runtime#recovery)。
+- Server：`--console-origin` 与委托客户端 origin 一样进入 CORS 白名单（仅 `/api/v1/`，`GET`／`POST`／`DELETE`，`Authorization`／`Content-Type`／`Last-Event-ID`，暴露 `x-request-id`／`Date`，无 cookie），Console 可托管在 Server 以外的 origin；两者都未配置时仍不发送 CORS 头。规则见 [Server · 跨源访问](/v2/server#cors)。
+- Console：构建期 `VITE_MESHWAY_API_ORIGIN`（校验为 secure 裸 origin，格式不符构建失败；未设置时同源）供 JSON 请求与事件流共用；开发服务器始终经代理同源；`vite preview` 不再要求 `MESHWAY_CONTROLLER_URL`；`dev`／`preview` 监听 `127.0.0.1`；产物带 Cloudflare Pages SPA 回退 `_redirects`。
+- 部署：`mise run deploy:console-pages`（`dist/console-pages/deploy.sh`）以 `VITE_MESHWAY_API_ORIGIN=https://meshway-prod-api.jdscript.dev` 构建并 `wrangler pages deploy` 到 Pages 项目 `meshway-console`；托管形态见[安装 · Console 与 TLS](/v2/install#server-proxy)。
 
-旧代码失败记录在 `.meshway/validation/n8/`。
+SOAK-1 现场 soak 工具（`soak1/harness`）：`scripts/soak/`（Python 3 标准库，系统 `zstd`）在采集机 kr-icn-arm64 上以 cron＋`flock` 运行——每 5 分钟各节点 `meshway --json status`（附 daemon PID 与启动时刻）与 Server 健康，每小时 60 秒 `schedstat` 每线程 CPU、子进程、RSS、fd、socket 与 journal（cursor 续读）／`docker logs`（不重叠时间窗）增量，每天 23:30Z 10 条边 `meshway ping` ×10 与一次 50 Mbit/s 限速 iperf3，00:10Z 日报（`reports/<日>.md`／`.json`：blocked／撤回／重装／进程启动按 `faults.jsonl` 标注计划内／外、按类别错误计数、CPU／RSS／fd 每日值与自 T0 的趋势、续租与 serial 变化、探测），`--final` 输出整段门槛判定；`fault.py` 按配置日程注入，每次注入前后写开始／结束标记（失败与中断也写），步骤超时有界，nft 故障只在容器 netns 的独立表 `meshway_soak_fault` 中并留有自删兜底；采集 key 在各主机只能运行 forced-command gate（`gate.py`：shlex 切词、不经 shell、命令形与参数逐个校验，故障形只允许日程点名的主机），`install.sh` 幂等安装并渲染 gate spec、`authorized_keys` 行与 crontab 块；docker 日志轮转与 journal cursor 失效记为“可能缺行”；保留 30 天，磁盘剩余 < 10 GiB 时停写并在日报标红。离线测试 `scripts/test_soak.py`、`scripts/test_soak_gate.py`（`mise run test:scripts`）。里程碑 C 改为 7 天、公网节点为主、按日程注入故障，门槛补充 RSS／fd 趋势、sync 失败归类与每日 ping（[v0.1.0 门槛](/v2/process#v0-1-gate)）；[真机证据](/v2/node/validation#prod-soak)预留 prod 一行。dev 现场演练证据 `.meshway/validation/soak1/`。
 
 N7 节点迁到另一个 Server（`n7/server-move`）：wire 6、IPC 13（字段不变，`lastErrorDetail` 多一类文本）、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
 
@@ -19,13 +21,11 @@ N7 节点迁到另一个 Server（`n7/server-move`）：wire 6、IPC 13（字段
 
 旧代码失败记录在 `.meshway/validation/n7/`。
 
-CORS-1 Console 跨源部署（`cors1/console-origin`）：wire、IPC、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+N8 Control 打开失败的重证（`n8/control-open-retry`）：wire 6、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
 
-- Server：`--console-origin` 与委托客户端 origin 一样进入 CORS 白名单（仅 `/api/v1/`，`GET`／`POST`／`DELETE`，`Authorization`／`Content-Type`／`Last-Event-ID`，暴露 `x-request-id`／`Date`，无 cookie），Console 可托管在 Server 以外的 origin；两者都未配置时仍不发送 CORS 头。规则见 [Server · 跨源访问](/v2/server#cors)。
-- Console：构建期 `VITE_MESHWAY_API_ORIGIN`（校验为 secure 裸 origin，格式不符构建失败；未设置时同源）供 JSON 请求与事件流共用；开发服务器始终经代理同源；`vite preview` 不再要求 `MESHWAY_CONTROLLER_URL`；`dev`／`preview` 监听 `127.0.0.1`；产物带 Cloudflare Pages SPA 回退 `_redirects`。
-- 部署：`mise run deploy:console-pages`（`dist/console-pages/deploy.sh`）以 `VITE_MESHWAY_API_ORIGIN=https://meshway-prod-api.jdscript.dev` 构建并 `wrangler pages deploy` 到 Pages 项目 `meshway-console`；托管形态见[安装 · Console 与 TLS](/v2/install#server-proxy)。
+- Node（不变量：只有已证实的不一致才持久阻断；owner：Node runtime 的 Control 循环，判定 `meshway_control::Error::open_recovery`）：`Control::open` 遇到身份目录锁被另一进程持有或读取失败（I/O、`EACCES`）时为 `retrying`／`storage`（`lastErrorDetail` 为原因，`retryAt` 为下一次），按 1–15 秒有界退避重开，打开后载入同一缓存 netmap，无需再次 `up`。此前一律 `blocked`，等期望状态改变。记录、origin、路径、属主、类型或权限不符仍为 `blocked`；运行期写入结果不确定仍是唯一例外。见[恢复语义](/v2/node/runtime#recovery)。
 
-SOAK-1 现场 soak 工具（`soak1/harness`）：`scripts/soak/`（Python 3 标准库，系统 `zstd`）在采集机 kr-icn-arm64 上以 cron＋`flock` 运行——每 5 分钟各节点 `meshway --json status`（附 daemon PID 与启动时刻）与 Server 健康，每小时 60 秒 `schedstat` 每线程 CPU、子进程、RSS、fd、socket 与 journal（cursor 续读）／`docker logs`（不重叠时间窗）增量，每天 23:30Z 10 条边 `meshway ping` ×10 与一次 50 Mbit/s 限速 iperf3，00:10Z 日报（`reports/<日>.md`／`.json`：blocked／撤回／重装／进程启动按 `faults.jsonl` 标注计划内／外、按类别错误计数、CPU／RSS／fd 每日值与自 T0 的趋势、续租与 serial 变化、探测），`--final` 输出整段门槛判定；`fault.py` 按配置日程注入，每次注入前后写开始／结束标记（失败与中断也写），步骤超时有界，nft 故障只在容器 netns 的独立表 `meshway_soak_fault` 中并留有自删兜底；采集 key 在各主机只能运行 forced-command gate（`gate.py`：shlex 切词、不经 shell、命令形与参数逐个校验，故障形只允许日程点名的主机），`install.sh` 幂等安装并渲染 gate spec、`authorized_keys` 行与 crontab 块；docker 日志轮转与 journal cursor 失效记为“可能缺行”；保留 30 天，磁盘剩余 < 10 GiB 时停写并在日报标红。离线测试 `scripts/test_soak.py`、`scripts/test_soak_gate.py`（`mise run test:scripts`）。里程碑 C 改为 7 天、公网节点为主、按日程注入故障，门槛补充 RSS／fd 趋势、sync 失败归类与每日 ping（[v0.1.0 门槛](/v2/process#v0-1-gate)）；[真机证据](/v2/node/validation#prod-soak)预留 prod 一行。dev 现场演练证据 `.meshway/validation/soak1/`。
+旧代码失败记录在 `.meshway/validation/n8/`。
 
 DNS-2 公网主机上的 resolved 后端缺陷（`dns2/resolved-hosts`）：wire 6、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。IPC 13 的 Status 新增可省略字段 `localDnsDomains`（与 `networkError`、`controlRelay` 同一先例：CLI 与 daemon 一起升级）。
 
