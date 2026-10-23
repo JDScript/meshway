@@ -341,9 +341,9 @@ lock_data_dir() {
 unlock_data_dir() { exec 9<&-; }
 
 uninstall_server() {
+	# Nothing is changed unless the Server is proven stopped.
+	server_quiesce || die "meshway-server did not stop; nothing was changed (see systemctl status meshway-server)"
 	if [ -f "$SERVER_UNIT_PATH" ]; then systemctl disable $SERVER_UNIT 2>/dev/null || true; fi
-	# Nothing is removed unless the Server is proven stopped.
-	server_quiesce || die "meshway-server did not stop; nothing was removed (see systemctl status meshway-server)"
 	rm -f "$SERVER_UNIT_PATH"
 	for program in $(server_programs); do rm -f "$program" "$program.previous"; done
 	rmdir "$SERVER_TOOLS_DIR" 2>/dev/null || true
