@@ -83,11 +83,19 @@ fn wall_ms() -> u64 {
     u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0)
 }
 
-/// Wakes the workers of peers whose published facts changed.
+/// Wakes the workers of peers whose published facts changed. A closed
+/// publication is not read again: its last facts stay what [`Store`] reads
+/// and the loop waits for another source to be attached.
 pub(super) async fn run(shared: Arc<Shared>) {
     let mut previous: Option<KnownPeers> = None;
+    let mut closed: Option<watch::Receiver<Option<KnownPeers>>> = None;
     loop {
-        let Some(mut source) = shared.facts.source() else {
+        let source = shared.facts.source().filter(|source| {
+            !closed
+                .as_ref()
+                .is_some_and(|closed| closed.same_channel(source))
+        });
+        let Some(mut source) = source else {
             tokio::select! { biased;
                 _ = shared.stop.cancelled() => return,
                 _ = shared.facts.attached.notified() => {},
@@ -110,7 +118,10 @@ pub(super) async fn run(shared: Arc<Shared>) {
                 _ = shared.stop.cancelled() => return,
                 // Another source replaces this one.
                 _ = shared.facts.attached.notified() => break,
-                changed = source.changed() => if changed.is_err() { break },
+                changed = source.changed() => if changed.is_err() {
+                    closed = Some(source);
+                    break;
+                },
             }
         }
     }
@@ -199,6 +210,63 @@ mod tests {
         );
         shared.stop.cancel();
         task.await.unwrap();
+        fixture.close().await;
+    }
+
+    /// F8a F3: a closed publication is read once, never again: its live
+    /// traversal request is not touched over and over and its facts stay
+    /// readable; the next attached source is read.
+    #[tokio::test]
+    async fn a_closed_publication_is_not_read_again_until_another_is_attached() {
+        let fixture = Netmaps::start(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _) = shared(&fixture.desired[1], &fixture.keys[1]);
+        let (a, b) = (ids[0], ids[1]);
+        let request = meshway_protocol::UdpTraversalRequest {
+            attempt_id: meshway_model::UdpTraversalId::new(uuid::Uuid::from_u128(7)).unwrap(),
+            peer_id: a,
+            carrier: meshway_configuration::execution::Carrier {
+                dialer: a,
+                listener: b,
+                listener_key: "udp".into(),
+                protocol: meshway_model::TransportProtocol::NativeUdp,
+            },
+            expires_at_ms: wall_ms() + 60_000,
+        };
+        let mut facts = known(&[(1, 1)]);
+        facts.netmap = shared.plan().reference;
+        facts.traversal_requests = Arc::new(vec![request]);
+        let (publish, source) = tokio::sync::watch::channel(Some(facts));
+        shared.facts.attach(source);
+        drop(publish);
+        let task = tokio::spawn(run(shared.clone()));
+        for _ in 0..100 {
+            if shared.wanted(a) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(shared.wanted(a), "the closed publication was read once");
+        let touched = shared.interests.last(a);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(
+            shared.interests.last(a),
+            touched,
+            "the closed publication was read again"
+        );
+        assert!(shared.facts.get(node(1)).is_some(), "its facts are kept");
+        let (replacement, source) = tokio::sync::watch::channel(Some(known(&[(2, 1)])));
+        shared.facts.attach(source);
+        for _ in 0..100 {
+            if shared.facts.get(node(2)).is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(shared.facts.get(node(2)).is_some());
+        shared.stop.cancel();
+        task.await.unwrap();
+        drop(replacement);
         fixture.close().await;
     }
 
