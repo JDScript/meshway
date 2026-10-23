@@ -209,9 +209,17 @@ impl Packets {
             "Local packets held after a turn"
         );
     }
-    pub fn wake_at(&self) -> Option<Instant> {
+    /// When the next turn is due. Packets left for want of time are due at
+    /// once; packets left to the bounded scan only while a head can be
+    /// admitted: one waiting for its class of crypto capacity (MTU or
+    /// jumbo) is admitted by a credit's return, the pool's or an output's
+    /// completion, which wakes the owner by itself.
+    pub fn wake_at(&self, pool: &secure::pipeline::Pool) -> Option<Instant> {
         let now = Instant::now();
-        if self.scan_remaining != 0 || self.deferred || !self.closes.is_empty() {
+        if self.deferred
+            || !self.closes.is_empty()
+            || (self.scan_remaining != 0 && self.scannable(pool))
+        {
             return Some(now);
         }
         let first = self
@@ -226,6 +234,24 @@ impl Packets {
             .chain(self.attempts.iter().map(|attempt| attempt.wake_at))
             .chain(first)
             .min()
+    }
+    /// Whether a queued head can be taken now; see [`Self::wake_at`].
+    fn scannable(&self, pool: &secure::pipeline::Pool) -> bool {
+        !self.control.is_empty()
+            || self.incoming.front().is_some_and(|item| {
+                !secure::is_data_frame(&item.bytes)
+                    || pool.can_submit_capacity(item.bytes.capacity())
+            })
+            || self
+                .local
+                .front()
+                .is_some_and(|item| pool.can_submit_capacity(Self::local_capacity(item)))
+    }
+    /// The crypto capacity a local packet's send job reserves.
+    fn local_capacity(item: &Queued) -> usize {
+        item.packet.as_bytes().len()
+            + meshway_dataplane::DEFAULT_HEADROOM
+            + meshway_dataplane::DEFAULT_TAILROOM
     }
     /// New content: outputs admitted on earlier content end. Frames not yet
     /// admitted stay queued; SecureNode admits each on the content current
@@ -654,13 +680,11 @@ impl Packets {
         // (with its sends and TUN writes) left over.
         let local_share = Share::new(SHARE);
         for _ in 0..local_count {
-            if self.local.front().is_some_and(|item| {
-                !pool.can_submit_capacity(
-                    item.packet.as_bytes().len()
-                        + meshway_dataplane::DEFAULT_HEADROOM
-                        + meshway_dataplane::DEFAULT_TAILROOM,
-                )
-            }) {
+            if self
+                .local
+                .front()
+                .is_some_and(|item| !pool.can_submit_capacity(Self::local_capacity(item)))
+            {
                 break;
             }
             if local_share.spent() {
@@ -918,15 +942,121 @@ impl Share {
 #[cfg(test)]
 mod tests {
     use super::{Packets, Share};
+    use meshway_dataplane::{
+        DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool,
+        secure::{
+            CircuitGrant, Outbound, Received, SecureNode,
+            pipeline::{JUMBO_CAPACITY, Job, MTU_STORAGE, Pool},
+        },
+    };
     use std::time::Duration;
 
     #[test]
     fn a_turn_left_short_of_time_is_due_again_at_once() {
+        let pool = Pool::new(0).unwrap();
         let mut packets = Packets::default();
-        assert_eq!(packets.wake_at(), None);
+        assert_eq!(packets.wake_at(&pool), None);
         packets.deferred = true;
-        let due = packets.wake_at().expect("due");
+        let due = packets.wake_at(&pool).expect("due");
         assert!(due <= tokio::time::Instant::now());
+    }
+
+    fn packet(pool: &PacketPool, bytes: &[u8]) -> Packet {
+        let mut buffer = pool.acquire(bytes.len()).unwrap();
+        buffer.copy_from_slice(bytes);
+        Packet::parse(buffer).unwrap()
+    }
+
+    /// F8a F4: both jumbo crypto slots held by real send jobs, the MTU
+    /// slots free. A queued jumbo packet left to the scan is not due at
+    /// once (the owner would turn without progress until a credit
+    /// returned); it is when one of those credits returns.
+    #[test]
+    fn a_head_waiting_for_jumbo_capacity_is_due_when_a_credit_returns() {
+        let chain = meshway_desired_fixture::fixture::Chain::new(2).unwrap();
+        let (a, b) = (chain.path[0], chain.path[1]);
+        let node = |id, index| {
+            SecureNode::new(
+                &chain.authority.desired(id).unwrap(),
+                chain.authority.keys(id).unwrap(),
+                Default::default(),
+                chain.carriers_for(index).unwrap(),
+            )
+            .unwrap()
+        };
+        let (mut source, mut target) = (node(a, 0), node(b, 1));
+        let carrier = chain.carriers[0].clone();
+        let init = source
+            .start_grant(
+                CircuitGrant {
+                    purpose: meshway_dataplane::Purpose::Business,
+                    target: chain.target.clone(),
+                },
+                chain.path.clone(),
+                &carrier,
+            )
+            .unwrap();
+        let Received::Established {
+            response: Some(response),
+            ..
+        } = target
+            .receive(&carrier, init.release(|bytes| bytes).unwrap())
+            .unwrap()
+        else {
+            panic!("terminal handshake")
+        };
+        assert!(matches!(
+            source
+                .receive(&carrier, response.release(|bytes| bytes).unwrap())
+                .unwrap(),
+            Received::Established { response: None, .. }
+        ));
+        let tcp = |length| {
+            meshway_desired_fixture::fixture::tcp_ipv4(
+                chain.addresses[0],
+                chain.addresses[1],
+                false,
+                1,
+                0,
+                0x02,
+                length,
+            )
+            .unwrap()
+        };
+        // Small packets in jumbo buffers: each send job holds a jumbo credit.
+        let jumbo =
+            PacketPool::new(JUMBO_CAPACITY, 8192, DEFAULT_HEADROOM, DEFAULT_TAILROOM).unwrap();
+        let mut pool = Pool::new(0).unwrap();
+        for _ in 0..JUMBO_CAPACITY {
+            let Ok(Outbound::Send(job)) = source.outbound(packet(&jumbo, &tcp(52))) else {
+                panic!("established circuit send")
+            };
+            assert!(pool.submit(Job::Send(job)).is_none());
+        }
+        pool.flush();
+        let large = 5000;
+        assert!(large + DEFAULT_HEADROOM + DEFAULT_TAILROOM > MTU_STORAGE);
+        assert!(pool.can_submit(), "MTU slots are free");
+        assert!(!pool.can_submit_capacity(large + DEFAULT_HEADROOM + DEFAULT_TAILROOM));
+
+        let local = PacketPool::new(1, 9000, DEFAULT_HEADROOM, DEFAULT_TAILROOM).unwrap();
+        let mut packets = Packets::default();
+        packets.enqueue(packet(&local, &tcp(large)));
+        // What a turn leaves when its local head waited for capacity.
+        packets.scan_remaining = 1;
+        let now = tokio::time::Instant::now();
+        let wake = packets.wake_at(&pool).expect("the packet's deadline");
+        assert!(wake > now, "a capacity wait is not due at once");
+
+        let mut ready = pool.take_ready();
+        assert_eq!(ready.len(), JUMBO_CAPACITY);
+        drop(ready.pop());
+        let due = packets.wake_at(&pool).expect("due");
+        assert!(
+            due <= tokio::time::Instant::now(),
+            "a returned credit admits the head"
+        );
+        drop(ready);
     }
 
     #[test]

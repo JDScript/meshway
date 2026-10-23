@@ -189,7 +189,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         let read_tun = can_read;
         let can_take_replies = live && plane.packets.can_take_exit_replies(EXIT_REPLY_BATCH);
         let has_outputs = plane.packets.has_outputs();
-        let mut wake_at = live.then(|| plane.packets.wake_at()).flatten();
+        let mut wake_at = live.then(|| plane.packets.wake_at(&pool)).flatten();
         if let Some(at) = live
             .then(|| {
                 plane
