@@ -18,6 +18,12 @@
 //!   overwrites what it read; it may read again slowly (`reread_blocked`)
 //!   and recovers once the evidence is gone. A failed read while blocked
 //!   proves nothing and keeps it blocked.
+//! - An operation can fail in a way the owner's re-proof cannot test (the
+//!   re-proof holds, the operation fails again the same way): an owner that
+//!   opts in ([`Recovery::repeating`]) judges it with
+//!   [`Recovery::observe_repeated`], whose pause grows with the failures of
+//!   that check since the operation last [succeeded](Recovery::succeeded),
+//!   across holding re-proofs. Every other failure keeps its own pause.
 use crate::Backoff;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -183,6 +189,11 @@ pub struct Recovery {
     policy: Policy,
     health: Health,
     transitioned: bool,
+    /// The pause of a repeated failure ([`Recovery::observe_repeated`]).
+    repeat: Option<Backoff>,
+    /// The repeated failure's check and its failures since the operation
+    /// last succeeded; a holding re-proof keeps it.
+    streak: Option<(&'static str, u32)>,
 }
 
 impl Recovery {
@@ -191,7 +202,54 @@ impl Recovery {
             policy,
             health: Health::Healthy,
             transitioned: false,
+            repeat: None,
+            streak: None,
         }
+    }
+
+    /// Repeated failures of one check ([`Recovery::observe_repeated`])
+    /// pause `backoff.delay(n)` after the n-th, at least the policy's pause.
+    pub fn repeating(mut self, backoff: Backoff) -> Self {
+        self.repeat = Some(backoff);
+        self
+    }
+
+    /// The operation that failed repeatedly succeeded: the next repeated
+    /// failure pauses like the first.
+    pub fn succeeded(&mut self) {
+        self.streak = None;
+    }
+
+    /// Failures of `check` since the operation last succeeded, counted by
+    /// [`Recovery::observe_repeated`] (0 without one).
+    pub fn repeats(&self) -> u32 {
+        self.streak.map_or(0, |(_, failures)| failures)
+    }
+
+    /// Judge, at `now`, an unknown failure of an operation that the owner's
+    /// re-proof cannot test, so that it recurs after each holding re-proof:
+    /// as [`Observation::Unknown`], but the n-th failure of the same check
+    /// since the operation last succeeded pauses at least the repeat
+    /// backoff's `delay(n)`. Another check starts a new count.
+    pub fn observe_repeated(
+        &mut self,
+        check: &'static str,
+        reason: impl std::fmt::Display,
+        now: Instant,
+    ) -> Step {
+        let failures = match self.streak {
+            Some((previous, failures)) if previous == check => failures.saturating_add(1),
+            _ => 1,
+        };
+        self.streak = Some((check, failures));
+        let at_least = self
+            .repeat
+            .map_or(Duration::ZERO, |backoff| backoff.delay(failures));
+        let step = self.unknown(check, reason.to_string(), now, at_least);
+        if let Health::Retrying(retrying) = &mut self.health {
+            retrying.attempts = retrying.attempts.max(failures);
+        }
+        step
     }
 
     pub fn policy(&self) -> Policy {
@@ -234,7 +292,8 @@ impl Recovery {
         }
     }
 
-    /// Judge one read-back or change at `now`.
+    /// Judge one read-back or change at `now`. A failure of another check
+    /// than a repeated one ends that count; a holding read keeps it.
     pub fn observe(&mut self, observation: Observation, now: Instant) -> Step {
         match observation {
             Observation::Holds => {
@@ -242,66 +301,90 @@ impl Recovery {
                 self.health = Health::Healthy;
                 Step::Hold
             }
-            Observation::Unknown { check, reason } => match &mut self.health {
-                // Nothing read proves the evidence gone: still blocked.
-                Health::Blocked(blocked) => {
-                    self.transitioned = false;
-                    blocked.attempts = blocked.attempts.saturating_add(1);
-                    blocked.reread_at = self.policy.reread_blocked.map(|every| now + every);
-                    Step::Block(blocked.reread_at)
+            Observation::Unknown { check, reason } => {
+                if self.streak.is_some_and(|(repeated, _)| repeated != check) {
+                    self.streak = None;
                 }
-                health => {
-                    let (since, attempts) = match health {
-                        Health::Retrying(retrying) => {
-                            (retrying.since, retrying.attempts.saturating_add(1))
-                        }
-                        _ => (now, 1),
-                    };
-                    self.transitioned = health.is_healthy();
-                    let elapsed = now.saturating_duration_since(since);
-                    let wait = self.policy.backoff.delay(attempts);
-                    let (step, wait) = match self.policy.horizon {
-                        Horizon::Escalate(limit) if elapsed >= limit => {
-                            (Some(Step::Escalate(check)), Duration::ZERO)
-                        }
-                        Horizon::Escalate(limit) => (None, wait.min(limit - elapsed)),
-                        Horizon::Unbounded => (None, wait),
-                    };
-                    let retry_at = now + wait;
-                    *health = Health::Retrying(Retrying {
-                        check,
-                        reason,
-                        since,
-                        attempts,
-                        retry_at,
-                    });
-                    step.unwrap_or(Step::RetryAt(retry_at))
-                }
-            },
+                self.unknown(check, reason, now, Duration::ZERO)
+            }
             Observation::Proven { check, reason } => {
-                let reread_at = self.policy.reread_blocked.map(|every| now + every);
-                match &mut self.health {
-                    Health::Blocked(blocked) => {
-                        self.transitioned = false;
-                        blocked.check = check;
-                        blocked.reason = reason;
-                        blocked.attempts = blocked.attempts.saturating_add(1);
-                        blocked.reread_at = reread_at;
-                    }
-                    health => {
-                        self.transitioned = true;
-                        *health = Health::Blocked(Blocked {
-                            check,
-                            reason,
-                            since: now,
-                            attempts: 1,
-                            reread_at,
-                        });
-                    }
+                if self.streak.is_some_and(|(repeated, _)| repeated != check) {
+                    self.streak = None;
                 }
-                Step::Block(reread_at)
+                self.proven(check, reason, now)
             }
         }
+    }
+
+    /// An unknown at `now`: retry after the backoff (at least `at_least`).
+    fn unknown(
+        &mut self,
+        check: &'static str,
+        reason: String,
+        now: Instant,
+        at_least: Duration,
+    ) -> Step {
+        match &mut self.health {
+            // Nothing read proves the evidence gone: still blocked.
+            Health::Blocked(blocked) => {
+                self.transitioned = false;
+                blocked.attempts = blocked.attempts.saturating_add(1);
+                blocked.reread_at = self.policy.reread_blocked.map(|every| now + every);
+                Step::Block(blocked.reread_at)
+            }
+            health => {
+                let (since, attempts) = match health {
+                    Health::Retrying(retrying) => {
+                        (retrying.since, retrying.attempts.saturating_add(1))
+                    }
+                    _ => (now, 1),
+                };
+                self.transitioned = health.is_healthy();
+                let elapsed = now.saturating_duration_since(since);
+                let wait = self.policy.backoff.delay(attempts).max(at_least);
+                let (step, wait) = match self.policy.horizon {
+                    Horizon::Escalate(limit) if elapsed >= limit => {
+                        (Some(Step::Escalate(check)), Duration::ZERO)
+                    }
+                    Horizon::Escalate(limit) => (None, wait.min(limit - elapsed)),
+                    Horizon::Unbounded => (None, wait),
+                };
+                let retry_at = now + wait;
+                *health = Health::Retrying(Retrying {
+                    check,
+                    reason,
+                    since,
+                    attempts,
+                    retry_at,
+                });
+                step.unwrap_or(Step::RetryAt(retry_at))
+            }
+        }
+    }
+
+    /// A proven inconsistency at `now`: blocked, re-read slowly.
+    fn proven(&mut self, check: &'static str, reason: String, now: Instant) -> Step {
+        let reread_at = self.policy.reread_blocked.map(|every| now + every);
+        match &mut self.health {
+            Health::Blocked(blocked) => {
+                self.transitioned = false;
+                blocked.check = check;
+                blocked.reason = reason;
+                blocked.attempts = blocked.attempts.saturating_add(1);
+                blocked.reread_at = reread_at;
+            }
+            health => {
+                self.transitioned = true;
+                *health = Health::Blocked(Blocked {
+                    check,
+                    reason,
+                    since: now,
+                    attempts: 1,
+                    reread_at,
+                });
+            }
+        }
+        Step::Block(reread_at)
     }
 }
 
@@ -441,6 +524,66 @@ mod tests {
             change.observe(unknown(), start + 30 * SECOND),
             Step::Escalate("verify_unavailable")
         );
+    }
+
+    /// DNS-2b: an operation the re-proof cannot test fails again after each
+    /// holding re-proof. Its pause doubles from the policy's (1 s here, the
+    /// DNS owner's) to the repeat cap, survives the re-proofs, restarts after
+    /// the operation succeeded and for another check; a failure judged with
+    /// `observe` keeps the policy's fixed pause.
+    #[test]
+    fn a_repeated_failure_grows_across_holding_reproofs_until_the_operation_succeeds() {
+        let start = Instant::now();
+        let fixed = Policy {
+            backoff: Backoff::new(SECOND, SECOND),
+            horizon: Horizon::Unbounded,
+            reread_blocked: Some(60 * SECOND),
+        };
+        let mut recovery = Recovery::new(fixed).repeating(Backoff::new(SECOND, 60 * SECOND));
+        let mut at = start;
+        fn cycle(recovery: &mut Recovery, at: &mut Instant, check: &'static str) -> u64 {
+            let step = recovery.observe_repeated(check, "no query reached the bind", *at);
+            let Step::RetryAt(next) = step else {
+                panic!("{step:?}")
+            };
+            let wait = (next - *at).as_secs();
+            assert!(matches!(recovery.health(), Health::Retrying(r) if r.retry_at == next));
+            // The re-proof holds; the operation fails again 5 s later.
+            assert_eq!(recovery.observe(Observation::Holds, next), Step::Hold);
+            *at = next + 5 * SECOND;
+            wait
+        }
+        let waits: Vec<_> = (0..9)
+            .map(|_| cycle(&mut recovery, &mut at, "probe"))
+            .collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+        assert_eq!(recovery.repeats(), 9);
+        recovery.succeeded();
+        assert_eq!(
+            cycle(&mut recovery, &mut at, "probe"),
+            1,
+            "reset by a success"
+        );
+        assert_eq!(cycle(&mut recovery, &mut at, "probe"), 2);
+        assert_eq!(
+            cycle(&mut recovery, &mut at, "other_repeat"),
+            1,
+            "another check"
+        );
+        cycle(&mut recovery, &mut at, "probe");
+        // Another failure ends the count and keeps the policy's pause.
+        let other = recovery.observe(Observation::unknown("resolved_owner", "restart"), at);
+        assert_eq!(other, Step::RetryAt(at + SECOND));
+        recovery.observe(Observation::Holds, at + SECOND);
+        at += 7 * SECOND;
+        assert_eq!(cycle(&mut recovery, &mut at, "probe"), 1);
+        // Without `repeating` the same calls keep the fixed pause.
+        let mut plain = Recovery::new(fixed);
+        at = start;
+        let waits: Vec<_> = (0..4)
+            .map(|_| cycle(&mut plain, &mut at, "probe"))
+            .collect();
+        assert_eq!(waits, [1, 1, 1, 1]);
     }
 
     #[test]

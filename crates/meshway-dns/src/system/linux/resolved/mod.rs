@@ -836,7 +836,7 @@ impl Backend {
             // the query to the bind never arrives: Ubuntu 22.04's 249.11.
             return Err(SystemDnsFailure::new(SystemDnsError::Unsupported, "probe")
                 .expected(format!(
-                    "resolved sends a nonce query to the owned link's loopback DNS server over UDP then TCP ({LOOPBACK_SERVER_RELEASES})"
+                    "resolved sends a nonce query to the owned link's loopback DNS server over UDP then TCP ({LOOPBACK_SERVER_RELEASES}; see install.md: Ubuntu 22.04)"
                 ))
                 .actual(format!(
                     "no query reached {address} within 5 s; {}",

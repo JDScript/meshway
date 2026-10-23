@@ -336,7 +336,7 @@ resolved 按最具体匹配把名称交给路由域最长的链路。锚点安�
 
 ### 健康检查与恢复 {#dns-health}
 
-DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒。任一检查失败或超出期限都立即撤回查询许可，网络 worker 随即撤回整个包平面（`Required DNS component failed; suspending packet plane`），Status 为 `lastError: dns`（撤回清理完成之前即如此，见[撤回期间的原因](/v2/node/runtime#ownership-end)）。此后 owner 按后端当前状态完整重证（recover：namespace、预约、锚点、resolve1 owner、链路设置与记录）：未知的故障每秒一次，已证实的每 60 秒一次（重证拒绝而从不覆盖外来设置）。重证成功即以同一 netmap 重装（安装完成时记 `Required DNS component recovered; netmap reinstalled`，无论重装经由 DNS 恢复、Control 的 offer 还是重试），无需 `up` 或重启进程；失败则保持阻断，直到某次重证成功。失败与恢复都由 worker 确认后才算处理过：故障在 worker 看到之前就已重证（例如进程停顿数秒，观察超时后 7 ms 内重证成功）时，worker 仍先撤回再重装，查询许可随重装的 hold 恢复，故障随之清除。
+DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒。任一检查失败或超出期限都立即撤回查询许可，网络 worker 随即撤回整个包平面（`Required DNS component failed; suspending packet plane`），Status 为 `lastError: dns`（撤回清理完成之前即如此，见[撤回期间的原因](/v2/node/runtime#ownership-end)）。此后 owner 按后端当前状态完整重证（recover：namespace、预约、锚点、resolve1 owner、链路设置与记录）：未知的故障每秒一次，已证实的每 60 秒一次（重证拒绝而从不覆盖外来设置）；安装探测连续以 `probe`（`Unsupported`）失败时重证前的等待 1 秒起翻倍、上限 60 秒，安装成功即复位（节奏的唯一定义见[恢复语义](/v2/node/runtime#recovery)）。重证成功即以同一 netmap 重装（安装完成时记 `Required DNS component recovered; netmap reinstalled`，无论重装经由 DNS 恢复、Control 的 offer 还是重试），无需 `up` 或重启进程；失败则保持阻断，直到某次重证成功。失败与恢复都由 worker 确认后才算处理过：故障在 worker 看到之前就已重证（例如进程停顿数秒，观察超时后 7 ms 内重证成功）时，worker 仍先撤回再重装，查询许可随重装的 hold 恢复，故障随之清除。
 
 分类与节奏的唯一定义见[本机运行 · 恢复语义](/v2/node/runtime#recovery)；下表是 DNS owner 的判定（`SystemDnsFailure::proven`）。
 

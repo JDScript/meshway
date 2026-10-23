@@ -45,7 +45,8 @@ systemd-resolved `257.13-1~deb13u1`, dbus-daemon `1.16.2-2`, iproute2 `6.15.0-1`
 util-linux `2.41.5-0+deb13u1`, and procps `2:4.0.4-9`.
 
 `jammy.lock.json` pins the same kind of image on Ubuntu 22.04 (systemd
-`249.11-0ubuntu3.22`; 85 packages on arm64) for the `jammy/resolv-conf` row:
+`249.11-0ubuntu3.22`, plus `ca-certificates` for the embedded-Server client of
+the daemon lifecycle test) for the `jammy/resolv-conf` row:
 an `ubuntu:22.04` digest and the ordered `repositories` (jammy, jammy-security,
 jammy-updates main of one Ubuntu snapshot; a later suite's record replaces an
 earlier one). `build.py --lock-file dev/dns-fixture/jammy.lock.json` builds it;
@@ -57,7 +58,10 @@ Before the Nodes, every DNS row runs the production resolved backend once on
 its image's own resolved (`dns-resolved-backend`, the underlay kernel test
 `resolved_backend_installs_beside_foreign_domains_or_names_its_systemd_requirement`
 with `MESHWAY_RESOLVED_EXPECT=installs` on trixie, `unsupported` on jammy),
-whatever the row's backend.
+whatever the row's backend. On jammy it then runs the real daemon on that
+resolved (`dns-resolved-cadence`, the lifecycle test
+`an_unusable_resolved_is_probed_with_a_growing_pause`) and records its
+probes in the first 60 s.
 
 ## Namespace and process setup
 

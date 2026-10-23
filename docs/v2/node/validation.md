@@ -37,7 +37,7 @@
 | `trojan/off` | 仅 R listener，Trojan TCP/TLS | 共同场景＋精确叶证书 | 同上 | `20261022T150753Z-c13c88f9` | [共同场景](#runtime-共同场景) |
 | `udp/resolv-conf` | Native UDP 静态端点 | 共同场景＋文件代理 DNS | 同上＋DNS 场景 | `20261022T150753Z-2184a347` | [DNS 场景](#dns-场景) |
 | `udp/resolved` | Native UDP 静态端点 | 共同场景＋resolved 后端 | 同上＋resolved 重启 ≤ 5 秒再解析 | `20261022T150843Z-6e527d7c` | [DNS 场景](#dns-场景) |
-| `jammy/resolv-conf` | Native UDP 静态端点，Ubuntu 22.04 DNS 镜像 | 共同场景＋文件代理 DNS；resolved 后端的明确不支持 | 同 `udp/resolv-conf`＋resolved 检查报 `probe` 版本要求 | `20261023T123850Z-0024cb8c` | [DNS 场景](#dns-场景) |
+| `jammy/resolv-conf` | Native UDP 静态端点，Ubuntu 22.04 DNS 镜像 | 共同场景＋文件代理 DNS；resolved 后端的明确不支持 | 同 `udp/resolv-conf`＋resolved 检查报 `probe` 版本要求；真实 daemon 60 秒内探测 ≤ 6 次 | `20261023T123850Z-0024cb8c` | [DNS 场景](#dns-场景) |
 | `nat/off` | A、R 各在端口保持型 SNAT 后 | 共同场景＋协调穿透 | R 只接受 A 的 offer | `20261022T151205Z-2c4d8408` | [穿透场景](#穿透场景) |
 | `nat+fallback/off` | 同上＋A–R Native TCP 退路 | 穿透后切到 TCP 退路 | 同一 socket、circuit 与路径跨切换保留 | `20261022T151255Z-44bbec33` | [穿透场景](#穿透场景) |
 | `nat/resolved` | 同 `nat/off` | 穿透＋resolved | 两场景全部检查 | `20261022T151259Z-757716fd` | [穿透场景](#穿透场景) |
@@ -101,7 +101,8 @@
 | 镜像 | 断言 |
 | --- | --- |
 | Debian trixie（systemd 257；`udp/*` 行） | 兜底 `~.` 计划安装成功，`local_domains` 恰为该域与外来链路的序号和名称；外来链路加 `~a.corp.example`（计划的 split 路由之下）或 `~.` 时观察以 `foreign_domain` 失败，移除后重证并重装；无兜底的计划在外来 `~.` 下安装、观察成功且不列出；down 后 resolved 设置与开始时一致 |
-| Ubuntu 22.04（systemd 249.11；`jammy/resolv-conf`） | 安装以 `Unsupported`／`probe` 失败，`expected` 写明 `systemd-resolved 253 or later, or stable 249.15…`，`actual` 以 `no query reached 127.0.0.1:` 开头；锚点设置还原，down 后 resolved 设置一致 |
+| Ubuntu 22.04（systemd 249.11；`jammy/resolv-conf`） | 安装以 `Unsupported`／`probe` 失败，`expected` 写明 `systemd-resolved 253 or later, or stable 249.15…` 与 `see install.md: Ubuntu 22.04`，`actual` 以 `no query reached 127.0.0.1:` 开头；锚点设置还原，down 后 resolved 设置一致 |
+| Ubuntu 22.04，真实 daemon（`dns-resolved-cadence`，`an_unusable_resolved_is_probed_with_a_growing_pause`） | 内嵌 Server、`tun` 模式、默认 resolved 后端接入后，Status 始终非 `blocked`，每次探测失败时为 `retrying`／`dns` 且详情含版本要求与指引；自首次失败起 60 秒内探测失败（每次一轮锚点设置改写）4–6 次，前 5 个间隔逐个增长 ≥ 0.5 秒，第 4 次失败时 `retryAt` 至少在 7.5 秒后；down 后 resolved 设置一致。门槛 6＝暂停 1、2、4、8、16 秒各加 5 秒探测，第 6 次约在 56 秒；固定 1 秒时约 11 次 |
 
 `jammy/resolv-conf` 的 DNS 镜像由 `dev/dns-fixture/jammy.lock.json`（`ubuntu:22.04` digest、Ubuntu snapshot `20261020T000000Z` 的 jammy／jammy-security／jammy-updates 索引）离线构建，其余与 `udp/resolv-conf` 相同；它验收的是 [Ubuntu 22.04](/v2/install#ubuntu-2204) 的显式文件代理路径。门槛来源：D4（resolved 249 收不到锚点 loopback 服务器的查询，[真机证据](#dns2-hosts)）与 D5（其他链路的搜索域使兜底计划整体挂起）。
 

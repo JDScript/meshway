@@ -262,9 +262,12 @@ impl View {
                 )
             {
                 phase = Phase::Running;
-            } else if data_plane == DataPlane::Failed && phase == Phase::ControlReady {
-                // A failure its owner retries is `retrying`; `blocked` comes
-                // from an owner's proven inconsistency alone (below).
+            } else if phase == Phase::ControlReady
+                && (data_plane == DataPlane::Failed || !network.apply.is_healthy())
+            {
+                // A failure its owner retries is `retrying`, also before the
+                // first installation (the worker retries it); `blocked`
+                // comes from an owner's proven inconsistency alone (below).
                 phase = Phase::Retrying;
             } else if !ready && phase == Phase::ControlReady {
                 phase = Phase::Synchronizing;
@@ -411,6 +414,10 @@ impl View {
         let network_error = network_failure
             .filter(|_| active)
             .map(|(problem, detail)| meshway_protocol::ipc::NetworkError { problem, detail });
+        let dns_retry = (report.problem.is_none()
+            && network_error.as_ref().map(|e| e.problem) == Some(Problem::Dns))
+        .then(|| dns_retry_at(&network))
+        .flatten();
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
@@ -472,8 +479,11 @@ impl View {
                     .and_then(|failure| failure.detail.clone()),
             },
             network_error: network_error.filter(|_| report.problem.is_some()),
+            // Control's next attempt; while the packet plane's DNS owner
+            // is the cause, its next re-proof (growing for a repeated
+            // probe failure).
             retry_at: if current && desired.up {
-                report.retry_at
+                report.retry_at.or(dns_retry)
             } else {
                 None
             },
@@ -624,6 +634,18 @@ fn owners(network: &super::network::Report) -> Vec<Owned> {
         });
     }
     owners
+}
+
+/// When the faulted DNS owner re-proves itself next, while it retries.
+fn dns_retry_at(network: &super::network::Report) -> Option<DateTime<Utc>> {
+    let guard = network.dns_guard.as_ref()?;
+    let fact = guard.borrow();
+    match (&fact.fault, &fact.health) {
+        (Some(_), meshway_model::recovery::Health::Retrying(retrying)) => {
+            Some(meshway_model::recovery::wall(retrying.retry_at).into())
+        }
+        _ => None,
+    }
 }
 
 /// The cause Status shows among `owners`: kernel ownership first (every
@@ -951,6 +973,66 @@ mod tests {
             "{:?}",
             status.last_error_detail
         );
+    }
+
+    /// DNS-2b (red before: `synchronizing`, as kr showed): a first
+    /// installation that failed and that the worker retries (here the
+    /// resolved probe) is `retrying` with its cause, not `synchronizing`.
+    #[test]
+    fn a_retried_first_installation_is_retrying_not_synchronizing() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Preparing;
+        network.problem = Some(Problem::Dns);
+        network.problem_detail = Some("DNS probe check failed".into());
+        let (view, reported, network, _desired) = view(network);
+        reported.send_modify(|report| report.phase = Phase::ControlReady);
+        assert_eq!(view.status().phase, Phase::Synchronizing, "nothing retried");
+        network.send_modify(|report| report.apply = retrying("Dns"));
+        let status = view.status();
+        assert_eq!(
+            (status.phase, status.data_plane, status.last_error),
+            (Phase::Retrying, DataPlane::Preparing, Some(Problem::Dns))
+        );
+    }
+
+    /// DNS-2b: while the DNS owner retries the plane's cause, `retryAt` is
+    /// its next re-proof (the grown pause of a repeated probe failure);
+    /// null once it re-proved itself.
+    #[test]
+    fn retry_at_is_the_dns_owners_next_reproof_while_it_is_the_cause() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Ready;
+        network.completion = Some(Ok(()));
+        network.content = Some(std::sync::Arc::new(meshway_test_server::single_node(
+            "a", None,
+        )));
+        let (fact, guard) = watch::channel(super::super::network::DnsFact::default());
+        network.dns_guard = Some(guard);
+        let (view, _reported, _network, _desired) = view(network);
+        assert_eq!(view.status().retry_at, None);
+        let next = std::time::Instant::now() + std::time::Duration::from_secs(32);
+        fact.send_modify(|fact| {
+            fact.fault = Some(meshway_dns::SystemDnsError::Unsupported);
+            fact.detail = Some(meshway_dns::SystemDnsFailure::new(
+                meshway_dns::SystemDnsError::Unsupported,
+                "probe",
+            ));
+            fact.health =
+                meshway_model::recovery::Health::Retrying(meshway_model::recovery::Retrying {
+                    check: "probe",
+                    reason: "no query reached 127.0.0.1:41000 within 5 s".into(),
+                    since: std::time::Instant::now(),
+                    attempts: 6,
+                    retry_at: next,
+                });
+        });
+        let status = view.status();
+        assert_eq!(status.last_error, Some(Problem::Dns));
+        let retry_at = status.retry_at.expect("the DNS owner's next re-proof");
+        let ahead = (retry_at - Utc::now()).num_milliseconds();
+        assert!((31_000..=32_000).contains(&ahead), "{ahead}");
+        fact.send_modify(|fact| fact.health = meshway_model::recovery::Health::Healthy);
+        assert_eq!(view.status().retry_at, None);
     }
 
     /// D5: the DNS owner's coexisting local domains are Status's, live, and

@@ -17,15 +17,24 @@ const RECOVERY_INTERVAL: Duration = Duration::from_secs(1);
 /// A proven inconsistency is read again this often (the re-proof refuses,
 /// never overwrites, settings it did not install).
 const REREAD_PROVEN: Duration = Duration::from_secs(60);
+/// A failed installation probe (`SystemDnsFailure::repeats`) waits at most
+/// this long before the next re-proof and installation.
+const REPEATED_PROBE_CAP: Duration = Duration::from_secs(60);
 
 /// The DNS owner's recovery (owner #9): unknown failures re-proved every
-/// second without a total limit, proven ones every 60 s.
+/// second without a total limit, proven ones every 60 s. A repeated probe
+/// failure (each re-proof holds, each installation fails the same way)
+/// waits 1 s, 2 s, 4 s … up to 60 s until an installation succeeds.
 fn recovery() -> Recovery {
     Recovery::new(meshway_model::recovery::Policy {
         backoff: meshway_model::Backoff::new(RECOVERY_INTERVAL, RECOVERY_INTERVAL),
         horizon: meshway_model::recovery::Horizon::Unbounded,
         reread_blocked: Some(REREAD_PROVEN),
     })
+    .repeating(meshway_model::Backoff::new(
+        RECOVERY_INTERVAL,
+        REPEATED_PROBE_CAP,
+    ))
 }
 
 /// The first wait before preparing a failed owner again: the worker's
@@ -173,12 +182,19 @@ impl Faults {
     /// owner re-proves itself, every second, or every 60 s once proven.
     fn fail(&mut self, failure: SystemDnsFailure) {
         let now = tokio::time::Instant::now();
-        let observation = if failure.proven() {
-            Observation::proven(failure.check, &failure)
+        let step = if failure.repeats() {
+            self.recovery
+                .observe_repeated(failure.check, &failure, now.into_std())
+        } else if failure.proven() {
+            self.recovery
+                .observe(Observation::proven(failure.check, &failure), now.into_std())
         } else {
-            Observation::unknown(failure.check, &failure)
+            self.recovery.observe(
+                Observation::unknown(failure.check, &failure),
+                now.into_std(),
+            )
         };
-        self.recovery_at = match self.recovery.observe(observation, now.into_std()) {
+        self.recovery_at = match step {
             Step::RetryAt(at) | Step::Block(Some(at)) => tokio::time::Instant::from_std(at),
             _ => now + RECOVERY_INTERVAL,
         };
@@ -193,6 +209,11 @@ impl Faults {
             fact.health = health;
             fact.local_domains.clear();
         });
+    }
+    /// A hold or installation succeeded: a repeated probe failure pauses
+    /// like the first again.
+    fn succeeded(&mut self) {
+        self.recovery.succeeded();
     }
     /// Publish the owner's coexisting local domains after a success; a
     /// send only when they changed.
@@ -287,6 +308,7 @@ impl Actor {
                                 }
                             };
                             if result.is_ok() {
+                                faults.succeeded();
                                 faults.local(&runtime);
                             }
                             if let Err(error) = result {
@@ -306,6 +328,7 @@ impl Actor {
                         Some(Command::Install(desired, reply)) => {
                             let result = runtime.install(*desired).await;
                             if result.is_ok() {
+                                faults.succeeded();
                                 faults.local(&runtime);
                             }
                             match result {

@@ -4,6 +4,8 @@ mod cleanup;
 mod leave;
 #[cfg(not(target_os = "linux"))]
 mod network;
+#[cfg(target_os = "linux")]
+mod probe;
 mod recovery;
 mod support;
 use meshway_control_client::{

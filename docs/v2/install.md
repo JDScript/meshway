@@ -130,7 +130,7 @@ ReadWritePaths=/etc
 
 ### Ubuntu 22.04 {#ubuntu-2204}
 
-Ubuntu 22.04 的 systemd-resolved 249.11 把发往链路 DNS 服务器的查询绑在该链路上发出，锚点链路的 loopback 服务器（Meshway 的 bind）收不到，resolved 后端不可用：Status 为 `lastError: dns`，`lastErrorDetail` 为 `DNS probe check failed (system DNS backend is unsupported): expected resolved sends a nonce query to the owned link's loopback DNS server over UDP then TCP (systemd-resolved 253 or later, or stable 249.15, 250.10, 251.11, 252.5 or later); found no query reached 127.0.0.1:<port> within 5 s; systemd 249.11-…`。daemon 不会自动改用其他后端，按下列步骤显式选择文件代理：
+Ubuntu 22.04 的 systemd-resolved 249.11 把发往链路 DNS 服务器的查询绑在该链路上发出，锚点链路的 loopback 服务器（Meshway 的 bind）收不到，resolved 后端不可用：Status 为 `lastError: dns`，`lastErrorDetail` 为 `DNS probe check failed (system DNS backend is unsupported): expected resolved sends a nonce query to the owned link's loopback DNS server over UDP then TCP (systemd-resolved 253 or later, or stable 249.15, 250.10, 251.11, 252.5 or later); found no query reached 127.0.0.1:<port> within 5 s; systemd 249.11-…`（`expected` 末尾带 `see install.md: Ubuntu 22.04`），phase 为 `retrying`；daemon 每次重试都重新探测，间隔 1 秒起翻倍到 60 秒，不会自动改用其他后端。按下列步骤显式选择文件代理：
 
 ```sh
 sudo meshway down                      # 结束 resolved 后端的预约与锚点

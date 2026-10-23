@@ -225,7 +225,7 @@ IPC 13 的公开运行状态（`meshway status --json` 原样输出）：
 | `authenticated`／`instance` | 当前有效会话与仍持有的有效实例（`instanceId`／`generation`／`expiresAt`）；instance 只绑定 State 与回执，不是数据面期限（数据面只受 `netmap.expiresAt` 约束）。停止、fencing、身份失效、session／instance 截止使其失效 |
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
-| `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply。包平面因组件失败撤回（含正在撤回、重新准备）期间必有值，为最早的原因（见[撤回期间的原因](#ownership-end)） |
+| `lastError`／`retryAt` | 类型化故障与重试时点（`retryAt` 为 Control 的下一次尝试；包平面因 DNS owner 撤回、其正在重试时为 owner 的下一次重证）；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply。包平面因组件失败撤回（含正在撤回、重新准备）期间必有值，为最早的原因（见[撤回期间的原因](#ownership-end)） |
 | `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前有三类。`lastError: dns` 时为 DNS owner 失败的那一项检查（`DNS <check> check failed (<错误>): expected …; found … [<来源>]`，例如 `DNS resolv_conf_mode check failed (system DNS backend is unsupported): expected stub; found foreign [D-Bus :1.1 /org/freedesktop/resolve1 org.freedesktop.resolve1.Manager.ResolvConfMode]`；检查项与恢复边界见[系统 DNS 健康检查与恢复](/v2/node/dataplane#dns-health)），自动恢复后清空。`lastError: transport` 时为暂未绑定的 listener：bind 错误、占用该端口的进程（本 daemon 自己标注 `this daemon`）、端口在本机临时端口范围内时的提示，以 `retrying` 结尾（例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98); port 35000 is inside this host's ephemeral port range 32768-60999; retrying`，行为见[连接获取 · listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)）。`lastError: underlay` 且新网络的地址落入 Mesh 池时为 `meshPoolOverlap: <接口> address <地址> is inside a Mesh address pool`，地址离开、自动重装后清空（[漫游](/v2/node/connectivity#roaming)）；宿主内核归属结束时为 `kernelOwnership: unavailable (<check>); proving ownership again`／`kernelOwnership: conflict (<check>); stays failed closed, read again every 60 s`（[归属的结束与重证](#ownership-end)），重证成功后清空；其他情况为 null。只描述 `lastError` 这一项：`lastError` 为 Control 的问题时为 null，包平面自己的失败另见 `networkError`。DNS owner 的 hold／install 失败在回答网络 worker 之前写入详情，成功的 hold 或 install 清空它（连同此前的故障）。daemon 日志的同一告警带相同文本 |
 | `networkError` | 可省略：`lastError` 是 Control 的问题（例如 `credentials`）而包平面同时失败时，包平面自己的 `problem` 与 `detail`（同 `lastErrorDetail` 的文本，没有时为 null）；否则省略。`meshway status` 在 Problem 行后显示 `Network` 行 |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
@@ -263,7 +263,7 @@ IPC 13 的公开运行状态（`meshway status --json` 原样输出）：
 | `synchronizing` | 正在同步当前运行目标 |
 | `controlReady` | 控制流程就绪；结合 `dataPlane` 判断安装 |
 | `running` | 当前目标的数据面已就绪 |
-| `retrying` | 故障后等待有界重试；包平面因组件故障撤回（`dataPlane: failed`）而没有任何 owner 处于已证实阻断时一律为 `retrying`：DNS 故障（owner 每秒重证）、宿主内核归属的暂态阻断（`*_unavailable`，按退避重证）、Mesh 池重叠（地址离开即恢复）、worker 对安装失败的重试（5 秒起翻倍、上限 60 秒，无总期限，见[恢复语义](#recovery)） |
+| `retrying` | 故障后等待有界重试；包平面因组件故障撤回（`dataPlane: failed`），或首次安装失败而由 worker 重试（`dataPlane: preparing`），而没有任何 owner 处于已证实阻断时一律为 `retrying`：DNS 故障（owner 每秒重证）、宿主内核归属的暂态阻断（`*_unavailable`，按退避重证）、Mesh 池重叠（地址离开即恢复）、worker 对安装失败的重试（5 秒起翻倍、上限 60 秒，无总期限，见[恢复语义](#recovery)） |
 | `blocked` | 当且仅当 Control 的持久问题（身份失权、存储、契约等），或某个 owner 处于已证实的阻断：宿主内核归属的持久冲突（`kernelOwnership: conflict`）、DNS 的外来设置等（[DNS 健康检查](/v2/node/dataplane#dns-health)右栏）、控制中继路径上的外来 socket／`EACCES`、需要操作员的 listener（`EACCES`）、被确定拒绝的 netmap（校验，下一份 offer 到达即解除）。owner 证据消失时自动解除，见[恢复语义](#recovery) |
 | `stopping` | 正在停止与清理 |
 | `leaving` | 持久注销意图等待 Server 确认：数据面已停，按 1–15 秒退避重试 `leave`，期间不重新接入（见[自助注销](/v2/configuration-reference/nodes#node-self-leave)） |
@@ -434,7 +434,7 @@ Node 上每个可能 fail closed 的 owner 用同一个状态机 `meshway_model:
 | 宿主内核归属（Host） | 1 秒起翻倍、间隔至多 8 秒重证，无总期限 | `blocked`，每 60 秒只读重证 |
 | egress capture、出口审计与变更、自有对象重装的读取（有上级 owner） | 1 秒起翻倍、上限 60 秒；自首次失败满 30 秒交给宿主内核归属，作为暂态结束（从不直接 `blocked`） | egress：结束宿主内核归属为冲突；出口：读到外来对象（不只是自有对象缺失）时角色保持撤回，能力报 `ownershipConflict`，每 60 秒只读重读，停止角色的清理已移除其全部对象（外来改动已不在）后才重装（[Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)） |
 | 出口清理、MSS clamp 替换、控制中继、listener（U1） | 1 秒起翻倍、上限 60 秒，无总期限 | 中继外来 socket／`EACCES`、listener `EACCES`：`blocked`，每 60 秒重试 |
-| DNS owner | 每秒重证（固定，守住 resolved 重启 5 秒内恢复），无总期限；系统一侧的 hold／install 失败同样是故障，由 owner 重证 | `blocked`，每 60 秒重证（重证拒绝而不覆盖外来设置） |
+| DNS owner | 每秒重证（固定，守住 resolved 重启 5 秒内恢复），无总期限；系统一侧的 hold／install 失败同样是故障，由 owner 重证。例外：安装探测发现 resolved 收不到锚点 bind 的查询（`probe`／`Unsupported`，`SystemDnsFailure::repeats`）时，重证本身不跑探测而总会成功、下一次安装又同样失败；这一原因连续失败时重证前的等待按 `Recovery::observe_repeated` 1、2、4…秒翻倍、上限 60 秒（加上每次 5 秒的探测，前 60 秒至多 6 次改写锚点设置，此前约 11 次），一次成功的 hold／install 即复位；其他原因不变、并结束这一计数。期间 Status 为 `retrying`／`dns`，`retryAt` 为下一次重证 | `blocked`，每 60 秒重证（重证拒绝而不覆盖外来设置） |
 | DNS owner 的准备（尚无 owner 运行时） | 与运行中同一判定（`SystemDnsFailure::proven`），发布同一份 `Health`；网络 worker 按其节奏重新准备，5 秒起翻倍、上限 60 秒 | `blocked`（如另一 owner 的预约 `owner_record`），每 60 秒重新准备 |
 | 网络 worker 的安装 | 5 秒起翻倍、上限 60 秒，无总期限 | 校验、数据面拒绝：`blocked`，下一份 offer 到达即解除 |
 | Mesh 池重叠 | 只有暂态：地址离开即重装 | — |

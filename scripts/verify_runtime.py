@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,9 @@ UNDERLAY_NETMAP_BINARY = "meshway-underlay-netmap-tests"
 # (DNS-2): installs beside foreign domains, or names its systemd requirement.
 RESOLVED_BACKEND_TEST = ("linux::kernel::tests::resolved::"
                          "resolved_backend_installs_beside_foreign_domains_or_names_its_systemd_requirement")
+# The real daemon on a resolved that never delivers the probe (jammy only,
+# DNS-2b): `retrying · dns`, at most 6 probes (anchor rewrites) in 60 s.
+RESOLVED_CADENCE_TEST = "probe::an_unusable_resolved_is_probed_with_a_growing_pause"
 # DNS OS images: the pinned lock of each, and what resolved does on it.
 DNS_OS = {"trixie": ("dev/dns-fixture/assets.lock.json", "installs"),
           "jammy": ("dev/dns-fixture/jammy.lock.json", "unsupported")}
@@ -265,7 +269,7 @@ def main():
     report = report_directory("runtime", args.report_dir)
     identity = report.name
     for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES, *RELAY_ROLES,
-                  "underlay-peer", "bootstrap", "dns-resolved-backend", "daemon-cleanup", "daemon-owner-conflict", "restart", *KERNEL_TESTS, *PLATFORM_BINARIES):
+                  "underlay-peer", "bootstrap", "dns-resolved-backend", "dns-resolved-cadence", "daemon-cleanup", "daemon-owner-conflict", "restart", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
     # One source/cache owner per invocation; never leak the lock FD to Cargo,
@@ -810,6 +814,22 @@ def main():
             write_json(metadata, manifest)
             if not passed:
                 raise RuntimeError("resolved backend conformance on the DNS image failed")
+        if args.dns_backend != "off" and not args.only and DNS_OS[args.dns_os][1] == "unsupported":
+            role = "dns-resolved-cadence"
+            create(role, ["--ignored", "--exact", RESOLVED_CADENCE_TEST, "--nocapture", "--test-threads=1"],
+                   tun=True, executable=LIFECYCLE_BINARY, dns_backend="resolved",
+                   environment={"MESHWAY_UNDERLAY_ISOLATED": "1", "MESHWAY_DNS_ISOLATED": "1",
+                                "MESHWAY_TEST_DAEMON_BINARY": "/fixtures/meshwayd"})
+            result = execute(role)
+            log = (report / f"{role}.log").read_text()
+            counted = re.search(r"probes in the first 60 s: (\d+)", log)
+            passed = (not any(result.values()) and counted is not None
+                      and "test result: ok. 1 passed; 0 failed; 0 ignored;" in log)
+            manifest["platformTests"][role] = {"passed": passed, "test": RESOLVED_CADENCE_TEST,
+                                               "probesIn60s": int(counted.group(1)) if counted else None, **result}
+            write_json(metadata, manifest)
+            if not passed:
+                raise RuntimeError("resolved probe retry cadence on the DNS image failed")
         for role in routers:
             start_router(role)
         create("controller", ["controller"], address=addresses["controller"], address6=addresses6["controller"], private=True)

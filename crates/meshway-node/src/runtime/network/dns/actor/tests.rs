@@ -575,3 +575,94 @@ async fn local_domains_follow_successful_observations_and_clear_with_a_fault() {
     .unwrap();
     actor.shutdown(true).await.unwrap();
 }
+
+/// An owner whose installation fails as scripted: `probe` (the resolved
+/// backend's probe found no query reaching the bind), another system
+/// failure, or success. Every re-proof holds.
+struct ScriptedHold {
+    scopes: watch::Sender<Option<meshway_dns::Scope>>,
+    script: Arc<std::sync::Mutex<std::collections::VecDeque<Option<SystemDnsFailure>>>>,
+    last: Option<SystemDnsFailure>,
+}
+impl Owner for ScriptedHold {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>> {
+        self.scopes.clone()
+    }
+    async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
+        self.last = self.script.lock().unwrap().pop_front().unwrap();
+        match &self.last {
+            Some(failure) => Err(failure.error),
+            None => Ok(()),
+        }
+    }
+    async fn install(&mut self, _: Desired) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn shutdown(self, _: bool) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    fn failure(&self) -> Option<SystemDnsFailure> {
+        self.last.clone()
+    }
+}
+
+/// DNS-2b (red before: every failed probe waited the fixed 1 s, so a host
+/// without a usable resolved rewrote the anchor link every ~6 s): repeated
+/// `probe` failures wait 1, 2, 4 … s, capped at 60 s, each re-proof
+/// holding; a successful hold resets the pause; another system failure
+/// keeps the fixed 1 s and ends the count.
+#[tokio::test(start_paused = true)]
+async fn a_repeated_probe_failure_backs_off_to_60_s_and_a_success_resets_it() {
+    let probe = || {
+        SystemDnsFailure::new(SystemDnsError::Unsupported, "probe")
+            .expected("resolved sends a nonce query to the owned link's loopback DNS server")
+            .actual("no query reached 127.0.0.1:41000 within 5 s")
+    };
+    let other = || SystemDnsFailure::new(SystemDnsError::Backend, "resolved_call");
+    let mut script = std::collections::VecDeque::new();
+    script.extend((0..9).map(|_| Some(probe())));
+    script.push_back(None);
+    script.extend((0..2).map(|_| Some(probe())));
+    script.extend((0..2).map(|_| Some(other())));
+    script.push_back(Some(probe()));
+    let script = Arc::new(std::sync::Mutex::new(script));
+    let (scopes, _) = watch::channel(None);
+    let actor = Actor::start(ScriptedHold {
+        scopes,
+        script: script.clone(),
+        last: None,
+    });
+    let netmap = compiled().netmap.as_ref().clone();
+    let mut state = actor.state.clone();
+    let mut waits = Vec::new();
+    while !script.lock().unwrap().is_empty() {
+        let failed = actor.hold(&netmap).await.is_err();
+        if !failed {
+            continue;
+        }
+        let failed_at = tokio::time::Instant::now();
+        let Health::Retrying(retrying) = state.borrow().health.clone() else {
+            panic!("a failed hold retries");
+        };
+        waits.push((retrying.retry_at - failed_at.into_std()).as_secs());
+        // The plane holds again once the owner re-proved itself.
+        tokio::time::timeout(
+            Duration::from_secs(120),
+            state.wait_for(|fact| fact.fault.is_some() && fact.health.is_healthy()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            tokio::time::Instant::now() - failed_at >= Duration::from_secs(waits[waits.len() - 1])
+        );
+    }
+    assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60, 60, 1, 2, 1, 1, 1]);
+    actor.shutdown(true).await.unwrap();
+}

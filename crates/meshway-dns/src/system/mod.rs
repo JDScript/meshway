@@ -166,6 +166,15 @@ impl SystemDnsFailure {
                 _ => false,
             }
     }
+    /// Whether the backend's installation probe found the system DNS
+    /// unable to serve this backend (`probe`, `Unsupported`): the owner's
+    /// re-proof does not run the probe, so it holds and the next install
+    /// fails the same way. Neither the timeout nor a version proves the host
+    /// unsupported for good, so it stays unknown; its owner retries it with
+    /// a growing pause (`Recovery::observe_repeated`).
+    pub fn repeats(&self) -> bool {
+        self.error == SystemDnsError::Unsupported && self.check == "probe"
+    }
     /// Whether the failure is the system's (an installation, a read or the
     /// backend), which the owner recovers from; otherwise the netmap's plan
     /// or the local settings were refused, and only another netmap changes
