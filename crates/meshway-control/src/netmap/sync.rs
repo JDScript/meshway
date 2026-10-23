@@ -399,7 +399,14 @@ pub async fn sync_loop_with(
                         _ = stop.cancelled() => return Ok(()),
                         result = crate::shared::authenticate(control) => result,
                     };
-                    if let Err(error) = authenticated {
+                    // Another task's authentication superseded this one
+                    // while its request ran (its context changed): nothing
+                    // failed, the next pass uses that session.
+                    if let Err(Error::Pending) = authenticated
+                        && control.lock().await.leaving().is_none()
+                    {
+                        wait = Some(BACKOFF_MIN);
+                    } else if let Err(error) = authenticated {
                         failed(&error);
                         let driver = control.lock().await;
                         if driver.netmap().is_none() {

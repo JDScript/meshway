@@ -350,6 +350,63 @@ async fn a_suspend_interrupted_with_its_step_pending_is_reproved_and_installs_ag
     host.down().await.unwrap();
 }
 
+/// U2b: a suspend whose opening read-back fails (a stalled host) before any
+/// journal step still closes the Mesh TUN, and the kernel removes its routes
+/// with it. The term ends as unavailable; the re-proof's new term reconciles
+/// the journal's TUN and route records from the kernel and the same content
+/// installs again. Before: the term held with a journal recording a route
+/// the kernel no longer had, and every later install read that back as a
+/// routing protection conflict ("resources kept"), retried forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "isolated Linux NET_ADMIN namespace with TUN and nft required"]
+async fn a_suspend_whose_read_fails_after_closing_the_tun_is_reproved_and_installs_again() {
+    use crate::OwnershipEnd;
+    use crate::linux::kernel::tool::command::faults::FAILING_SUSPEND_READS;
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("private"), "test.lock").unwrap());
+    let mut host = Host::open(directory.clone(), Options::default())
+        .await
+        .unwrap();
+    let desired = source_desired();
+    host.install(desired.clone()).await.unwrap();
+    let installation = host.kernel.journal.installation.clone();
+    assert!(!host.kernel.journal.routes.is_empty());
+
+    FAILING_SUSPEND_READS.store(1, std::sync::atomic::Ordering::SeqCst);
+    let error = host.suspend().await.unwrap_err();
+    println!("U2B_SUSPEND_FAILED={error}");
+    assert!(host.kernel.journal.pending.is_none());
+    assert!(host.tun().is_none());
+    assert_eq!(
+        host.ownership_ended(),
+        Some(OwnershipEnd::Unavailable {
+            check: "suspend_unavailable"
+        }),
+        "a closed TUN the journal still records ends the term; install after it: {:?}",
+        host.install(desired.clone()).await.err()
+    );
+    let due = host
+        .recovery_at()
+        .expect("an unavailable end is proved again");
+    assert!(due <= std::time::Instant::now() + std::time::Duration::from_secs(2));
+    let started = std::time::Instant::now();
+    host.recover().await.unwrap();
+    assert_eq!(host.kernel.journal.installation, installation);
+    assert!(host.kernel.journal.routes.is_empty() && host.kernel.journal.tun.is_none());
+    host.install(desired).await.unwrap();
+    assert!(host.tun().is_some());
+    host.kernel.shared.check().unwrap();
+    println!(
+        "U2B_REPROVED=journal-reconciled,content-reinstalled,elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    host.down().await.unwrap();
+}
+
 /// X15: a monitor drain that misses its 3 s deadline is an unavailable end
 /// with its own cause (re-proved like any other), not a conflict; a
 /// read-back that differs still is one. The stopped request connection's

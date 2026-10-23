@@ -116,7 +116,14 @@ impl Guard {
             return ended;
         }
         let identity = &self.record.identity;
-        SystemDnsFailure::new(SystemDnsError::Conflict, mismatch.check)
+        // A dump that failed read nothing back: it proves nothing about the
+        // anchor (`Backend`, re-proved); only a read-back that differs is one.
+        let error = if mismatch.error.judgement() == crate::Judgement::Unknown {
+            SystemDnsError::Backend
+        } else {
+            SystemDnsError::Conflict
+        };
+        SystemDnsFailure::new(error, mismatch.check)
             .expected(format!(
                 "dummy {} index {} up with only {}/32 (alias {}), no other owner of that address",
                 identity.name, identity.index, identity.address, self.record.alias

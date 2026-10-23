@@ -56,6 +56,7 @@ PATHS = {
     "reproofConflict": "Kernel ownership re-proof read back a conflict; ownership stays ended, read again every 60 s",
     "interruptedStep": "Kernel change interrupted with its journal step pending; kernel ownership ends",
     "stepCompleted": "Interrupted Underlay journal step completed from the kernel's state",
+    "tunClosedBySuspension": "Mesh TUN closed by a failed suspension; kernel ownership ends",
     "exitAuditUnavailable": "Exit role audit unavailable; retrying, the role and its flows kept",
     "exitAuditVerified": "Exit role audit verified again; ownership kept",
     "exitChangeRetry": "Exit role change failed; read back, retrying",

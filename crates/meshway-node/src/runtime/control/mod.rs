@@ -1130,6 +1130,13 @@ async fn maintain(
             work.retry_at = Some(now + Duration::from_secs(1));
             Ok(())
         }
+        // The sync loop's own authentication superseded this one while its
+        // request ran: no failure, the next pass reuses that session.
+        Err(("authenticate", Error::Pending)) if control.leaving().is_none() => {
+            tracing::debug!("Node authentication superseded by another; retrying");
+            work.retry_at = Some(now + Duration::from_secs(1));
+            Ok(())
+        }
         Err((operation, error)) => {
             let failure = failure::at(operation, error, operation == "authenticate");
             offer(control, network.as_deref());

@@ -338,6 +338,22 @@ impl Kernel {
                 .map_err(|_| Error::Worker)?
                 .retiring_tun = None;
         }
+        if let Err(error) = result.as_ref().and(drained.as_ref())
+            && (self.journal.tun.is_some() || !self.journal.routes.is_empty())
+        {
+            // The owned TUN is closed regardless and the kernel removed its
+            // routes with it, but nothing read that back: the journal's TUN
+            // and route records are no longer what the kernel holds. This
+            // term ends (unavailable unless the failure read back a
+            // difference); the re-proof's new term reconciles them from the
+            // kernel as a process start does (`open_term`). Never a journal
+            // every later installation of this term reads as a conflict.
+            tracing::warn!(
+                %error,
+                "Mesh TUN closed by a failed suspension; kernel ownership ends"
+            );
+            self.end_after("suspend", error);
+        }
         result?;
         drained?;
         self.journal.tun = None;
@@ -356,6 +372,11 @@ impl Kernel {
 
     async fn remove_live(&mut self) -> Result<()> {
         self.ready().await?;
+        #[cfg(test)]
+        if super::tool::command::faults::take(&super::tool::command::faults::FAILING_SUSPEND_READS)
+        {
+            return Err(Error::Netlink);
+        }
         self.verify().await?;
         while let Some(record) = self.journal.routes.last().cloned() {
             self.verify().await?;

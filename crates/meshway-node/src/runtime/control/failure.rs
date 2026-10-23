@@ -7,7 +7,7 @@ use std::time::Duration;
 
 pub(super) struct Failure {
     pub problem: Problem,
-    /// Why, for a local storage failure (no remote text or secret): Status
+    /// Why, for a local failure (no remote text or secret): Status
     /// `lastErrorDetail`.
     pub detail: Option<String>,
     pub retry: bool,
@@ -79,7 +79,10 @@ fn judged(
         Error::Endpoint => Problem::Configuration,
         _ => Problem::Contract,
     };
-    let detail = (problem == Problem::Storage).then(|| error.to_string());
+    // A local failure names its own cause (no remote text or secret): a
+    // Server answer's is in its problem code and request ID.
+    let detail =
+        (!matches!(error, Error::Server(_) | Error::ReceiptRejected(_))).then(|| error.to_string());
     tracing::warn!(
         operation,
         authenticating,
@@ -275,6 +278,24 @@ mod tests {
             let opened = failure(error, true);
             assert!(!opened.retry && opened.detail.is_some());
         }
+    }
+
+    /// U2b: a local failure names its cause in Status (no remote text): a
+    /// superseded authentication was a bare `Apply`, a local contract
+    /// failure a bare `Contract`. A Server answer's cause stays its code.
+    #[test]
+    fn a_local_failure_names_its_cause_and_a_server_answer_does_not() {
+        for error in [Error::Pending, Error::Contract, Error::Lifecycle] {
+            let text = error.to_string();
+            let failed = at("authenticate", error, true);
+            assert_eq!(failed.detail.as_deref(), Some(text.as_str()));
+        }
+        let failed = at(
+            "authenticate",
+            Error::Server(ClientError::Network { status: None }),
+            true,
+        );
+        assert_eq!(failed.detail, None);
     }
 
     #[test]

@@ -61,6 +61,10 @@ CASES = {
     # state and the same content installs again.
     "pending": ("meshway-underlay-kernel-tests",
                 "linux::kernel::tests::reproof::a_suspend_interrupted_with_its_step_pending_is_reproved_and_installs_again"),
+    # U2b: a suspend whose read fails still closes the TUN; the term ends and
+    # the re-proof reconciles the journal's TUN and route records.
+    "pending-tun": ("meshway-underlay-kernel-tests",
+                    "linux::kernel::tests::reproof::a_suspend_whose_read_fails_after_closing_the_tun_is_reproved_and_installs_again"),
     "changes-egress": ("meshway-underlay-kernel-tests",
                        "linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed"),
     "nft": ("meshway-underlay-kernel-tests",

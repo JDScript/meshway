@@ -354,7 +354,7 @@ DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒�
 | `namespace` | 进程仍在预约记录的 network namespace（boot、device／inode、cookie） | `/proc/self/ns/net` |
 | `owner_record`／`owner_fenced` | 预约仍属于本 owner；此前的失败已隔离本 owner，须先重证 | 预约文件 |
 | `anchor_ended` | Underlay 锚点仍有效：owner 删除了锚点，或宿主内核归属已结束（`actual` 区分暂态阻断与冲突；具体原因见此前那条 WARN） | Kernel DNS anchor |
-| `anchor_netlink` | 锚点读取所需的 netlink dump 完成（失败、5 秒超时或超出对象上限） | `rtnetlink RTM_GETLINK`／`RTM_GETADDR`／`RTM_GETROUTE` |
+| `anchor_netlink` | 锚点读取所需的 netlink dump 完成（失败或 5 秒超时为 `Backend`，未读回任何东西、可自动恢复；超出对象上限） | `rtnetlink RTM_GETLINK`／`RTM_GETADDR`／`RTM_GETROUTE` |
 | `anchor_link`／`anchor_address`／`anchor_collision`／`anchor_namespace`／`anchor_identity` | 锚点链路、唯一地址、无其他持有该地址的地址或路由、所在 namespace、身份与记录一致 | 对应 dump |
 | `resolved_owner`／`resolved_process`／`resolved_namespace` | `org.freedesktop.resolve1` 有 bus owner，且在本 namespace 中运行 | D-Bus `GetNameOwner`／`GetConnectionUnixProcessID`、`/proc/<pid>/ns/net` |
 | `resolv_conf_mode`／`stub_listener` | resolved 报告 `ResolvConfMode=stub`、`DNSStubListener=yes`（后端不支持，error 为 `Unsupported`） | resolve1 Manager 属性 |

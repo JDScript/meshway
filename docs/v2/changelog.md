@@ -57,6 +57,11 @@ CM-1 connectivity Manager 现场问题（`cm1/manager-receive`）：wire、IPC 1
 
 验证：`a_full_event_queue_keeps_business_frames_in_the_socket_until_the_consumer_makes_room` 在旧代码上失败（128 帧只送达 63），修复后通过；Planck L3 `manager-direct` 前后对照见[CM-1 接收背压](/v2/node/performance#cm1-receive-backpressure)（2 CPU：重传 289–349 → 0，B 的 `event_full` 638–983 → 0；B 0.5 CPU、30 ms RTT：661 → 773 Mbit/s，重传 495–617 → 0）。Planck 25 行矩阵 `20261023T130428Z-5670a96b`（`776436e6`，并行 4，启动 load 7–33）18 行通过，其余 7 行（`packet`、`udp/off`、`nat/off`、`nat+fallback/off`、`nat/resolved`、`nat/relay`、`exit6/off`）失败在环境：`docker network create` 失败、underlay 内核测试的 `underlay-peer` 120 秒期限、`daemonCleanupTest`；7 行在 `bf9d1d90` 复跑 `20261023T135547Z-57308b5c` 全部通过（此后只改测试）；Planck `mise run --jobs 1 check` 在 `da68eef6` 通过。证据 `.meshway/validation/cm1/`。
 
+U2b 同族的另外两种形态（`u2b/read-failure-not-conflict`）：wire、IPC 13、`compilerVersion`、Server schema 与 HTTP 契约均不变，无新 flag。
+
+- 修复（不变量：一次失败的读取不能证明归属已变，结果未读回的 journal 记录由其 owner 按内核现状重证；owner：Host 内核归属——`Kernel::suspend` 结束本期，`open_term` 重建记录）：`meshway-vm` 在 DNS 撤回中的 suspend 开头读取失败后，Mesh TUN 照常关闭、内核随之删除其路由，base journal 却仍记录 TUN 与路由且本期不结束；此后每次安装把"journal 有、内核无"的路由读成冲突（`kernel ownership or routing protection conflict; resources kept`，每 5–10 秒、数小时，`lastErrorDetail` 为 null）。现在这样的 suspend 失败以 `suspend_unavailable` 结束本期，重证按内核现状重建记录后以同一 netmap 重装。DNS 锚点 dump 失败（`anchor_netlink`）的 `error` 改为 `Backend`（判定本已为未知；此前日志标 `Conflict`，并非持久冲突的来源）。
+- 修复（不变量：被另一操作替换的请求什么也没改变、不是失败；owner：Control 会话——sync loop 与 Node 维护周期）：两者在 Server 不可达后并发重新认证时，上下文被对方替换的一方得到 `Pending`：sync loop 此前把它发布为 `syncError: contract`（`Node sync failed; retrying {error: Contract}`），维护周期发布 `Problem::Apply`；现在两者都只在 1 秒后用对方的会话继续。本机失败的 `lastErrorDetail` 给出 Control 自己的原因（不含 Server 原文）。nyc 那次 `Credentials` 是真实的：维护周期换了 instance，同一时刻在途的 sync 仍属旧 instance，下一次 sync 即正常。
+
 ## v0.1.0-alpha.22
 
 范围：v0.1.0 soak 候选。RC-1 Node 恢复状态机收敛为共享的 `Recovery` 框架（含 G16 锚点证明只解码命中的 link）；X17 包调度入向与本机两方向各有配额；F7 默认矩阵新增 `fault/throttle` 行；R4 `roam/relay` fixture 的新流使用独立源端口；MIG-2 Server 部署形态（systemd unit `meshway-server.service`、`install.sh --component server`、Release 首次附 Server tar 与 Console 静态文件、离线 `backup`）；F8a／F8b 审阅修复（回退判据为 data-dir 的 `served` 记录、迁移在发布前验证主密钥、artifact 下载预算、登录失败退避、Actions 钉到完整 SHA）；`cargo-deny` 供应链检查。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 9 与 HTTP 契约均不变（F8b 只改两处说明文字），按先 Node 后 Server 普通升级（无断网窗口、无迁移）。

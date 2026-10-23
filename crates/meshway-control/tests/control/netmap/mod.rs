@@ -18,6 +18,7 @@ mod restart;
 mod review;
 mod server_key;
 mod signature;
+mod superseded;
 pub mod support;
 
 const HOUR: u64 = 60 * 60 * 1000;
