@@ -200,8 +200,6 @@ struct Owner {
     pending: BTreeMap<SocketAddr, ServerAttempt>,
     channels: BTreeMap<SocketAddr, Channel>,
     replay: BTreeSet<(NodeId, [u8; 32])>,
-    // Independent diagnostic deduplication; never an authentication/replay gate.
-    diagnosed: BTreeSet<(NodeId, [u8; 32], &'static str)>,
     unverified_init_rejections: u64,
     discovery: BTreeMap<[u8; 12], stun::Pending>,
     traversal: BTreeMap<meshway_model::UdpTraversalId, traversal::Attempt>,
@@ -327,7 +325,6 @@ impl Owner {
             pending: BTreeMap::new(),
             channels: BTreeMap::new(),
             replay: BTreeSet::new(),
-            diagnosed: BTreeSet::new(),
             unverified_init_rejections: 0,
             discovery: BTreeMap::new(),
             traversal: BTreeMap::new(),

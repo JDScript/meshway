@@ -216,22 +216,19 @@ impl Owner {
                     );
                     Replacement::Channel(link.fact.id)
                 }
+                // A healthy stream: the dialer returns to the edge's earlier
+                // Native UDP carrier. It acknowledges only an attempt made to
+                // replace exactly this stream, so its ACK decides.
                 Some(link) => {
-                    if self.diagnosed.len() < MAX_REPLAY
-                        && self
-                            .diagnosed
-                            .insert((peer, initiation.client, "healthy_stream"))
-                    {
-                        diagnostic_link(
-                            &self.shared,
-                            &link.fact,
-                            &link.scope,
-                            "signed_init_rejected",
-                            "existing_healthy_stream",
-                            Some((remote, initiation.client)),
-                        );
-                    }
-                    return Ok(());
+                    diagnostic_link(
+                        &self.shared,
+                        &link.fact,
+                        &link.scope,
+                        "signed_init_eligible",
+                        "stream_predecessor_captured",
+                        Some((remote, initiation.client)),
+                    );
+                    Replacement::Channel(link.fact.id)
                 }
                 None => Replacement::Ranked,
             }

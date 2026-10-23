@@ -1423,9 +1423,11 @@ fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
     let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
     if !matches!(ready.supersedes, Replacement::Ranked) {
         let expected = match ready.supersedes {
-            Replacement::Channel(id) => links.get(&ready.fact.peer).is_some_and(|old| {
-                old.fact.id == id && old.fact.carrier.protocol == TransportProtocol::NativeUdp
-            }),
+            // The exact channel: a Native UDP one being reattached, or a
+            // stream the edge orders after this Native UDP carrier.
+            Replacement::Channel(id) => links
+                .get(&ready.fact.peer)
+                .is_some_and(|old| old.fact.id == id),
             Replacement::Vacant(last) => {
                 !links.contains_key(&ready.fact.peer)
                     && links.last.get(&ready.fact.peer).copied() == last

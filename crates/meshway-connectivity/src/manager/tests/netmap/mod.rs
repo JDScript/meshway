@@ -12,6 +12,7 @@ use support::{Netmaps, eventually, links};
 mod rebind;
 mod roam;
 pub(in crate::manager) mod support;
+mod upgrade;
 
 fn limits(idle: Duration) -> Limits {
     Limits {

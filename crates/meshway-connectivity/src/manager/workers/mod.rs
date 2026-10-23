@@ -146,6 +146,9 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
     let lifetime = shared.scope(None, false);
     let mut plans = shared.plans.subscribe();
     let mut pacing = Pacing::default();
+    // Attempts at an earlier Native UDP carrier beside a selected stream
+    // channel; its own ledger, so a selected channel does not reset it.
+    let mut upgrades = Pacing::default();
     // The peer facts and candidates the selected channel was last checked against.
     let mut moved_from = shared.facts.get(peer);
     let mut candidate_targets = dialed_targets(&shared, &shared.plan(), peer);
@@ -172,6 +175,10 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                 }
             }
             pacing.connected(last_link(&shared, peer));
+            beside(&shared, &factory, peer, &mut upgrades).await;
+            if lifetime.check().is_err() {
+                return;
+            }
             if pause(&shared, &lifetime, peer, None).await.is_err() {
                 return;
             }
@@ -335,15 +342,28 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                         };
                         let mut was_selected = false;
                         if let Ok((stream, fact, opening)) = result {
-                            let _ = connected(
+                            // This owner serves the stream for its life; an
+                            // earlier Native UDP carrier is tried beside it.
+                            // A channel that replaced the stream is served by
+                            // `beside` until it ends too.
+                            let served = connected(
                                 shared.clone(),
                                 stream,
                                 fact,
                                 plan.clone(),
                                 opening,
                                 &mut was_selected,
-                            )
-                            .await;
+                            );
+                            tokio::pin!(served);
+                            let upgrading = beside(&shared, &factory, peer, &mut upgrades);
+                            tokio::pin!(upgrading);
+                            let (mut stream_done, mut upgrade_done) = (false, false);
+                            while !(stream_done && upgrade_done) {
+                                tokio::select! { biased;
+                                    _ = &mut served, if !stream_done => stream_done = true,
+                                    () = &mut upgrading, if !upgrade_done => upgrade_done = true,
+                                }
+                            }
                         }
                         drop(capacity);
                         if lifetime.check().is_err() {
@@ -385,6 +405,138 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
             return;
         }
     }
+}
+
+/// While the selected channel with `peer` is a stream although the edge's
+/// carrier order puts a Native UDP candidate this Node dials before it
+/// (typically after a transient outage in which the stream was acquired
+/// first), dial that candidate beside the channel on `pacing`'s own back-off.
+/// One that authenticates replaces exactly that channel, the same path as
+/// [`moved`]; established circuits keep their full path across the handover,
+/// and this owner serves the new channel until it ends. A failed attempt
+/// leaves the stream as it is. Returns at once when no upgrade applies, and
+/// when the stream ends.
+async fn beside(
+    shared: &Arc<Shared>,
+    factory: &Arc<dyn SocketFactory>,
+    peer: NodeId,
+    pacing: &mut Pacing,
+) {
+    let mut plans = shared.plans.subscribe();
+    loop {
+        plans.borrow_and_update();
+        let Some((link, ended)) = shared.links.lock().ok().and_then(|links| {
+            links
+                .get(&peer)
+                .filter(|link| link.scope.check().is_ok())
+                .map(|link| (link.fact.clone(), link.scope.cancellation.clone()))
+        }) else {
+            return;
+        };
+        let plan = shared.plan();
+        let Ok(candidates) = candidates(shared, &plan, peer) else {
+            return;
+        };
+        let earlier = earlier_datagram(&candidates, link.carrier.protocol);
+        if earlier.is_empty() {
+            return;
+        }
+        let targets = earlier
+            .iter()
+            .flat_map(|candidate| {
+                candidate
+                    .endpoints
+                    .iter()
+                    .filter(|target| DIALED.contains(&target.acquisition))
+                    .map(|target| Pacing::key(candidate, target))
+            })
+            .collect();
+        pacing.sweep(
+            plan.edge(peer),
+            targets,
+            own_mappings(shared),
+            shared.roam_epoch(),
+            Some(link.id),
+        );
+        for source in DIALED {
+            for candidate in &earlier {
+                for target in candidate
+                    .endpoints
+                    .iter()
+                    .filter(|target| target.acquisition == source)
+                {
+                    let key = Pacing::key(candidate, target);
+                    if !pacing.due(&key, tokio::time::Instant::now()) {
+                        continue;
+                    }
+                    if ended.is_cancelled() {
+                        return;
+                    }
+                    let _ = datagram::dial(
+                        shared.clone(),
+                        factory.clone(),
+                        plan.clone(),
+                        peer,
+                        &candidate.key,
+                        &candidate.carrier,
+                        target,
+                        candidate.timeout,
+                        Some(link.id),
+                    )
+                    .await;
+                    if last_link(shared, peer) != Some(link.id) {
+                        // Its channel replaced the stream and has ended
+                        // since, or another owner's did.
+                        if diagnostic_event() {
+                            tracing::debug!(operation = "carrier_upgrade", peer = %peer,
+                                candidate = %candidate.key, from = ?link.carrier.protocol,
+                                "Connectivity selected stream replaced by an earlier Native UDP carrier");
+                        }
+                        return;
+                    }
+                    let (failures, retry) = pacing.failed(
+                        key,
+                        shared.limits.retry_backoff,
+                        tokio::time::Instant::now(),
+                    );
+                    if diagnostic_event() {
+                        tracing::debug!(operation = "carrier_upgrade", peer = %peer,
+                            candidate = %candidate.key, endpoint = %target.endpoint.host,
+                            port = target.endpoint.port.get(), from = ?link.carrier.protocol,
+                            failures, retry_ms = retry.as_millis() as u64,
+                            "Connectivity earlier carrier not acquired; the selected stream stays");
+                    }
+                }
+            }
+        }
+        let due = pacing
+            .next_due()
+            .unwrap_or_else(|| tokio::time::Instant::now() + shared.limits.retry_backoff);
+        tokio::select! { biased;
+            () = ended.cancelled() => return,
+            changed = plans.changed() => if changed.is_err() { return },
+            () = tokio::time::sleep_until(due) => {},
+        }
+    }
+}
+
+/// The Native UDP candidates ordered before every candidate of `selected`'s
+/// protocol in the edge's carrier order. Only a stream is replaced: between
+/// Native UDP candidates and between streams the selected channel stays.
+fn earlier_datagram(candidates: &[Candidate], selected: TransportProtocol) -> Vec<&Candidate> {
+    if selected == TransportProtocol::NativeUdp {
+        return Vec::new();
+    }
+    let Some(position) = candidates
+        .iter()
+        .position(|candidate| candidate.carrier.protocol == selected)
+    else {
+        return Vec::new();
+    };
+    candidates[..position]
+        .iter()
+        .filter(|candidate| matches!(candidate.driver, Driver::Datagram))
+        .collect()
 }
 
 /// The literal addresses of the peer's explicitly dialed candidates (named

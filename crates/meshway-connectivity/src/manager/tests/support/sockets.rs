@@ -71,7 +71,11 @@ pub(in crate::manager::tests) struct Factory {
     pub(in crate::manager::tests) tcp: Mutex<BTreeMap<SocketAddr, TcpListener>>,
     pub(in crate::manager::tests) faults: Arc<Faults>,
     pub(in crate::manager::tests) blocked_dialers: Mutex<BTreeSet<NodeId>>,
+    /// Nodes whose Native UDP dials fail (stream dials still connect).
+    pub(in crate::manager::tests) blocked_datagrams: Mutex<BTreeSet<NodeId>>,
     pub(in crate::manager::tests) acquisitions: AtomicUsize,
+    /// Native UDP dial attempts alone.
+    pub(in crate::manager::tests) datagram_dials: AtomicUsize,
     pub(in crate::manager::tests) traversal_binds: AtomicUsize,
     /// Native UDP listeners bound as coordination sockets.
     pub(in crate::manager::tests) traversal_listeners: AtomicUsize,
@@ -224,8 +228,11 @@ impl SocketFactory for Factory {
     ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
         Box::pin(async move {
             self.acquisitions.fetch_add(1, Ordering::SeqCst);
+            self.datagram_dials.fetch_add(1, Ordering::SeqCst);
             let cfg = crate::plan::Plan::new(desired)?;
-            if self.blocked_dialers.lock().unwrap().contains(&cfg.node) {
+            if self.blocked_dialers.lock().unwrap().contains(&cfg.node)
+                || self.blocked_datagrams.lock().unwrap().contains(&cfg.node)
+            {
                 return Err(Error::Unavailable);
             }
             assert!(matches!(

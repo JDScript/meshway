@@ -49,7 +49,7 @@ pub(in crate::manager) fn udp_listener(address: SocketAddr, configured: bool) ->
     })
 }
 
-fn tcp_listener(address: SocketAddr) -> Listener {
+pub(in crate::manager) fn tcp_listener(address: SocketAddr) -> Listener {
     Listener::NativeTcp(NativeTcpListener {
         listen: address.ip(),
         listen_port: address.port().try_into().unwrap(),
@@ -151,6 +151,12 @@ impl Netmaps {
         fixture
     }
 
+    /// The reserved TCP listener address (b's listener when `stream`).
+    pub fn tcp_address(&self) -> SocketAddr {
+        let (_, tcp) = self.sockets.as_ref().unwrap();
+        tcp[0].local_addr().unwrap()
+    }
+
     /// The reserved UDP listener socket of `index` (b: 1, c: 2), for tests
     /// driving an owner directly instead of through a factory.
     pub fn take_udp(&mut self, index: usize) -> UdpSocket {
@@ -210,7 +216,9 @@ impl Netmaps {
             ),
             faults: Arc::default(),
             blocked_dialers: Mutex::new(BTreeSet::new()),
+            blocked_datagrams: Mutex::new(BTreeSet::new()),
             acquisitions: AtomicUsize::new(0),
+            datagram_dials: AtomicUsize::new(0),
             traversal_binds: AtomicUsize::new(0),
             traversal_listeners: AtomicUsize::new(0),
             rebinds: Arc::default(),
