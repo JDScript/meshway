@@ -84,6 +84,15 @@ U3 Underlay 恢复缺口（AUD-U 的 A、B、C 与安装冲突分类，`u3/recov
 
 验证（`166b8ef7`）：五个新的隔离组件测试在旧代码（只加故障注入点）上全部失败——suspend 写入失败后归属不结束、install 返回 `Journal`；出口审计读成 `journal_unwritten`；半建锚点重证返回 `Journal`；退役回读失败后恢复返回 `Conflict`；读回 `Conflict` 的安装不结束归属——新代码通过；其余 44 个 ignored 内核测试新旧代码结果相同（14 个依赖 fixture 环境变量者两边同样失败）。Planck `fault/throttle`、`exit/off`（组件含新增 `journal-unwritten`、`anchor-reclaim`、`install-conflict`、`exit-journal`、`egress-retire`）、`udp/resolved`、`netmap/offline`、`netmap/revoke`、`netmap/expiry`、`netmap/restart`、`roam/direct` 通过（`20261023T170000Z-11e55973`，并行 4，与另一工作包的矩阵同时运行）；Planck `mise run --jobs 1 check` 在 `194b48b4` 全部通过（1,410 个测试）。证据 `.meshway/validation/u3/`。
 
+U4 DNS 撤回后包平面不再重装（`u4/dns-recovered-reinstall`）：wire 6、IPC 13（形状不变，`retryAt` 多一种来源）、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+
+- 修复（不变量：通道的物理发送端只在同步的准入与关闭第一步持锁，没有任何 future 等待或保留它；owner：`meshway_dataplane::carrier::SharedSender`，关闭为 `Sender::close`＋connectivity `close_sender`）：此前共享发送端是 `tokio::sync::Mutex`，排队的锁等待者在释放时即获得锁、不论之后是否再被 poll；包处理 owner 跨轮保留的发送 future 在重配置期间不被 poll，获得锁后一直持有，而这次重配置（DNS 撤回的 `reconfig(None)`）所 join 的通道 owner 关闭时要锁同一发送端——`Manager::shutdown` 永不结束，B 至行结束 `retrying · dns`（alpha.23 发布矩阵 `20261023T175530Z-42e853ea` 的 `fault/throttle`）。现在发送端是 `std::sync::Mutex`，准入（`try_send`／`submit_batch`）同步完成后即释放，关闭在锁内只做同步的停止、在锁外 join 发送 worker；不采用 `try_lock`＋定时重试（轮询）。包平面关闭时先丢弃保留的输出再关闭 Manager。
+- 修复（不变量：关闭与退役对每个 owner 的等待有界；owner：connectivity `resources::Owner::join`）：停止的连接 owner 至多等 5 秒（`JOIN_GRACE`），未结束即中止（其 socket 与会话随之关闭）、WARN `Connectivity owner did not stop within its grace; aborting it`，`Manager::shutdown`／退役返回失败而不无限等待；此后由网络 worker 的安装恢复（5 秒起翻倍、上限 60 秒）以同一 netmap 重装。
+- Status（owner：daemon Status 投影）：DNS owner 已重证而包平面仍撤回或重新准备时，`retryAt` 为网络 worker 的下一次重装（此前为 null）。见[运行状态](/v2/node/runtime)。
+- fixture：underlay 内核测试序列的 `underlay-peer` 停止期限随测试数（每个 60 秒），不再固定 120 秒。
+
+验证：三个新测试在旧代码（`8b6221f5`，测试只把持锁线程改为 `blocking_lock`）上全部失败——保留未 poll 的输出使 socket owner 关闭 2 秒内不结束、不结束的 owner 的 join 不返回、`retryAt` 为 null——新代码通过（`.meshway/validation/u4/red-8b6221f5.log`）。Planck `20261023T205835Z-dbe4d464`（`fault/throttle`、`udp/resolved`、`exit/off`、`jammy/resolv-conf`、`udp/off`，并行 4）全部通过，`fault/throttle` 另两轮 `20261023T211744Z-88ab998b`、`20261023T212935Z-38922389` 通过；三轮 B 的每次 DNS 撤回都有重装 INFO，任何行都没有 owner 被中止。证据 `.meshway/validation/u4/`。
+
 ## v0.1.0-alpha.22
 
 范围：v0.1.0 soak 候选。RC-1 Node 恢复状态机收敛为共享的 `Recovery` 框架（含 G16 锚点证明只解码命中的 link）；X17 包调度入向与本机两方向各有配额；F7 默认矩阵新增 `fault/throttle` 行；R4 `roam/relay` fixture 的新流使用独立源端口；MIG-2 Server 部署形态（systemd unit `meshway-server.service`、`install.sh --component server`、Release 首次附 Server tar 与 Console 静态文件、离线 `backup`）；F8a／F8b 审阅修复（回退判据为 data-dir 的 `served` 记录、迁移在发布前验证主密钥、artifact 下载预算、登录失败退避、Actions 钉到完整 SHA）；`cargo-deny` 供应链检查。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 9 与 HTTP 契约均不变（F8b 只改两处说明文字），按先 Node 后 Server 普通升级（无断网窗口、无迁移）。
