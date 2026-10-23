@@ -35,6 +35,13 @@ DNS-2 公网主机上的 resolved 后端缺陷（`dns2/resolved-hosts`）：wire
 
 验证（`ac2ca8e7`）：隔离复现 Ubuntu 22.04 的 resolved 249.11 从不把查询送到链路的 `127.0.0.1:<port>`，Ubuntu 24.04（255）与 Debian 12（252.39）送达；Planck 4 行矩阵 `20261023T122956Z-d4a0ca36`（`udp/resolved`、`jammy/resolv-conf`、`udp/resolv-conf`、`exit/off`，全长，并行 4）全部通过——trixie 上 resolved 检查的共存与两类冲突、jammy 上明确的 `probe` 版本要求、`exit/off` 第 9 阶段外来搜索域 0.43 秒列出且 A 始终 running；Planck `mise run --jobs 1 check` 通过；证据 `.meshway/validation/dns2/`。
 
+U2 宿主停顿后 Underlay journal 永久拒绝（`u2/journal-recovery`）：wire、IPC 13、`compilerVersion`、Server schema 与 HTTP 契约均不变，无新 flag。
+
+- 修复（不变量：变更结果未读回的 journal 步骤由其 owner 按内核现状补完，与进程启动同一函数，只有不可恢复的 journal 才是持久阻断；owner：Host 内核归属——`Kernel::interrupted` 结束本期，`Host::recover`→`Kernel::open_term`→`Journal::settle_pending` 补完）：`suspend` 删除路由时 netlink 失败（停顿的宿主），base journal 留下 `pending: DeleteRoute`，本期不结束，此后每次安装、`down` 与 DNS 锚点操作都以 `private underlay journal is invalid or requires recovery` 失败（lab 每 10 秒、数小时），同一 namespace 内重启也拒绝。现在留下待定步骤的失败即以 `suspend_unavailable`／`down_unavailable`／`anchor_unavailable`／`install_unavailable` 结束本期（被丢弃的操作在下一次 `ready` 时为 `install_cancelled`），重证或启动按内核现状补完步骤（旧一期的 TUN 不接管、其路由随之消失；规则按精确字节读回；锚点删除按设备是否仍在）后以同一 netmap 重装。设备已在而无指纹可认领的半建 DNS 锚点、指向 journal 未记录对象的步骤仍 fail closed。
+- 修复（H4 规则；owner：网络 plane）：capture 安装或撤回失败时 `lastErrorDetail` 不再为 null：归属已结束时为其原因，否则为 Host 的错误；撤回失败另记 WARN `Node capture suspension failed`。
+
+验证与证据见[已修复问题索引 · U2](/v2/node/validation#u2-journal)与 `.meshway/validation/u2/`。
+
 ## v0.1.0-alpha.22
 
 范围：v0.1.0 soak 候选。RC-1 Node 恢复状态机收敛为共享的 `Recovery` 框架（含 G16 锚点证明只解码命中的 link）；X17 包调度入向与本机两方向各有配额；F7 默认矩阵新增 `fault/throttle` 行；R4 `roam/relay` fixture 的新流使用独立源端口；MIG-2 Server 部署形态（systemd unit `meshway-server.service`、`install.sh --component server`、Release 首次附 Server tar 与 Console 静态文件、离线 `backup`）；F8a／F8b 审阅修复（回退判据为 data-dir 的 `served` 记录、迁移在发布前验证主密钥、artifact 下载预算、登录失败退避、Actions 钉到完整 SHA）；`cargo-deny` 供应链检查。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 9 与 HTTP 契约均不变（F8b 只改两处说明文字），按先 Node 后 Server 普通升级（无断网窗口、无迁移）。
