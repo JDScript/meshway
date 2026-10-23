@@ -18,7 +18,9 @@ const FALLBACK_LIMIT: Duration = Duration::from_secs(30);
 /// Time on TCP before the block is lifted: failed attempts beside it.
 const HOLD: Duration = Duration::from_secs(5);
 /// The gate: the back-off ceiling (60 s), a handshake and the Status poll.
-pub(super) const RETURN_LIMIT: Duration = Duration::from_secs(75);
+const RETURN_LIMIT: Duration = Duration::from_secs(75);
+/// Business on the returned carrier: more than the trace's one per second.
+const OBSERVE: Duration = Duration::from_secs(3);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -200,8 +202,15 @@ pub(super) async fn run(cli: &Cli, signals: &Signals, traffic: &mut Traffic) -> 
     )
     .await?;
     let udp_at_ms = now_ms()?;
-    traffic.exchange().await?;
+    // The packet trace is at most one per circuit and second: business on
+    // UDP for longer than that, then the log is read.
+    let started = Instant::now();
+    while started.elapsed() < OBSERVE {
+        traffic.exchange().await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
     let after_ms = now_ms()?.saturating_add(1);
+    tokio::time::sleep(Duration::from_millis(500)).await;
     let tcp_circuits = circuits(cli, &path, tcp_at_ms, unblocked_at_ms).await?;
     let udp_circuits = circuits(cli, &path, udp_at_ms, after_ms).await?;
     if tcp_circuits.is_empty() || tcp_circuits != udp_circuits {
