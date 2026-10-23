@@ -253,7 +253,7 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | 空闲 CPU | alpha.21 六台 meshwayd 空闲最忙线程（`top -H` 快照）：lab 1.0–2.0 %、VM 0.4–0.6 %、Planck 0.4 %、it7 3.8–7.6 %；X18 修复后 VM release 空闲 0.56 %。it7 按 60 秒口径：两个 worker 各 3.1–3.2 %、进程 7.0–7.3 %、`nft` 子进程另约 4.2 %，逐项归因见[空闲 CPU 口径](/v2/node/performance#idle-cpu)（剩余边界 P2） | OPS20 `.meshway/node-lab/ops20/cpu-idle*/`；X18；P2 `.meshway/validation/p2/` |
 | 吞吐 | 常驻 lab 与 Planck 的分层吞吐、出口正向写路径与 WARP 路径限制见[分层性能测量](/v2/node/performance)与 [OrbStack 与 WARP](/v2/install#orbstack-warp) | performance.md |
 | 系统服务 | 整机重启（含 Server 不可达）无需 `up` 恢复 running；resolved 重启 5 秒内、停止再启动 10 秒内恢复 Mesh 解析；Server 安装、升级、回退与备份 | [Linux 安装 · 验收记录](/v2/install#验收记录) |
-| <a id="prod-soak"></a>prod 7 天 soak | 待运行：五台公网节点（it7、jp-tyo-arm64、kr-icn-arm64、planck 与 cn-hkg-dmit 容器）连同 planck 容器中的 Server，按[里程碑 C](/v2/process#v0-1-gate) 的日程注入故障，门槛与判定见同处 | 采集机 kr-icn-arm64 `~/meshway-soak/reports/`（日报与 `final.md`）；工具 `scripts/soak/` |
+| <a id="prod-soak"></a>prod 7 天 soak | 待运行：五台公网节点（it7、jp-tyo-arm64 为物理机 systemd，kr-icn-arm64、planck、cn-hkg-dmit 为 Docker 容器）连同 planck 容器中的 Server，按[里程碑 C](/v2/process#v0-1-gate) 的日程注入故障，门槛与判定见同处 | 采集机 kr-icn-arm64 `~/meshway-soak/reports/`（日报与 `final.md`）；工具 `scripts/soak/` |
 
 ## 已修复问题索引 {#fixed}
 

@@ -10,6 +10,7 @@ usage:
   fault.py run ID [--force]    run one fault now (outside the soak window only with --force)
   fault.py recover             close an interrupted fault: run its cleanup, write its end marker
   fault.py list                schedule and recorded state
+  fault.py check               gates answer with the scheduled forms; kill -9 targets have a restart policy
   (all accept --config PATH and --dry-run)
 
 Physical hosts only get process-level faults; nft rules are only created in a
@@ -78,9 +79,10 @@ def recorded(config: common.Config) -> dict:
 # ---------------------------------------------------------------- helpers
 
 def node_status(config: common.Config, node: str) -> dict | None:
-    result = common.run_node(config, node, ["meshway", "--json", "status"], 30)
+    result = common.node_call(config, node, "status", timeout=60)
+    _, body = common.proc_line(result.out)
     try:
-        return json.loads(result.out) if result.ok else None
+        return json.loads(body) if result.ok else None
     except json.JSONDecodeError:
         return None
 
@@ -122,18 +124,13 @@ def must(result: common.Result, what: str) -> common.Result:
     return result
 
 
-def node_exec(config, fault, inner, timeout, stdin=None):
+def gate(config, target: str, words: list, timeout: float) -> common.Result:
+    """One gate form on the target's host (target = node name or `server`)."""
+    host = common.host_of(config, target)
     if DRY:
-        print("DRY", fault["node"], common.node_argv(config, fault["node"], inner))
-        return common.Result(0, "", "", 0, inner)
-    return common.run_node(config, fault["node"], inner, timeout, stdin)
-
-
-def host_exec(config, host, inner, timeout):
-    if DRY:
-        print("DRY", host, common.host_argv(config, host, inner))
-        return common.Result(0, "", "", 0, inner)
-    return common.run_host(config, host, inner, timeout)
+        print("DRY", host, common.gate_argv(config, host, words))
+        return common.Result(0, "", "", 0, words)
+    return common.call(config, host, words, timeout)
 
 
 def nap(seconds: float) -> None:
@@ -145,153 +142,127 @@ def nap(seconds: float) -> None:
         time.sleep(min(10.0, max(0.0, end - time.monotonic())))
 
 
-def template(fault: dict, key: str) -> str:
-    command = fault[key]
-    if "REPLACE" in command:
-        raise FaultError(f"{key} is a placeholder; fill it from the PROD-1 README before the soak")
-    return command.format(**fault.get("params", {}))
-
-
 # ---------------------------------------------------------------- actions (run, cleanup)
 
 def recovery_timeout(fault):
     return float(fault.get("recovery_timeout_s", 300))
 
 
+def restart_policy(config, node) -> str:
+    """The policy that brings a killed daemon back: the container's Docker policy or the unit's Restart=."""
+    result = gate(config, node, ["inspect", node], 30)
+    if DRY:
+        return "dry"
+    if config.nodes[node].get("container"):
+        parts = result.out.strip().rpartition("} ")[2].split(" ")
+        return parts[1] if len(parts) > 1 else "?"
+    for line in result.out.splitlines():
+        if line.startswith("Restart="):
+            return line.split("=", 1)[1]
+    return "?"
+
+
+RESTARTING = {"unless-stopped", "always", "on-failure", "on-abnormal", "dry"}
+
+
 def run_restart(config, fault):
-    node = config.nodes[fault["node"]]
-    before = node_status(config, fault["node"]) if not DRY else {"processId": 0}
+    node = fault["node"]
+    before = node_status(config, node) if not DRY else {"processId": 0}
     old = (before or {}).get("processId")
-    started = time.monotonic()
-    action = fault["action"]
-    if action == "systemd_restart":
-        must(node_exec(config, fault, ["systemctl", "restart", node.get("unit", "meshwayd")], 120), "systemctl restart")
-    elif action == "kill9":
-        must(node_exec(config, fault, common.shell(f"kill -9 $({common.pid_expr(config, fault['node'])})"), 30), "kill -9")
-    elif action == "docker_restart":
-        must(host_exec(config, node["host"], ["docker", "restart", "-t", "30", node["container"]], 120), "docker restart")
     detail = {"pid_before": old}
+    action = fault["action"]
+    if action == "kill9":
+        detail["restart_policy"] = restart_policy(config, node)
+        if detail["restart_policy"] not in RESTARTING:
+            raise FaultError(f"restart policy {detail['restart_policy']!r} would leave {node} down; not killing")
+    started = time.monotonic()
+    form = {"systemd_restart": "restart", "kill9": "kill9", "docker_restart": "docker-restart"}[action]
+    result = must(gate(config, node, [form, node], 130), form)
+    for line in result.out.splitlines():
+        if line.startswith("@@killed "):
+            detail["killed_host_pid"] = int(line.split()[1])
     if not DRY:
-        detail.update(wait_running(config, fault["node"], started, recovery_timeout(fault), old_pid=old))
+        detail.update(wait_running(config, node, started, recovery_timeout(fault), old_pid=old))
     return detail
 
 
 def run_server_stop(config, fault):
-    server = config.server
     started = time.monotonic()
-    must(host_exec(config, server["host"], ["docker", "stop", "-t", "30", server["container"]], 120), "docker stop")
+    must(gate(config, "server", ["server-stop"], 130), "server-stop")
     try:
         nap(float(fault.get("duration_s", 1800)))
     finally:
-        must(host_exec(config, server["host"], ["docker", "start", server["container"]], 120), "docker start")
+        must(gate(config, "server", ["server-start"], 130), "server-start")
     return {"stopped_s": round(time.monotonic() - started, 1),
             **(wait_health(config, time.monotonic(), recovery_timeout(fault)) if not DRY else {})}
 
 
-def cleanup_server_stop(config, fault):
-    host_exec(config, config.server["host"], ["docker", "start", config.server["container"]], 120)
+def cleanup_server_start(config, fault):
+    gate(config, "server", ["server-start"], 130)
 
 
-def run_command(config, fault):
-    command = template(fault, "command")
+def run_server_upgrade(config, fault):
+    version = fault.get("version", "")
     started = time.monotonic()
-    result = host_exec(config, fault["host"], common.shell(command), float(fault.get("timeout_s", 900)))
-    detail = {"rc": result.rc, "output_tail": result.out.strip()[-800:], "ms": result.ms}
-    must(result, "command")
-    if fault.get("wait_health", True) and not DRY:
+    result = gate(config, "server", ["server-upgrade", version], float(fault.get("timeout_s", 1500)))
+    detail = {"version": version, "rc": result.rc, "output_tail": result.out.strip()[-800:]}
+    must(result, "server-upgrade")
+    if not DRY:
         detail.update(wait_health(config, started, recovery_timeout(fault)))
     return detail
 
 
-def cleanup_command(config, fault):
-    if fault.get("cleanup_command"):
-        host_exec(config, fault["host"], common.shell(template(fault, "cleanup_command")), 600)
-
-
-def nft_rules(fault, addresses) -> str:
-    if fault["match"] == "udp":
-        rule = "meta l4proto udp"
-        hooks = ("input", "output", "forward")
-        lo = {"input": "iif lo accept; ", "output": "oif lo accept; ", "forward": ""}
-    elif fault["match"] == "tcp-to-server":
-        v4 = [a for a in addresses if ":" not in a]
-        v6 = [a for a in addresses if ":" in a]
-        if not v4 and not v6:
-            raise FaultError("no Server address resolved")
-        parts = []
-        if v4:
-            parts.append("ip daddr { %s } meta l4proto tcp drop; " % ", ".join(v4))
-        if v6:
-            parts.append("ip6 daddr { %s } meta l4proto tcp drop; " % ", ".join(v6))
-        return ("table inet %s {\n chain output { type filter hook output priority -150; policy accept; %s}\n}\n"
-                % (TABLE, "".join(parts)))
-    else:
-        raise FaultError(f"unknown match {fault['match']!r}")
-    chains = "".join(" chain %s { type filter hook %s priority -150; policy accept; %s%s drop; }\n"
-                     % (hook, hook, lo[hook], rule) for hook in hooks)
-    return "table inet %s {\n%s}\n" % (TABLE, chains)
-
-
-def resolve_server(config, fault) -> list[str]:
-    if fault.get("addresses"):
-        return list(fault["addresses"])
-    host = fault.get("resolve") or config.server.get("health_url", "").split("/")[2].split(":")[0]
-    result = must(node_exec(config, fault, common.shell(f"getent ahosts {host} | awk '{{print $1}}' | sort -u"), 30),
-                  "resolve")
-    return [line.strip() for line in result.out.splitlines() if line.strip()]
+def run_server_rotate_key(config, fault):
+    started = time.monotonic()
+    result = gate(config, "server", ["server-rotate-key"], float(fault.get("timeout_s", 600)))
+    detail = {"rc": result.rc, "output_tail": result.out.strip()[-800:]}
+    must(result, "server-rotate-key")
+    if not DRY:
+        detail.update(wait_health(config, started, recovery_timeout(fault)))
+    return detail
 
 
 def run_nft_drop(config, fault):
-    node = config.nodes[fault["node"]]
-    if not node.get("container"):
+    node = fault["node"]
+    if not config.nodes[node].get("container"):
         raise FaultError("nft faults only run inside a container netns")
-    duration = float(fault.get("duration_s", 300))
-    addresses = resolve_server(config, fault) if fault["match"] == "tcp-to-server" else []
-    rules = nft_rules(fault, addresses)
-    # The dead man removes the table even if this process or the collector's connection dies.
-    must(host_exec(config, node["host"], ["docker", "exec", "-d", node["container"], "sh", "-c",
-                                          f"sleep {int(duration) + 120}; nft delete table inet {TABLE}"], 30),
-         "dead-man")
-    must(node_exec(config, fault, ["nft", "-f", "-"], 30, stdin=rules), "nft add")
+    duration = int(fault.get("duration_s", 300))
+    listed = must(gate(config, node, ["nft-drop", node, fault["match"], str(duration)], 120), "nft-drop")
     started = time.monotonic()
     try:
-        listed = node_exec(config, fault, ["nft", "list", "table", "inet", TABLE], 30)
         nap(duration)
     finally:
-        removed = node_exec(config, fault, ["nft", "delete", "table", "inet", TABLE], 30)
-    must(removed, "nft delete")
-    detail = {"addresses": addresses, "installed": listed.ok, "dropped_s": round(time.monotonic() - started, 1)}
+        cleared = gate(config, node, ["nft-clear", node], 60)
+    must(cleared, "nft-clear")
+    detail = {"match": fault["match"], "rules": listed.out.strip()[-600:], "dropped_s": round(time.monotonic() - started, 1)}
     if not DRY:
-        detail.update(wait_running(config, fault["node"], time.monotonic(), recovery_timeout(fault)))
+        detail.update(wait_running(config, node, time.monotonic(), recovery_timeout(fault)))
     return detail
 
 
 def cleanup_nft_drop(config, fault):
-    result = node_exec(config, fault, ["nft", "delete", "table", "inet", TABLE], 30)
-    if not result.ok and "No such file" not in result.err:
-        raise FaultError(f"nft delete failed: {result.tail()}")
+    result = gate(config, fault["node"], ["nft-clear", fault["node"]], 60)
+    if not result.ok and "No such file" not in result.out + result.err:
+        raise FaultError(f"nft-clear failed: {result.tail()}")
 
 
 def run_exit_profile(config, fault):
+    node = fault["node"]
     duration = int(fault.get("duration_s", 600))
-    url = fault.get("url", "https://www.example.com/")
-    must(node_exec(config, fault, ["meshway", "--json", "exit", fault["profile"]], 90), "meshway exit")
-    detail = {}
+    must(gate(config, node, ["exit-select", node, fault["profile"]], 100), "exit-select")
+    detail = {"node": node, "profile": fault["profile"]}
     try:
-        status = node_status(config, fault["node"]) if not DRY else {}
+        status = node_status(config, node) if not DRY else {}
         routing = ((status or {}).get("netmap") or {}).get("routing") or {}
         detail["applied_profile"] = routing.get("appliedProfile")
-        loop = (f"end=$(( $(date +%s) + {duration} )); ok=0; n=0; "
-                f"while [ $(date +%s) -lt $end ]; do n=$((n+1)); "
-                f"curl -fsS -m 10 -o /dev/null '{url}' && ok=$((ok+1)); sleep 2; done; echo \"@@curl $ok $n\"")
-        result = node_exec(config, fault, common.shell(loop), duration + 60)
+        result = gate(config, node, ["curl-loop", node, str(duration)], duration + 90)
         for line in result.out.splitlines():
             if line.startswith("@@curl "):
                 ok, total = line.split()[1:3]
                 detail.update(curl_ok=int(ok), curl_total=int(total))
     finally:
-        cleared = node_exec(config, fault, ["meshway", "--json", "exit", "--default"], 90)
-    must(cleared, "meshway exit --default")
+        cleared = gate(config, node, ["exit-default", node], 100)
+    must(cleared, "exit-default")
     if detail.get("applied_profile") not in (None, fault["profile"]) or (
             "curl_total" in detail and detail["curl_ok"] == 0):
         raise FaultError(f"exit profile not effective: {detail}")
@@ -299,15 +270,16 @@ def run_exit_profile(config, fault):
 
 
 def cleanup_exit_profile(config, fault):
-    node_exec(config, fault, ["meshway", "--json", "exit", "--default"], 90)
+    gate(config, fault["node"], ["exit-default", fault["node"]], 100)
 
 
 ACTIONS = {
     "systemd_restart": (run_restart, None),
     "kill9": (run_restart, None),
     "docker_restart": (run_restart, None),
-    "server_stop": (run_server_stop, cleanup_server_stop),
-    "command": (run_command, cleanup_command),
+    "server_stop": (run_server_stop, cleanup_server_start),
+    "server_upgrade": (run_server_upgrade, None),  # an interrupted upgrade is for a person (install.md rollback)
+    "server_rotate_key": (run_server_rotate_key, cleanup_server_start),
     "nft_drop": (run_nft_drop, cleanup_nft_drop),
     "exit_profile": (run_exit_profile, cleanup_exit_profile),
 }
@@ -316,7 +288,7 @@ ACTIONS = {
 def affects(fault) -> list[str]:
     if "affects" in fault:
         return fault["affects"]
-    if fault["action"] in ("server_stop", "command"):
+    if fault["action"].startswith("server_"):
         return ["server", "*"]
     return [fault["node"]]
 
@@ -382,6 +354,36 @@ def due(config: common.Config) -> int:
     return 0
 
 
+def check(config: common.Config) -> int:
+    """Before the soak: every host's gate answers self-test with the fault forms the schedule needs, and every
+    kill -9 target has a policy that brings it back."""
+    problems = []
+    for host in sorted(config.hosts):
+        expected = common.gate_spec(config, host)
+        if not expected["nodes"] and "server" not in expected:
+            continue
+        result = common.call(config, host, ["self-test"], 60)
+        try:
+            answer = json.loads(result.out)
+        except json.JSONDecodeError:
+            problems.append(f"{host}: gate did not answer self-test: {result.tail(200)}")
+            continue
+        if answer.get("faults") != expected["faults"] or answer.get("nodes") != sorted(expected["nodes"]):
+            problems.append(f"{host}: gate spec differs from config (re-render and reinstall it): {answer}")
+        if not answer.get("sudo") and expected["sudo"]:
+            problems.append(f"{host}: sudo -n is not available")
+        print(f"{host}: gate ok, nodes {answer.get('nodes')}, faults {answer.get('faults')}")
+    for fault in config.data.get("faults", []):
+        if fault["action"] == "kill9":
+            policy = restart_policy(config, fault["node"])
+            print(f"{fault['node']}: restart policy {policy}")
+            if policy not in RESTARTING:
+                problems.append(f"{fault['node']}: restart policy {policy!r} would leave it down after kill -9")
+    for problem in problems:
+        print("PROBLEM", problem)
+    return 1 if problems else 0
+
+
 def main(argv: list[str]) -> int:
     global DRY
     config, rest = common.config_from_args(argv)
@@ -396,6 +398,8 @@ def main(argv: list[str]) -> int:
             if not config.t0:
                 return 0
             return due(config)
+        if command == "check":
+            return check(config)
         if command == "recover":
             print(json.dumps(recover(config)))
             return 0

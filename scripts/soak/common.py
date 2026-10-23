@@ -130,42 +130,55 @@ class Result:
         return (self.err or self.out).strip()[-limit:]
 
 
-def host_argv(config: Config, host_name: str, inner: list[str]) -> list[str]:
-    """Wrap an argv for the named host: local, `ssh <target> <quoted argv>`, or a prefix (e.g. `orb -m vm`)."""
+GATE = Path(__file__).resolve().parent / "gate.py"
+
+
+def ssh_options(config: Config) -> list[str]:
+    options = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
+               "-o", "ServerAliveCountMax=4",
+               # authorized_keys pins the collector's IPv4 address with from="…"
+               "-o", f"AddressFamily={config.ssh.get('address_family', 'inet')}"]
+    identity = config.ssh.get("identity")
+    if identity:
+        options += ["-i", os.path.expanduser(identity), "-o", "IdentitiesOnly=yes"]
+    known = config.ssh.get("known_hosts")
+    if known:
+        options += ["-o", f"UserKnownHostsFile={os.path.expanduser(known)}", "-o", "StrictHostKeyChecking=yes"]
+    return options
+
+
+def gate_spec_path(config: Config, host_name: str) -> str:
+    return os.path.expanduser(config.hosts[host_name].get("gate_spec") or str(config.dir("gate", f"{host_name}.json")))
+
+
+def gate_argv(config: Config, host_name: str, words: list[str]) -> list[str]:
+    """argv that asks the host's gate for one allowed command form (see gate.py). Over ssh the forced command
+    receives the words as SSH_ORIGINAL_COMMAND; on the collector's own host (or through a prefix such as
+    `orb -m vm`) the same gate runs with --command."""
     host = config.hosts[host_name]
-    if host.get("sudo"):
-        inner = ["sudo", "-n", *inner]
+    command = shlex.join(words)
     kind = host.get("kind", "local")
-    if kind == "local":
-        return inner
-    if kind == "prefix":
-        return [*host["argv"], *inner]
     if kind == "ssh":
-        options = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
-                   "-o", "ServerAliveCountMax=4",
-                   # authorized_keys pins the collector's IPv4 address with from="…"
-                   "-o", f"AddressFamily={config.ssh.get('address_family', 'inet')}"]
-        identity = config.ssh.get("identity")
-        if identity:
-            options += ["-i", os.path.expanduser(identity), "-o", "IdentitiesOnly=yes"]
-        known = config.ssh.get("known_hosts")
-        if known:
-            options += ["-o", f"UserKnownHostsFile={os.path.expanduser(known)}", "-o", "StrictHostKeyChecking=yes"]
-        return ["ssh", *options, *host.get("options", []), host["target"], shlex.join(inner)]
+        return ["ssh", *ssh_options(config), *host.get("options", []), host["target"], command]
+    local = ["--spec", gate_spec_path(config, host_name), "--command", command, host_name]
+    if kind == "local":
+        return [sys.executable, str(GATE), *local]
+    if kind == "prefix":
+        return [*host["argv"], "python3", str(host.get("gate", GATE)), *local]
     raise ValueError(f"host {host_name}: unknown kind {kind!r}")
 
 
-def node_argv(config: Config, node_name: str, inner: list[str], interactive: bool = False) -> list[str]:
-    """argv that runs `inner` as root next to the node's meshwayd (in its container when it has one)."""
-    node = config.nodes[node_name]
-    container = node.get("container")
-    if container:
-        inner = ["docker", "exec", *(["-i"] if interactive else []), container, *inner]
-    return host_argv(config, node["host"], inner)
+def host_of(config: Config, target: str) -> str:
+    return config.server["host"] if target == "server" else config.nodes[target]["host"]
 
 
-def shell(script: str) -> list[str]:
-    return ["sh", "-c", script]
+def call(config: Config, host_name: str, words: list[str], timeout: float) -> "Result":
+    return run(gate_argv(config, host_name, words), timeout)
+
+
+def node_call(config: Config, node: str, verb: str, *args: str, timeout: float = 60) -> "Result":
+    """`<verb> <node> <args…>` on the node's host (node may be `server` for Server forms)."""
+    return call(config, host_of(config, node), [verb, node, *args], timeout)
 
 
 def run(argv: list[str], timeout: float, stdin: str | None = None) -> Result:
@@ -181,14 +194,6 @@ def run(argv: list[str], timeout: float, stdin: str | None = None) -> Result:
     except OSError as error:
         rc, out, err = 127, "", str(error)
     return Result(rc, out, err, int((time.monotonic() - started) * 1000), argv)
-
-
-def run_node(config: Config, node: str, inner: list[str], timeout: float, stdin: str | None = None) -> Result:
-    return run(node_argv(config, node, inner, interactive=stdin is not None), timeout, stdin)
-
-
-def run_host(config: Config, host: str, inner: list[str], timeout: float) -> Result:
-    return run(host_argv(config, host, inner), timeout)
 
 
 def parallel(function, items: list) -> list:
@@ -402,18 +407,55 @@ def proc_line(text: str) -> tuple[dict | None, str]:
     return None, text
 
 
-def pid_expr(config: Config, node: str) -> str:
-    """Shell expression printing the node's meshwayd PID: the unit's MainPID on systemd hosts (another meshwayd,
-    e.g. a drill instance, may run there), `pidof` inside a container (one daemon per container)."""
-    spec = config.nodes[node]
-    if spec.get("pid_command"):
-        return spec["pid_command"]
-    if spec.get("container"):
-        return "pidof -s meshwayd"
-    return f"systemctl show -p MainPID --value {spec.get('unit', 'meshwayd')}"
+# ---------------------------------------------------------------- gate specs
+
+FAULT_FORMS = {"systemd_restart": "restart", "kill9": "kill9", "docker_restart": "docker-restart",
+               "server_stop": "server-stop", "server_upgrade": "server-upgrade",
+               "server_rotate_key": "server-rotate-key", "exit_profile": "exit"}
+SERVER_GATE_KEYS = ("container", "image", "release", "data", "user", "upgrade_script", "stage", "asset", "release_url",
+                    "rotate_window")
 
 
-def proc_script(config: Config, node: str) -> str:
-    return (f"p=$({pid_expr(config, node)} 2>/dev/null); [ \"$p\" = 0 ] && p=; "
-            "if [ -n \"$p\" ]; then st=$(cut -d' ' -f22 /proc/$p/stat); else p=none st=0; fi; "
-            "echo \"@@proc $p $st $(awk '/^btime/{print $2}' /proc/stat) $(getconf CLK_TCK)\"")
+def fault_form(fault: dict) -> tuple[str, str]:
+    """(target, gate fault form) a scheduled fault needs."""
+    action = fault["action"]
+    if action == "nft_drop":
+        return fault["node"], f"nft-drop-{fault['match']}"
+    if action.startswith("server_"):
+        return "server", FAULT_FORMS[action]
+    return fault["node"], FAULT_FORMS[action]
+
+
+def gate_spec(config: Config, host_name: str) -> dict:
+    """What the gate on one host allows: its nodes (and the Server if it lives there), each node's ping targets and
+    iperf role from the edges/throughput, and exactly the fault forms the schedule names for those targets."""
+    host = config.hosts[host_name]
+    spec: dict = {"host": host_name, "sudo": ["sudo", "-n"] if host.get("sudo", True) else [],
+                  "docker": (["sudo", "-n", "docker"] if host.get("docker_sudo") else ["docker"]),
+                  "nodes": {}, "faults": {}}
+    names = {n: s.get("mesh_name", n) for n, s in config.nodes.items()}
+    throughput = config.data.get("throughput") or {}
+    for name, node in sorted(config.nodes.items()):
+        if node["host"] != host_name:
+            continue
+        entry = {"container": node["container"]} if node.get("container") else {"unit": node.get("unit", "meshwayd")}
+        entry["ping"] = sorted({names[dst] for src, dst in config.data.get("edges", []) if src == name})
+        if throughput.get("server") == name:
+            entry["iperf_server"] = [int(throughput.get("port", 5201))]
+        if throughput.get("client") == name:
+            entry["iperf_client"] = {"targets": [throughput["target"]], "ports": [int(throughput.get("port", 5201))]}
+        spec["nodes"][name] = entry
+    if config.server.get("host") == host_name and config.server.get("container"):
+        spec["server"] = {k: config.server[k] for k in SERVER_GATE_KEYS if k in config.server}
+    for fault in config.data.get("faults", []):
+        target, form = fault_form(fault)
+        if target == "server" and "server" not in spec or target != "server" and target not in spec["nodes"]:
+            continue
+        spec["faults"].setdefault(target, [])
+        if form not in spec["faults"][target]:
+            spec["faults"][target].append(form)
+        if form == "exit":
+            exit_ = spec["nodes"][target].setdefault("exit", {"profiles": [], "url": fault.get("url", "https://www.example.com/")})
+            if fault["profile"] not in exit_["profiles"]:
+                exit_["profiles"].append(fault["profile"])
+    return spec

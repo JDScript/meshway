@@ -87,12 +87,16 @@ class TimeAndStorage(unittest.TestCase):
         self.assertEqual(json.loads(rest)["phase"], "running")
         self.assertEqual(common.proc_line("@@proc none 0 1 100\n{}")[0], {"pid": None, "start": None})
 
-    def test_ssh_hosts_quote_the_remote_argv(self):
-        soak = Soak({"hosts": {"p": {"kind": "ssh", "target": "u@h", "sudo": True}},
-                     "nodes": {"x": {"host": "p", "container": "c"}}, "ssh": {"identity": "/k"}})
-        argv = common.node_argv(soak.config, "x", ["sh", "-c", "echo 'a b'"])
-        self.assertEqual(argv[-2:], ["u@h", "sudo -n docker exec c sh -c 'echo '\"'\"'a b'\"'\"''"])
+    def test_gate_forms_go_over_ssh_as_one_quoted_command_and_locally_with_command(self):
+        soak = Soak({"hosts": {"p": {"kind": "ssh", "target": "u@h"}, "l": {"kind": "local"}},
+                     "nodes": {"x": {"host": "p", "container": "c"}, "y": {"host": "l"}}, "ssh": {"identity": "/k"}})
+        argv = common.gate_argv(soak.config, "p", ["journal", "x", "--after-cursor", "s=a;i=1"])
+        self.assertEqual(argv[-2:], ["u@h", "journal x --after-cursor 's=a;i=1'"])
         self.assertIn("IdentitiesOnly=yes", argv)
+        self.assertIn("AddressFamily=inet", argv)
+        local = common.gate_argv(soak.config, "l", ["status", "y"])
+        self.assertEqual(local[1:], [str(common.GATE), "--spec", str(soak.root / "gate" / "l.json"), "--command",
+                                     "status y", "l"])
         soak.close()
 
     def test_past_days_are_compressed_and_read_back(self):
@@ -136,7 +140,8 @@ class TimeAndStorage(unittest.TestCase):
 
 
 class LogCursor(unittest.TestCase):
-    def entry(self, cursor, seconds, message):
+    @staticmethod
+    def entry(_self, cursor, seconds, message):
         return json.dumps({"__CURSOR": cursor, "__REALTIME_TIMESTAMP": str(1793577600_000000 + seconds * 1_000_000),
                            "_PID": "77", "PRIORITY": "4", "_BOOT_ID": "abcdef0123", "MESSAGE": message})
 
@@ -146,14 +151,15 @@ class LogCursor(unittest.TestCase):
 
         def fake(argv, limit, timeout):
             calls.append(argv)
-            if "--after-cursor" not in argv:
-                return [self.entry("c1", 10, "one"), self.entry("c2", 20, "two")], False, ""
-            self.assertEqual(argv[argv.index("--after-cursor") + 1], "c2")
-            return [self.entry("c3", 30, tracing("WARN", "Node sync failed; retrying", error="Network"))], False, ""
+            command = argv[argv.index("--command") + 1]
+            if "--after-cursor" not in command:
+                return [LogCursor.entry(None, "c1", 10, "one"), LogCursor.entry(None, "c2", 20, "two")], False, ""
+            self.assertEqual(command, "journal jp --after-cursor c2")
+            return [LogCursor.entry(None, "c3", 30, tracing("WARN", "Node sync failed; retrying", error="Network"))], False, ""
         with mock.patch.object(logs, "stream", side_effect=fake):
             logs.collect(soak.config)
             logs.collect(soak.config)
-        self.assertIn("--since", calls[0])
+        self.assertIn("journal jp --since 1793577600", calls[0])
         self.assertEqual(common.read_state(soak.config, "logs.json")["jp"]["cursor"], "c3")
         lines = common.read_day(soak.root / "logs/jp", DAY)
         self.assertEqual([line["msg"][:3] for line in lines], ["one", "two", '{"t'])
@@ -165,7 +171,7 @@ class LogCursor(unittest.TestCase):
         scripts = []
 
         def fake(argv, limit, timeout):
-            scripts.append(argv[-1])
+            scripts.append(argv[argv.index("--command") + 1] + " ")
             if len(scripts) == 1:
                 return ["2026-11-02T01:00:00.123456789Z a", "2026-11-02T01:00:01.000000001Z b"], True, ""
             return ["2026-11-02T01:00:02.5Z c"], False, ""
@@ -174,11 +180,55 @@ class LogCursor(unittest.TestCase):
             logs.collect(soak.config)
             self.assertEqual(common.read_state(soak.config, "logs.json")["hk"]["since_ns"], 1793581201000000002)
             logs.collect(soak.config)
-        self.assertIn("--since 1793577600.000000000 ", scripts[0])
-        self.assertIn("--since 1793581201.000000002 ", scripts[1])
-        self.assertIn("--until 1793584770.000000000 ", scripts[1])
+        self.assertEqual(scripts[0], "docker-logs hk 1793577600.000000000 1793584770.000000000 ")
+        self.assertEqual(scripts[1], "docker-logs hk 1793581201.000000002 1793584770.000000000 ")
         self.assertEqual(common.read_state(soak.config, "logs.json")["hk"]["since_ns"], 1793584770000000001)
         self.assertEqual([line["msg"] for line in common.read_day(soak.root / "logs/hk", DAY)], ["a", "b", "c"])
+        soak.close()
+
+
+class LogGaps(unittest.TestCase):
+    def test_a_rotated_previous_window_records_a_possible_gap(self):
+        soak = Soak({"nodes": {"hk": {"host": "local", "container": "meshway-hk"}}, "server": {}})
+        common.write_state(soak.config, "logs.json", {"hk": {"since_ns": 1793581200000000000,
+                                                             "previous": [1793577600000000000, 1793581199999999999, 5]}})
+        counted = []
+
+        def probe(argv, timeout):
+            counted.append(argv[argv.index("--command") + 1])
+            return common.Result(0, "@@count 0\n" if len(counted) == 1 else "@@count 3\n", "", 1, argv)
+        moment = common.parse_time("2026-11-02T02:00:00Z")
+        with mock.patch.object(logs, "stream", return_value=(["2026-11-02T01:30:00Z x"], False, "")), \
+                mock.patch.object(common, "run", side_effect=probe), mock.patch.object(common, "now", return_value=moment):
+            self.assertTrue(logs.collect(soak.config)["hk"]["gap"])
+            with mock.patch.object(common, "now", return_value=moment + timedelta(hours=1)):
+                self.assertNotIn("gap", logs.collect(soak.config)["hk"])
+        self.assertEqual(counted[0], "docker-logs-count hk 1793577600.000000000 1793581199.999999999")
+        self.assertEqual(counted[1], "docker-logs-count hk 1793581200.000000000 1793584770.000000000")
+        gaps = common.read_jsonl(soak.root / "state/log-gaps.jsonl")
+        self.assertEqual([(g["node"], g["since"]) for g in gaps], [("hk", "2026-11-02T00:59:59.999999Z")])
+        with mock.patch.object(common, "now", return_value=moment):
+            result = report.analyze(soak.config, [DAY])
+            text = report.render(soak.config, result, "t")
+        self.assertIn("可能缺行", text)
+        self.assertEqual(result["gates"][-1]["result"], "fail")
+        soak.close()
+
+    def test_an_unreadable_journal_cursor_resumes_from_the_last_stored_time(self):
+        soak = Soak({"nodes": {"jp": {"host": "local", "unit": "meshwayd"}}, "server": {}})
+        common.write_state(soak.config, "logs.json", {"jp": {"cursor": "gone", "last_t": "2026-11-02T01:00:00.000000Z"}})
+        commands = []
+
+        def fake(argv, limit, timeout):
+            commands.append(argv[argv.index("--command") + 1])
+            if "--after-cursor" in commands[-1]:
+                return [], False, "rc 1: Failed to seek to cursor"
+            return [LogCursor.entry(None, "c9", 3601, "again")], False, ""
+        with mock.patch.object(logs, "stream", side_effect=fake):
+            logs.collect(soak.config)
+        self.assertEqual(commands, ["journal jp --after-cursor gone", "journal jp --since 1793581200"])
+        self.assertEqual(common.read_state(soak.config, "logs.json")["jp"]["cursor"], "c9")
+        self.assertIn("cursor", common.read_jsonl(soak.root / "state/log-gaps.jsonl")[0]["reason"])
         soak.close()
 
 
@@ -421,19 +471,36 @@ class Faults(unittest.TestCase):
         self.assertEqual(sorted(r["id"] for r in ends), ["later", "now"])
         soak.close()
 
-    def test_nft_rules_stay_in_their_own_table_and_placeholders_refuse_to_run(self):
-        udp = fault.nft_rules({"match": "udp"}, [])
-        self.assertIn("table inet meshway_soak_fault", udp)
-        self.assertEqual(udp.count("meta l4proto udp drop"), 3)
-        self.assertIn("iif lo accept", udp)
-        tcp = fault.nft_rules({"match": "tcp-to-server"}, ["104.21.1.1", "2606:4700::1"])
-        self.assertIn("ip daddr { 104.21.1.1 } meta l4proto tcp drop", tcp)
-        self.assertIn("ip6 daddr { 2606:4700::1 }", tcp)
-        with self.assertRaises(fault.FaultError):
-            fault.nft_rules({"match": "tcp-to-server"}, [])
-        with self.assertRaises(fault.FaultError):
-            fault.template({"command": "REPLACE: from PROD-1"}, "command")
-        self.assertEqual(fault.template({"command": "up {version}", "params": {"version": "v1"}}, "command"), "up v1")
+    def test_fault_actions_ask_the_gate_for_their_forms(self):
+        faults = [{"id": "u", "day": 2, "at": "10:00", "action": "server_upgrade", "version": "v0.1.0-alpha.23"},
+                  {"id": "r", "day": 4, "at": "10:00", "action": "server_rotate_key"},
+                  {"id": "s", "day": 3, "at": "10:00", "action": "server_stop", "duration_s": 5},
+                  {"id": "k", "day": 5, "at": "12:00", "action": "kill9", "node": "hk"},
+                  {"id": "n", "day": 6, "at": "12:00", "action": "nft_drop", "node": "hk", "match": "tcp443", "duration_s": 600},
+                  {"id": "e", "day": 6, "at": "14:00", "action": "exit_profile", "node": "jp", "profile": "us-exit",
+                   "duration_s": 600}]
+        soak, config = self.config(faults)
+        words = []
+        with mock.patch.object(fault, "DRY", True), mock.patch("builtins.print"), \
+                mock.patch.object(fault, "gate", side_effect=lambda c, t, w, timeout: words.append(w) or
+                                  common.Result(0, "", "", 0, w)):
+            for item in faults:
+                self.assertTrue(fault.execute(config, item), item["id"])
+        self.assertEqual(words, [
+            ["server-upgrade", "v0.1.0-alpha.23"], ["server-rotate-key"], ["server-stop"], ["server-start"],
+            ["inspect", "hk"], ["kill9", "hk"], ["nft-drop", "hk", "tcp443", "600"], ["nft-clear", "hk"],
+            ["exit-select", "jp", "us-exit"], ["curl-loop", "jp", "600"], ["exit-default", "jp"]])
+        soak.close()
+
+    def test_kill9_refuses_a_target_without_a_restart_policy(self):
+        soak, config = self.config([{"id": "k", "day": 1, "at": "10:00", "action": "kill9", "node": "hk"}])
+        answers = {"status": common.Result(0, '{"processId": 7}', "", 0, []),
+                   "inspect": common.Result(0, '{"Status":"running"} 0 no sha256:x', "", 0, [])}
+        with mock.patch.object(fault, "gate", side_effect=lambda c, t, w, timeout: answers[w[0]]):
+            self.assertFalse(fault.execute(config, config.data["faults"][0]))
+        end = common.read_jsonl(soak.root / "faults.jsonl")[-1]
+        self.assertIn("restart policy 'no'", end["error"])
+        soak.close()
 
     def test_dry_runs_do_not_claim_the_schedule(self):
         soak, config = self.config([{"id": "a", "day": 1, "at": "10:00", "action": "kill9", "node": "jp"}])

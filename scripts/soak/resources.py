@@ -15,24 +15,7 @@ import sys
 
 import common
 
-# Prints: @@pid, @@a <epoch> <children ticks>, thread lines, @@net (snmp), @@b ..., thread lines, @@net, @@mem ...
-SCRIPT = r"""
-W=%(window)d
-p=$(%(pid)s 2>/dev/null); [ -n "$p" ] && [ "$p" != 0 ] || { echo "@@error no meshwayd"; exit 0; }
-echo "@@pid $p $(cut -d' ' -f22 /proc/$p/stat) $(awk '/^btime/{print $2}' /proc/stat) $(getconf CLK_TCK) $(nproc)"
-snap() {
-  echo "@@$1 $(date +%%s.%%N) $(awk '{print $16+$17}' /proc/$p/stat)"
-  for t in /proc/$p/task/*; do echo "T ${t##*/} $(cut -d' ' -f1 $t/schedstat 2>/dev/null || echo 0) $(tr ' ' _ < $t/comm 2>/dev/null)"; done
-  awk '/^(Udp|Tcp):/ {print "N", $0}' /proc/net/snmp
-}
-snap a
-sleep $W
-snap b
-echo "@@mem $(awk '/^VmRSS:/{r=$2} /^VmHWM:/{h=$2} END{print r, h}' /proc/$p/status)"
-echo "@@fd $(ls /proc/$p/fd | wc -l) $(ls -l /proc/$p/fd 2>/dev/null | grep -c 'socket:')"
-echo "@@exe $(sha256sum /proc/$p/exe | cut -c1-16)"
-echo "@@load $(cut -d' ' -f1-3 /proc/loadavg)"
-"""
+# The fixed probe script is gate.RESOURCES (it runs on the node's host); this module parses its output.
 
 
 def parse(text: str) -> dict:
@@ -99,7 +82,7 @@ def parse(text: str) -> dict:
 
 def node_resources(config: common.Config, node: str, window: int) -> dict:
     at = common.now()
-    result = common.run_node(config, node, common.shell(SCRIPT % {"window": window, "pid": common.pid_expr(config, node)}), window + 60)
+    result = common.node_call(config, node, "resources", str(window), timeout=window + 60)
     record = {"t": common.iso(at), "node": node, "rc": result.rc}
     record.update(parse(result.out))
     if result.rc != 0 and "error" not in record:

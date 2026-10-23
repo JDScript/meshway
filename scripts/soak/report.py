@@ -345,7 +345,7 @@ def trend(values: list[dict], metric: str, thresholds: dict, horizon_days: float
 def ping_edge(config: common.Config, edge: list[str]) -> dict:
     source, target = edge
     destination = config.nodes[target].get("mesh_name", target) if target in config.nodes else target
-    result = common.run_node(config, source, ["meshway", "--json", "ping", "-c", "10", destination], 120)
+    result = common.node_call(config, source, "ping", destination, timeout=120)
     record = {"t": common.iso(common.now()), "kind": "ping", "src": source, "dst": target, "rc": result.rc}
     for line in result.out.splitlines():
         try:
@@ -375,13 +375,13 @@ def throughput(config: common.Config) -> dict | None:
     server_result = {}
 
     def serve():
-        server_result["r"] = common.run_node(config, spec["server"], ["timeout", str(seconds + 50), "iperf3", "-s",
-                                                                       "-1", "-p", str(port)], seconds + 60)
+        server_result["r"] = common.node_call(config, spec["server"], "iperf-server", str(port), str(seconds + 50),
+                                              timeout=seconds + 60)
     thread = threading.Thread(target=serve)
     thread.start()
     time.sleep(3)
-    client = common.run_node(config, spec["client"], ["iperf3", "-c", spec["target"], "-p", str(port), "-t",
-                                                      str(seconds), "-b", f"{mbit}M", "-J"], seconds + 40)
+    client = common.node_call(config, spec["client"], "iperf-client", spec["target"], str(port), str(seconds),
+                              str(mbit), timeout=seconds + 40)
     thread.join(seconds + 70)
     try:
         report = json.loads(client.out)
@@ -469,11 +469,13 @@ def analyze(config: common.Config, days: list[str]) -> dict:
     probes = []
     for day in days:
         probes += common.read_day(config.dir("samples", "probes"), day)
+    gap_path = config.dir("state", "log-gaps.jsonl")
+    gaps = [r for r in (common.read_jsonl(gap_path) if gap_path.exists() else []) if r["t"][:10] in days]
     disk_stops = [r for r in (common.read_jsonl(config.dir("state", "disk-stop.jsonl"))
                               if config.dir("state", "disk-stop.jsonl").exists() else [])
                   if common.day_of(common.parse_time(r["t"])) in days]
     result = {"days": days, "t0": common.iso(config.t0) if config.t0 else None, "generated": common.iso(common.now()),
-              "nodes": nodes, "server": server, "probes": probes,
+              "nodes": nodes, "server": server, "probes": probes, "log_gaps": gaps,
               "faults": [fault_view(w) for w in windows if w["start"] is None or common.day_of(w["start"]) in days
                          or (w.get("planned_at") and w["planned_at"][:10] in days)],
               "disk": {"free_gib": round(common.free_gib(config.root), 1), "floor_gib": config.min_free_gib,
@@ -554,7 +556,9 @@ def gates(config: common.Config, result: dict) -> list[dict]:
                     f"失败 {bad_edges or '无'}；缺测 {missing_edges or '无'}"))
     coverage = {n: (v["status"]["samples"], v["status"]["expected"]) for n, v in nodes.items()}
     thin = [f"{n} {s}/{e}" for n, (s, e) in coverage.items() if e and s < 0.9 * e]
-    out.append(gate("采样覆盖 ≥ 90 %（不是门槛，缺测不填零）", not thin, ", ".join(thin) or "全部 ≥ 90 %"))
+    gaps = sorted({g["node"] for g in result.get("log_gaps", [])})
+    out.append(gate("采样覆盖 ≥ 90 %、日志无缺行（不是门槛，缺测不填零）", not thin and not gaps,
+                    (", ".join(thin) or "样本全部 ≥ 90 %") + (f"；可能缺行：{', '.join(gaps)}" if gaps else "")))
     return out
 
 
@@ -630,6 +634,10 @@ def render(config: common.Config, result: dict, title: str) -> str:
             lines.append(f"| {t[:19]} | {name} | {what} | {why.replace('|', '/')[:240]} | {mark(tag)} |")
     else:
         lines.append("无。")
+    if result.get("log_gaps"):
+        lines += ["", "## 可能缺行", ""]
+        for item in result["log_gaps"]:
+            lines.append(f"- ⚠️ {item['t'][:19]} {item['node']}：{item['reason']}（自 {item['since'][:19]}）")
     lines += ["", "## sync 失败（日志）", "", "| 节点 | 计划内 | 计划外·可达性 | 计划外·其他 |", "| --- | --- | --- | --- |"]
     for name, item in result["nodes"].items():
         f = item["logs"]["sync_failures"]

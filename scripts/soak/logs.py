@@ -13,6 +13,12 @@ next run (the cursor / since only advances over what was stored). A crash
 between appending and saving the cursor repeats at most one batch; the report
 removes exact duplicates.
 
+Possible loss is recorded in state/log-gaps.jsonl (the daily report lists it as 可能缺行): a journal cursor that
+can no longer be read (vacuumed; reading resumes from the last stored time), or a docker log that keeps none of
+the lines of the last window that had any (rotated past our window end).
+
+All reads go through the host's gate (gate.py).
+
 usage: logs.py [--config PATH]
 """
 from __future__ import annotations
@@ -76,16 +82,27 @@ def journal_entry(line: str) -> dict | None:
             "msg": message or "", "cursor": entry.get("__CURSOR")}
 
 
+def gap(config: common.Config, name: str, reason: str, since: str) -> None:
+    """Record that lines may be missing (rotation / vacuum) for the report."""
+    common.append_jsonl(config, config.dir("state", "log-gaps.jsonl"),
+                        [{"t": common.iso(common.now()), "node": name, "since": since, "reason": reason}])
+
+
 def collect_journal(config: common.Config, node: str, state: dict) -> dict:
-    spec = config.nodes[node]
-    unit = spec.get("unit", "meshwayd")
-    inner = ["journalctl", "-u", unit, "-o", "json", "--no-pager"]
+    start = config.t0 or (common.now() - timedelta(hours=1))
+    since_words = ["--since", str(int(start.timestamp()))]
     if state.get("cursor"):
-        inner += ["--after-cursor", state["cursor"]]
+        words = ["--after-cursor", state["cursor"]]
     else:
-        start = config.t0 or (common.now() - timedelta(hours=1))
-        inner += ["--since", start.strftime("%Y-%m-%d %H:%M:%S UTC")]
-    lines, truncated, error = stream(common.node_argv(config, node, inner), MAX_LINES, TIMEOUT)
+        words = since_words
+    argv = common.gate_argv(config, config.nodes[node]["host"], ["journal", node, *words])
+    lines, truncated, error = stream(argv, MAX_LINES, TIMEOUT)
+    if error and not lines and state.get("cursor") and state.get("last_t"):
+        # The cursor's entry was vacuumed: continue from the last stored time; the report removes the overlap.
+        gap(config, node, f"journal cursor no longer readable ({error[:120]})", state["last_t"])
+        resume = str(int(common.parse_time(state["last_t"]).timestamp()))
+        argv = common.gate_argv(config, config.nodes[node]["host"], ["journal", node, "--since", resume])
+        lines, truncated, error = stream(argv, MAX_LINES, TIMEOUT)
     records = [r for r in (journal_entry(line) for line in lines) if r]
     if error and not records:
         return {"error": error, "lines": 0}
@@ -94,6 +111,7 @@ def collect_journal(config: common.Config, node: str, state: dict) -> dict:
         return {"error": "disk floor reached; nothing stored", "lines": 0}
     if records:
         state["cursor"] = records[-1]["cursor"]
+        state["last_t"] = records[-1]["t"]
     state["at"] = common.iso(common.now())
     return {"lines": len(records), "truncated": truncated, "error": error or None}
 
@@ -101,6 +119,10 @@ def collect_journal(config: common.Config, node: str, state: dict) -> dict:
 def to_ns(moment: datetime) -> int:
     whole = moment.replace(microsecond=0)
     return int(whole.timestamp()) * 1_000_000_000 + moment.microsecond * 1000
+
+
+def from_ns(ns: int) -> datetime:
+    return datetime.fromtimestamp(ns // 1_000_000_000, timezone.utc).replace(microsecond=ns % 1_000_000_000 // 1000)
 
 
 def docker_since(ns: int) -> str:
@@ -123,7 +145,8 @@ def docker_line(line: str) -> dict | None:
     return {"t": stamp if stamp.endswith("Z") else common.iso(moment), "msg": message}
 
 
-def collect_docker(config: common.Config, name: str, host: str, container: str, state: dict) -> dict:
+def collect_docker(config: common.Config, name: str, state: dict) -> dict:
+    host = common.host_of(config, name)
     until_ns = to_ns(common.now() - LAG)
     if "since_ns" in state:
         since_ns = state["since_ns"]
@@ -132,12 +155,23 @@ def collect_docker(config: common.Config, name: str, host: str, container: str, 
         since_ns = to_ns(start)
     if since_ns > until_ns:
         return {"lines": 0}
-    script = (f"docker logs --timestamps --since {docker_since(since_ns)} --until {docker_since(until_ns)} "
-              f"{container} 2>&1")
-    lines, truncated, error = stream(common.host_argv(config, host, common.shell(script)), MAX_LINES, TIMEOUT)
+    result: dict = {}
+    previous = state.get("previous")  # [since_ns, until_ns, lines stored from that window]
+    if previous and previous[2] > 0:
+        # Rotation check: if docker no longer keeps any line of the previous window, its oldest kept line is newer
+        # than our window start and lines in between may be gone (a partly kept window loses nothing new).
+        probe = common.run(common.gate_argv(config, host, ["docker-logs-count", name, docker_since(previous[0]),
+                                                           docker_since(previous[1])]), 120)
+        counted = [line.split()[1] for line in probe.out.splitlines() if line.startswith("@@count ")]
+        if probe.ok and counted == ["0"]:
+            gap(config, name, f"docker keeps none of the {previous[2]} lines of the previous window (rotated)",
+                common.iso(from_ns(previous[1])))
+            result["gap"] = True
+    argv = common.gate_argv(config, host, ["docker-logs", name, docker_since(since_ns), docker_since(until_ns)])
+    lines, truncated, error = stream(argv, MAX_LINES, TIMEOUT)
     records = [r for r in (docker_line(line) for line in lines) if r]
     if error and not records:
-        return {"error": error, "lines": 0}
+        return {"error": error, "lines": 0, **result}
     if not common.append_by_day(config, config.dir("logs", name), records):
         return {"error": "disk floor reached; nothing stored", "lines": 0}
     if truncated and records:
@@ -145,8 +179,10 @@ def collect_docker(config: common.Config, name: str, host: str, container: str, 
         state["since_ns"] = stamp_ns(records[-1]["t"]) + 1
     else:
         state["since_ns"] = until_ns + 1
+    if records:  # the reference for the next rotation check is the last window that had lines
+        state["previous"] = [since_ns, stamp_ns(records[-1]["t"]) if truncated else until_ns, len(records)]
     state["at"] = common.iso(common.now())
-    return {"lines": len(records), "truncated": truncated, "error": error or None}
+    return {"lines": len(records), "truncated": truncated, "error": error or None, **result}
 
 
 def sources(config: common.Config) -> list[tuple[str, str]]:
@@ -169,11 +205,8 @@ def collect(config: common.Config) -> dict:
         try:
             if kind == "journal":
                 result = collect_journal(config, name, source_state)
-            elif name == "server":
-                result = collect_docker(config, name, config.server["host"], config.server["container"], source_state)
             else:
-                spec = config.nodes[name]
-                result = collect_docker(config, name, spec["host"], spec["container"], source_state)
+                result = collect_docker(config, name, source_state)
         except Exception as error:  # one source never stops the others
             result = {"error": f"{type(error).__name__}: {error}", "lines": 0}
         return name, source_state, result

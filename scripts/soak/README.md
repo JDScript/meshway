@@ -4,24 +4,28 @@ v0.1.0 [里程碑 C](../../docs/v2/process.md#v0-1-gate) 的 7 天 prod soak：�
 
 | 文件 | 作用 |
 | --- | --- |
-| `common.py` | 配置、远程执行（本机／ssh／前缀）、时间、JSONL 追加与按日压缩、30 天保留、磁盘下限、`flock` |
-| `sample.py` | 每 5 分钟：各节点 `meshway --json status`（附 daemon PID 与启动时刻）、Server 健康与容器状态 |
+| `common.py` | 配置、经 gate 的远程调用（ssh／本机／前缀）、时间、JSONL 追加与按日压缩、30 天保留、磁盘下限、`flock`、gate spec 渲染 |
+| `gate.py` | 装在每台被采集主机上的 forced command：只执行允许表中的命令形（见下） |
+| `sample.py` | 每 5 分钟：各节点 `status`（`meshway --json status`＋daemon PID 与启动时刻）、Server 健康与容器状态 |
 | `resources.py` | 每小时：60 秒 `schedstat` 每线程 CPU、进程合计、已回收子进程（`nft`／`sh`）、RSS、fd、socket、netns 包计数 |
-| `logs.py` | 每小时：journal（cursor 续读）／`docker logs`（不重叠时间窗）增量 |
+| `logs.py` | 每小时：journal（cursor 续读）／`docker logs`（不重叠时间窗）增量，缺行检测 |
 | `report.py` | 每天：日报；`--final` 整段判定；`probe` 子命令做每日 ping 与吞吐 |
-| `fault.py` | 每分钟 `due`：到点执行故障并写 `faults.jsonl` 标记；`run`／`recover`／`list` |
-| `config.example.json` | prod 配置模板（`REPLACE` 占位全部填完才能加载） |
+| `fault.py` | 每分钟 `due`：到点执行故障并写 `faults.jsonl` 标记；`run`／`recover`／`list`／`check` |
+| `render.py` | 从 `config.json` 渲染 gate spec、`authorized_keys` 行与 gate 安装命令、crontab 块 |
+| `install.sh` | 采集机上的幂等安装／`--uninstall` |
+| `config.example.json` | prod 配置模板（`REPLACE` 占位全部填完才能加载）；协调者的私有草稿在 `.meshway/prod/soak/config.json` |
 
 ## 目录
 
 ```
 ~/meshway-soak/
-  config.json             配置（含 t0、节点、边、故障日程、门槛）
+  config.json             配置（0600；t0、主机、节点、边、Server、故障日程、门槛）
   bin/                    本目录的脚本
   keys/collector_ed25519  采集专用 key（0600）
-  known_hosts             钉住的各节点 host key
+  known_hosts             钉住的各主机 host key
+  gate/<host>.json        渲染出的 gate spec（kr 本机直接用；其余拷到对应主机）
   faults.jsonl            故障开始／结束／跳过标记（只追加）
-  state/                  logs.json（journal cursor、docker since）、*.lock、各任务 *.log、cron.log、disk-stop.jsonl
+  state/                  logs.json（journal cursor、docker 时间窗）、log-gaps.jsonl、*.lock、各任务 *.log、cron.log、disk-stop.jsonl
   samples/<node>/<日>.jsonl            5 分钟 Status 样本（node = it7 jp kr planck hk server）
   samples/<node>/resources/<日>.jsonl  每小时资源样本
   samples/probes/<日>.jsonl            每日 ping／吞吐
@@ -31,49 +35,72 @@ v0.1.0 [里程碑 C](../../docs/v2/process.md#v0-1-gate) 的 7 天 prod soak：�
 
 日期都是 UTC。`samples/`、`logs/`、`reports/` 中带日期的文件保留 30 天；样本与日志过日后压缩。磁盘剩余 < 10 GiB（`min_free_gib`）时所有写入停止（`faults.jsonl` 标记与 `state/disk-stop.jsonl` 除外，均为几十字节），日报首行标红；空间恢复后自动继续写入。
 
-## 安装（协调者在 PROD-1 合流后执行）
+## 节点形态（prod）
+
+| 节点 | 主机 | 形态 | gate 账户 |
+| --- | --- | --- | --- |
+| it7 | us-lax-it7（用户的机器） | systemd `meshwayd` | root |
+| jp | jp-tyo-arm64 | systemd `meshwayd` | ubuntu（`sudo -n`） |
+| kr | kr-icn-arm64（采集机本机） | 容器 `meshway-kr`（`/opt/meshway-field`，`sudo docker`）；Ubuntu 22.04 的 resolved 后端不可用（D4，DNS-2 修复后回物理机，届时只改 `nodes.kr` 为 `unit`） | 本机，无 key |
+| planck | ai4ce-planck | 容器 `meshway-planck`；Server 容器 `meshway-prod-server` 也在这里 | zj2631（docker 组） |
+| hk | cn-hk-dmit | 容器 `meshway-hk` | root |
+
+节点 `kind` 只有两种：有 `unit` 的是 systemd 节点（journal、`systemctl`、`MainPID`），有 `container` 的是容器节点（`docker logs`、`docker exec`、容器内唯一的 `meshwayd`）。只有 it7 是出口（`relay_or_exit`）；prod 全直连，没有中继。
+
+## 采集 key 与 gate
+
+采集 key 在每台主机的 `authorized_keys` 中只能运行 gate：
+
+```
+command="python3 ~/.meshway-soak-gate/gate.py --spec ~/.meshway-soak-gate/<host>.json <host>",from="193.123.237.166",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-user-rc ssh-ed25519 AAAA… meshway-soak-collector
+```
+
+gate 读 `SSH_ORIGINAL_COMMAND`，用 shlex 切词（不交给 shell），要求与允许表中的一个命令形完全一致、每个参数逐个校验（节点必须属于本机，容器名／unit 来自 spec，cursor、时间、端口、秒数、版本号各有严格格式，ping 目标与 iperf 对端来自配置的边与吞吐设置）；不符的一律以 126 退出并写 syslog（`meshway-soak-gate`，auth facility）与 stderr。允许的命令以固定参数数组 `execvp` 执行；只有 gate 自带的固定脚本（PID／启动时刻、60 秒 schedstat 窗口、curl 循环、nft 兜底）在 `sh -c` 中运行，请求方的字只以校验过的整数（秒数）进入这些脚本。kr 本机由采集脚本以 `--command` 直接调用同一个 gate。
+
+| 主机 | 读取（本机节点） | 故障（只有日程点名的） |
+| --- | --- | --- |
+| it7 | `status it7`、`resources it7 <s>`、`inspect it7`（`systemctl show`）、`journal it7 --after-cursor C｜--since T`、`ping it7 <jp/kr/planck/hk 的 Mesh 名>` | `restart it7`（`systemctl restart meshwayd`） |
+| jp | 同上（jp）、`iperf-client jp <kr Mesh IPv4> 5299 <≤30 s> <≤100 Mbit>` | `restart jp`；若 D6 选 jp：`exit-select jp us-exit`、`exit-default jp`、`curl-loop jp <s>` |
+| kr | `status`／`resources`／`inspect`／`docker-logs`／`docker-logs-count kr`、`ping kr …`、`iperf-server kr 5299 <s>` | `kill9 kr` |
+| planck | 同上（planck）；`inspect server`、`docker-logs`／`docker-logs-count server` | `nft-drop planck udp <s>`、`nft-clear planck`；Server：`server-upgrade <vX.Y.Z[-pre.N]>`、`server-stop`、`server-start`、`server-rotate-key` |
+| hk | 同上（hk） | `docker-restart hk`、`nft-drop hk tcp443 <s>`、`nft-clear hk`；若 D6 选 hk：`exit-select hk us-exit`、`exit-default hk`、`curl-loop hk <s>` |
+
+所有主机另有 `self-test`（返回 spec 中的节点与故障，以及 `sudo -n` 是否可用）。完整的形与参数格式见 `gate.py` 文档字符串，测试 `scripts/test_soak_gate.py` 逐条覆盖允许表、越权与注入（`;`、`$()`、反引号、换行、多余参数、越界数值、别的主机的节点）。
+
+## 安装（协调者在采集机上执行）
 
 1. kr 上：`sudo apt-get install -y python3 zstd util-linux`；`timedatectl` 确认时区为 UTC（cron 按系统时区解释时刻）。
-2. 目录与脚本（从协调者的 Mac）：
-   ```sh
-   ssh ubuntu@193.123.237.166 'mkdir -p ~/meshway-soak/{bin,keys,state,samples,logs,reports} && chmod 700 ~/meshway-soak ~/meshway-soak/keys'
-   scp scripts/soak/*.py scripts/soak/config.example.json ubuntu@193.123.237.166:meshway-soak/bin/
-   ```
-3. 采集 key（kr 上）：`ssh-keygen -t ed25519 -N '' -C meshway-soak-collector -f ~/meshway-soak/keys/collector_ed25519`。
-4. 各远端账户的 `authorized_keys` 追加一行（it7 `root`，jp `ubuntu`，planck `zj2631`，hk 的 Docker 宿主账户）：
-   ```
-   from="193.123.237.166",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA… meshway-soak-collector
-   ```
-   ssh 默认 `AddressFamily=inet`，使来源恒为该 IPv4。先在 kr 上 `curl -4 https://ifconfig.me` 核对出站地址就是 193.123.237.166。注意：planck 的 `zj2631` 属于 docker 组，等同宿主 root；该行只授予采集机。
-5. host key：对每个目标 `ssh-keyscan -t ed25519 <host> >> ~/meshway-soak/known_hosts`，并与目标上 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 的指纹带外比对；配置中 `StrictHostKeyChecking=yes`。
-6. sudo：jp（ssh）与 kr（本机）需要免密 `sudo -n`（读 owner-only 的 Node socket、journal、`/proc/<pid>/fd`，以及 D5 的 `systemctl restart`／`kill -9`）；Oracle Ubuntu 镜像的 `ubuntu` 默认即是。it7 以 root 登录。容器节点经宿主 `docker exec`（容器内为 root）。
-7. 配置：`cp bin/config.example.json config.json`，按 PROD-1 README 填完所有 `REPLACE`（t0、jp／hk 地址、容器名、Mesh 主机名、kr 的 Mesh IPv4、D2 升级与 D4 轮换命令、D2 目标版本）。`us-exit` 必须是 jp 被允许选择的方案。
-8. 冒烟（不注入）：
+2. 从 Mac 拷脚本：`ssh ubuntu@193.123.237.166 'mkdir -p -m 700 ~/meshway-soak-src ~/meshway-soak' && scp scripts/soak/* ubuntu@193.123.237.166:meshway-soak-src/`，再拷私有配置 `scp .meshway/prod/soak/config.json ubuntu@193.123.237.166:meshway-soak/config.json`（先填好剩余的 3 个 `REPLACE`）。
+3. kr 上 `sh ~/meshway-soak-src/install.sh --no-cron`：复制脚本到 `~/meshway-soak/bin/`、建目录（0700）、生成采集 key（已存在则不动）、渲染 `gate/<host>.json`、打印每台远端主机的 gate 安装命令与 `authorized_keys` 行。它不写任何其他主机；没有 `config.json` 时先放一份模板并停下。
+4. 在已有各主机访问权的机器上执行打印出的命令：建 `~/.meshway-soak-gate/`（0700），拷 `gate.py` 与该主机的 spec（可在 Mac 上用 `python3 scripts/soak/render.py --config .meshway/prod/soak/config.json gates <dir>` 渲染出同样的 spec），`self-test`，再把那一行追加到该账户的 `authorized_keys`。先在 kr 上 `curl -4 https://ifconfig.me` 核对出站地址是 193.123.237.166（ssh 默认 `AddressFamily=inet`）。
+5. host key：对每个目标 `ssh-keyscan -t ed25519 <host> >> ~/meshway-soak/known_hosts`，与目标上 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 的指纹带外比对（配置里 `StrictHostKeyChecking=yes`）。
+6. 冒烟（不注入）：
    ```sh
    cd ~/meshway-soak
+   python3 bin/fault.py --config config.json check      # 每台 gate 的 self-test 与日程一致；kr 容器的 RestartPolicy、systemd 的 Restart=
    python3 bin/sample.py --config config.json && tail -1 state/sample.log
    python3 bin/resources.py --config config.json --window 5 && tail -1 state/resources.log
    python3 bin/logs.py --config config.json && tail -1 state/logs.log
    python3 bin/report.py --config config.json probe && tail -1 state/probe.log
-   python3 bin/fault.py --config config.json list
-   python3 bin/fault.py --config config.json --dry-run --force run d6-planck-udp-drop   # 只打印命令，不写标记
+   python3 bin/fault.py --config config.json --dry-run --force run d6-planck-udp-drop   # 只打印 gate 调用，不写标记
    ```
    冒烟样本落在 t0 之前，报告按 `[t0, t0+7d)` 截取，不计入。
-9. `crontab -e` 写入下表。
+7. `sh ~/meshway-soak/bin/install.sh`（不带 `--no-cron`）安装 cron 块：只替换 `# BEGIN meshway-soak`／`# END meshway-soak` 之间的行，其他 crontab 行不动。`sh install.sh --uninstall` 只删除该块。
+
+改 `config.json` 中影响 gate 的部分（节点、边、吞吐、故障日程、D6 节点）后重跑 `install.sh` 并重新分发对应主机的 spec；`fault.py check` 会发现 spec 与配置不一致。
 
 ## cron
 
+`install.sh` 渲染的块（`$S` = `~/meshway-soak`）：
+
 ```
-SHELL=/bin/sh
-PATH=/usr/local/bin:/usr/bin:/bin
-S=/home/ubuntu/meshway-soak
 */5 * * * * flock -n $S/state/sample.lock    python3 $S/bin/sample.py    --config $S/config.json >>$S/state/cron.log 2>&1
-1 * * * *   flock -n $S/state/resources.lock python3 $S/bin/resources.py --config $S/config.json >>$S/state/cron.log 2>&1
-3 * * * *   flock -n $S/state/logs.lock      python3 $S/bin/logs.py      --config $S/config.json >>$S/state/cron.log 2>&1
-30 23 * * * flock -n $S/state/probe.lock     python3 $S/bin/report.py    --config $S/config.json probe >>$S/state/cron.log 2>&1
-10 0 * * *  flock -n $S/state/report.lock    python3 $S/bin/report.py    --config $S/config.json >>$S/state/cron.log 2>&1
-20 0 * * *  flock -n $S/state/final.lock     python3 $S/bin/report.py    --config $S/config.json --final --no-collect >>$S/state/cron.log 2>&1
-* * * * *   flock -n $S/state/fault.lock     python3 $S/bin/fault.py     --config $S/config.json due >>$S/state/cron.log 2>&1
+1 * * * *   flock -n $S/state/resources.lock python3 $S/bin/resources.py --config $S/config.json …
+3 * * * *   flock -n $S/state/logs.lock      python3 $S/bin/logs.py      --config $S/config.json …
+30 23 * * * flock -n $S/state/probe.lock     python3 $S/bin/report.py    --config $S/config.json probe …
+10 0 * * *  flock -n $S/state/report.lock    python3 $S/bin/report.py    --config $S/config.json …
+20 0 * * *  flock -n $S/state/final.lock     python3 $S/bin/report.py    --config $S/config.json --final --no-collect …
+* * * * *   flock -n $S/state/fault.lock     python3 $S/bin/fault.py     --config $S/config.json due …
 ```
 
 - 资源窗口 :01:00–:02:05 与 5 分钟样本、日志任务错开（Status 读取本身会唤醒 daemon）。
@@ -99,22 +126,28 @@ S=/home/ubuntu/meshway-soak
 
 30 天保留合计约 100 MiB（压缩后）；10 GiB 下限只用于防止宿主被意外填满。每次日志读取每来源最多 200,000 行（其余下一次继续）。
 
+## docker 日志轮转
+
+节点容器用 Docker `local` 驱动 10m×3，Server 容器用 `json-file` 50m×10。按实测日志量（退化状态下每节点每小时 ≤ 300 KiB，Server 更少），两次读取（每小时一次）之间写满一个 10 MiB 文件需要 30 小时以上，所以轮转不会在两次读取之间丢掉未读的行。`logs.py` 仍会检查：每次读取前数一下上一个有内容的时间窗在 docker 中还剩几行；一行都不剩（最早保留的行晚于上次时间窗末尾）就在 `state/log-gaps.jsonl` 记一条，日报的“可能缺行”节列出，覆盖门槛行标为未过。journal 的 cursor 被 vacuum 读不出时同样记一条，并从上次存下的最后时刻续读（重叠部分由报告去重）。
+
 ## 故障日程
 
-T0 所在 UTC 日为 D1。`config.json` 的 `faults[]` 定义（`day`、`at`、`action` 与参数）。每次注入：`start` 标记（`planned_at`、`affects`、`grace_min`）→ 动作 → `end` 标记（`ok`、`detail`、`error`）；动作抛错、超时或进程被打断都会留下 `end`（打断的在下一次 `due`／`recover` 时执行清理并写 `interrupted: true`）。
+T0 所在 UTC 日为 D1。`config.json` 的 `faults[]` 定义（`day`、`at`、`action` 与参数）。每次注入：`start` 标记（`planned_at`、`affects`、`grace_min`）→ 经 gate 的动作 → `end` 标记（`ok`、`detail`、`error`）；动作失败、超时或进程被打断都会留下 `end`（打断的在下一次 `due`／`recover` 时执行清理并写 `interrupted: true`）。
 
-| id | 时刻 | 动作 | 实现 | 影响范围 |
+| id | 时刻 | `action` | gate 命令形与过程 | 影响范围 |
 | --- | --- | --- | --- | --- |
-| d2-server-upgrade | D2 10:00Z | `command` | 在 planck 执行 PROD-1 README 的容器升级命令（`{version}` 参数化），超时 900 s，之后等 Server 健康 | Server＋全部节点 |
-| d3-server-stop | D3 10:00Z | `server_stop` | `docker stop -t 30` → 30 分钟 → `docker start`（`finally` 中一定执行），等健康 | Server＋全部节点 |
-| d4-rotate-netmap-key | D4 10:00Z | `command` | PROD-1 README 的离线轮换（停容器 → `meshway-server rotate-netmap-key` → 启动），等健康 | Server＋全部节点 |
-| d5-jp-restart | D5 10:00Z | `systemd_restart` | `systemctl restart meshwayd`，等新 PID 的 running／ready（≤ 300 s） | jp |
-| d5-kr-kill9 | D5 12:00Z | `kill9` | `kill -9 <MainPID>`，由 unit 的 `Restart=on-failure` 拉起，等新 PID 的 running／ready | kr |
-| d5-hk-docker-restart | D5 14:00Z | `docker_restart` | `docker restart -t 30`，等 running／ready | hk |
+| d2-server-upgrade | D2 10:00Z | `server_upgrade`（`version`） | `server-upgrade <version>`：planck 上把 Release 的 Server tar 与 `SHA256SUMS` 下载到暂存目录（已有则不下载），执行 PROD-1 的 `sudo sh server-upgrade.sh <tar> <SHA256SUMS>`（校验、预检、停、一次性容器 migrate、换程序目录、启动、健康；新进程未答 sync 时自动回退），之后等公网健康 | Server＋全部节点 |
+| d3-server-stop | D3 10:00Z | `server_stop` | `server-stop` → 30 分钟 → `server-start`（`finally` 中一定执行），等健康 | Server＋全部节点 |
+| d4-rotate-netmap-key | D4 10:00Z | `server_rotate_key` | `server-rotate-key`：`docker stop` → 一次性容器（`--network none`、同 uid、程序只读、同 data dir）`meshway-server rotate-netmap-key --data-dir …` → `docker start`（失败也执行），等健康 | Server＋全部节点 |
+| d5-jp-restart | D5 10:00Z | `systemd_restart` | `restart jp`，等新 PID 的 running／ready（≤ 300 s） | jp |
+| d5-kr-kill9 | D5 12:00Z | `kill9` | 先 `inspect kr` 核对 `HostConfig.RestartPolicy`（`unless-stopped`／`always`，否则不杀）；`kill9 kr`：gate 在宿主找到该容器内 `meshwayd` 的宿主 PID（父进程为容器 init）并 `sudo kill -9`，容器 init 随之退出，由 Docker 重启策略拉起；等新 PID 的 running／ready。systemd 节点则对 `MainPID` 发 SIGKILL，要求 `Restart=on-failure`／`always` | kr |
+| d5-hk-docker-restart | D5 14:00Z | `docker_restart` | `docker-restart hk`，等 running／ready | hk |
 | d5-it7-restart | D5 16:00Z | `systemd_restart` | 同 jp | it7 |
-| d6-planck-udp-drop | D6 10:00Z | `nft_drop` `udp` | planck 容器 netns 内建表 `inet meshway_soak_fault`（input／output／forward 丢弃 UDP，回环除外）5 分钟后删表；先 `docker exec -d` 放一个 `sleep 420; nft delete table …` 兜底 | planck |
-| d6-hk-server-tcp-drop | D6 12:00Z | `nft_drop` `tcp-to-server` | hk 容器内解析 Server 主机名（`getent ahosts`，记录到 `detail.addresses`），output 丢弃到这些地址的 TCP 10 分钟，兜底同上 | hk |
-| d6-jp-us-exit | D6 14:00Z | `exit_profile` | jp `meshway exit us-exit` → 10 分钟每 2 秒 `curl` → `meshway exit --default`（`finally`）；记录 `appliedProfile` 与成功次数，零成功判失败 | jp |
+| d6-planck-udp-drop | D6 10:00Z | `nft_drop` `udp` | `nft-drop planck udp 300`：planck 容器 netns 内建表 `inet meshway_soak_fault`（input／output／forward 丢弃 UDP，回环除外），先 `docker exec -d` 放 `sleep 420; nft delete table …` 兜底；5 分钟后 `nft-clear planck` | planck |
+| d6-hk-server-tcp-drop | D6 12:00Z | `nft_drop` `tcp443` | `nft-drop hk tcp443 600`：hk 容器 netns 内同一独立表的 output 链丢弃全部 `tcp dport 443`（`inet` 表，IPv4＋IPv6）。Server 经 Cloudflare 任播，按解析地址拦截不可靠，所以按端口；hk 的对端承载用 21820／21821，不受影响。兜底同上，10 分钟后清除 | hk |
+| d6-us-exit | D6 14:00Z | `exit_profile`（`node`） | `exit-select <node> us-exit` → `curl-loop <node> 600` → `exit-default <node>`（`finally`）；记录 `appliedProfile` 与成功次数，零成功判失败。`node` 由配置给定：jp（若 X19 入站回包与 DNS-2 外来搜索域的修复已在 D6 前部署），否则 hk——jp 当前选全量出口会断入站 SSH，且 DNS 安装被 `foreign_domain` 挂起 | 出口节点 |
+
+curl 循环：每 2 秒一次 `curl -m 10 --max-filesize 65536 --limit-rate 64k https://www.example.com/`（正文 577 B），10 分钟至多 300 次；每次连同 TLS 握手约 6 KB，总量约 2 MB，对 hk（1 核、448 MB 容器）可忽略。
 
 物理机只有进程级动作；宿主防火墙、路由不改。到点 30 分钟内未执行（采集机停机等）的故障记为 `skipped`，需要时用 `fault.py run <id>` 手工补跑（标记记录实际时刻）。
 
@@ -137,8 +170,8 @@ T0 所在 UTC 日为 D1。`config.json` 的 `faults[]` 定义（`day`、`at`、`
 
 ## 中断与恢复
 
-- **采集机重启／cron 停摆**：日志按 cursor／since 从断点继续（单次最多 200,000 行，余下次续）；样本缺口在覆盖率中显示，不补零。
+- **采集机重启／cron 停摆**：日志按 cursor／时间窗从断点继续（单次最多 200,000 行，余下次续）；样本缺口在覆盖率中显示，不补零。
 - **任务被杀**：追加与保存 cursor 之间被打断最多重复一批日志，报告按 `(t, pid, msg)` 去重；被截断的 JSONL 末行读取时跳过；压缩先写 `.zst.tmp` 再改名，残留的未压缩文件下次删除。
-- **故障中途中断**：下一次 `fault.py due`（或手动 `fault.py recover`）执行该故障的清理（`docker start` Server、删 `meshway_soak_fault` 表、`meshway exit --default`）并写 `end`（`interrupted: true`）；nft 表另有容器内的兜底删除。中断的故障不自动重跑。
+- **故障中途中断**：下一次 `fault.py due`（或手动 `fault.py recover`）执行该故障的清理（`server-start`、`nft-clear`、`exit-default`）并写 `end`（`interrupted: true`）；nft 表另有容器内的兜底删除。被打断的 Server 升级不自动清理（按 install.md 的回退边界由人处理）。中断的故障不自动重跑。
 - **磁盘满**：清理空间后自动恢复；当天日报标红并列出停写时刻。
-- **改配置**：soak 期间不改 `t0` 与 `faults[].id`；追加节点或修正命令可以，改动记入 `state/` 下的人工记录。
+- **改配置**：soak 期间不改 `t0` 与 `faults[].id`；改了影响 gate 的部分要重新分发 spec（见安装）。

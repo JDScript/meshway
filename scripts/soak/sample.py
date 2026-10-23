@@ -19,8 +19,7 @@ STATUS_TIMEOUT = 60
 
 def node_sample(config: common.Config, node: str) -> dict:
     at = common.now()
-    result = common.run_node(config, node, common.shell(common.proc_script(config, node) + "; meshway --json status"),
-                             STATUS_TIMEOUT)
+    result = common.node_call(config, node, "status", timeout=STATUS_TIMEOUT)
     proc, body = common.proc_line(result.out)
     record = {"t": common.iso(at), "node": node, "rc": result.rc, "ms": result.ms, "proc": proc, "status": None}
     try:
@@ -30,6 +29,25 @@ def node_sample(config: common.Config, node: str) -> dict:
     if record["status"] is None and "error" not in record:
         record["error"] = result.tail()
     return record
+
+
+def inspect(config: common.Config, target: str) -> dict:
+    """`inspect <container target>` → state, start, restart count and policy."""
+    result = common.node_call(config, target, "inspect", timeout=30)
+    if not result.ok:
+        return {"error": result.tail(200)}
+    return parse_inspect(result.out)
+
+
+def parse_inspect(text: str) -> dict:
+    state_text, _, rest = text.strip().rpartition("} ")
+    try:
+        state = json.loads(state_text + "}")
+        restarts, policy, image = (rest.split(" ", 2) + ["", ""])[:3]
+        return {"status": state.get("Status"), "startedAt": state.get("StartedAt"), "pid": state.get("Pid"),
+                "restartCount": int(restarts), "restartPolicy": policy, "image": image}
+    except (ValueError, json.JSONDecodeError):
+        return {"error": text.strip()[:200]}
 
 
 def server_sample(config: common.Config) -> dict:
@@ -53,20 +71,7 @@ def server_sample(config: common.Config) -> dict:
         health["ok"] = health.get("http") == 200
         record["health"] = health
     if server.get("container"):
-        result = common.run_host(config, server["host"],
-                                 ["docker", "inspect", "-f", "{{json .State}} {{.RestartCount}} {{.Config.Image}}",
-                                  server["container"]], 30)
-        if result.ok:
-            state_text, _, rest = result.out.strip().rpartition("} ")
-            try:
-                state = json.loads(state_text + "}")
-                restarts, _, image = rest.partition(" ")
-                record["container"] = {"status": state.get("Status"), "startedAt": state.get("StartedAt"),
-                                       "pid": state.get("Pid"), "restartCount": int(restarts), "image": image}
-            except (ValueError, json.JSONDecodeError):
-                record["container"] = {"error": result.out.strip()[:200]}
-        else:
-            record["container"] = {"error": result.tail(200)}
+        record["container"] = inspect(config, "server")
     return record
 
 
