@@ -680,6 +680,9 @@ fn sockets(
         return Vec::new();
     };
     let bytes = |value: usize| Some(u32::try_from(value).unwrap_or(u32::MAX));
+    // One read of the kernel's tables per Status; a socket missing from them
+    // (or tables that cannot be read) has no known count.
+    let drops = meshway_transport::udp::receive_drops();
     let mut sockets: Vec<_> = facts
         .sockets
         .iter()
@@ -696,6 +699,9 @@ fn sockets(
                 send_buffer: bytes(buffers.send),
                 send_requested: bytes(buffers.send_requested),
                 unavailable: None,
+                receive_drops: buffers
+                    .inode
+                    .and_then(|inode| drops.as_ref()?.get(&inode).copied()),
             })
         })
         .collect();
@@ -716,6 +722,7 @@ fn sockets(
             send_buffer: None,
             send_requested: None,
             unavailable: Some(listener.detail.clone()),
+            receive_drops: None,
         })
         .collect();
     unavailable.sort_by(|a, b| a.resource.cmp(&b.resource));
@@ -762,6 +769,72 @@ mod tests {
                 .contains("Address in use")
         );
         assert!(sockets(None, &[], None).is_empty());
+    }
+
+    /// `receiveDrops` is the kernel's counter of the row's own socket: a
+    /// socket nobody reads, filled past its buffer, shows drops; one the
+    /// kernel tables do not list, or without an inode, is unknown (omitted),
+    /// never 0.
+    #[tokio::test]
+    async fn a_socket_row_carries_its_own_kernel_receive_drops_or_none() {
+        let reference: meshway_protocol::connectivity::SocketReference =
+            serde_json::from_value(serde_json::json!({
+                "nodeId": "00000000-0000-4000-8000-000000000001",
+                "instance": {"instanceId": "00000000-0000-4000-8000-000000000002", "generation": 1},
+                "netmap": {"revision": 1, "serial": 1, "digest": "01".repeat(32)},
+                "socketId": "s", "socketGeneration": 1,
+                "resource": {"kind": "listener", "key": "udp"},
+            }))
+            .unwrap();
+        let receiver = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let transport = meshway_transport::udp::UdpTransport::adopt(
+            tokio::net::UdpSocket::from_std({
+                receiver.set_nonblocking(true).unwrap();
+                receiver
+            })
+            .unwrap(),
+            &Default::default(),
+        )
+        .unwrap();
+        let local = transport.local_addr().unwrap();
+        let fact = |inode| meshway_connectivity::SocketFact {
+            reference: reference.clone(),
+            network: meshway_model::state::SocketNetwork::Udp,
+            bound_address: local,
+            endpoints: Vec::new(),
+            buffers: Some(meshway_transport::raw::Buffers {
+                inode,
+                ..transport.buffers()
+            }),
+        };
+        let facts = |sockets| meshway_connectivity::Snapshot {
+            listeners: Vec::new(),
+            links: Vec::new(),
+            sockets,
+            adjacencies: Default::default(),
+            mtu: Default::default(),
+            unavailable: Vec::new(),
+        };
+        let netmap = Some(reference.netmap);
+        let unknown = facts(vec![fact(None), fact(Some(u64::MAX))]);
+        assert!(
+            sockets(Some(&unknown), &[], netmap)
+                .iter()
+                .all(|row| row.receive_drops.is_none())
+        );
+        if cfg!(target_os = "linux") {
+            let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            for _ in 0..(transport.buffers().receive / 1200 * 4).max(1024) {
+                let _ = sender.send_to(&[7; 1200], local);
+            }
+            let own = facts(vec![fact(transport.buffers().inode)]);
+            let rows = sockets(Some(&own), &[], netmap);
+            assert!(
+                rows[0].receive_drops.is_some_and(|drops| drops > 0),
+                "{:?}",
+                rows[0].receive_drops
+            );
+        }
     }
 
     /// F6a B10: a Control problem is `lastError`, yet the packet plane's

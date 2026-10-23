@@ -61,6 +61,9 @@ pub struct Buffers {
     /// The requests in bytes (configured, or the provider default).
     pub receive_requested: usize,
     pub send_requested: usize,
+    /// The socket's inode, the key of its kernel receive-drop counter
+    /// ([`crate::udp::receive_drops`]); `None` where the system has none.
+    pub inode: Option<u64>,
 }
 
 impl Buffers {
@@ -327,6 +330,7 @@ mod tests {
             send: 4 * mib,
             receive_requested: 4 * mib,
             send_requested: 2 * mib,
+            inode: None,
         };
         if cfg!(target_os = "linux") {
             assert!(buffers(6 * mib).limited());

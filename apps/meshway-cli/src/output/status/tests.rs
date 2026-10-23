@@ -51,9 +51,11 @@ fn status() -> Status {
         "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline"), planck, vm, it7],
         "sockets":[
             {"resource":{"kind":"listener","key":"native"},"boundAddress":"0.0.0.0:35000",
-             "receiveBuffer":8388608,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152,"unavailable":null},
+             "receiveBuffer":8388608,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152,"unavailable":null,
+             "receiveDrops":0},
             {"resource":{"kind":"listener","key":"native6"},"boundAddress":"[::]:35000",
-             "receiveBuffer":425984,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152,"unavailable":null},
+             "receiveBuffer":425984,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152,"unavailable":null,
+             "receiveDrops":1832},
             {"resource":{"kind":"listener","key":"held"},"boundAddress":null,"receiveBuffer":null,"receiveRequested":null,
              "sendBuffer":null,"sendRequested":null,"unavailable":"listener held cannot bind 0.0.0.0:35001: Address in use (os error 98)"}
         ],"lastError":null,"lastErrorDetail":null,"retryAt":null
@@ -111,10 +113,13 @@ fn plain_summary_and_peer_table_have_no_escapes() {
             "8.0",
             "MiB",
             "4.0",
-            "MiB"
+            "MiB",
+            "0"
         ]
     );
+    assert!(lines[header].ends_with("DROPS"), "{}", lines[header]);
     assert!(lines[header + 2].contains("416 KiB (requested 4.0 MiB, limited)"));
+    assert!(lines[header + 2].trim_end().ends_with("1832"));
     assert_eq!(
         lines[header + 3].split_whitespace().collect::<Vec<_>>(),
         ["listener", "held", "unavailable"]
@@ -137,6 +142,8 @@ fn json_keeps_every_status_field_including_peers_and_nulls() {
     assert_eq!(value["peers"][3]["idlePath"]["route"], "relay");
     // Omitted, not null, where it does not apply.
     assert!(value["peers"][0].get("idlePath").is_none());
+    assert_eq!(value["sockets"][1]["receiveDrops"], 1832);
+    assert!(value["sockets"][2].get("receiveDrops").is_none());
     assert_eq!(value["node"]["hostname"], "meshway-lax");
     assert!(value["peers"][2]["rtt"].is_null() && value["identity"].is_null());
     let decoded: Status = serde_json::from_value(value).unwrap();

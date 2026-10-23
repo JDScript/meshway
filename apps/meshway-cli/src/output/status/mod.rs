@@ -291,9 +291,17 @@ fn size(bytes: u32) -> String {
 /// Granted buffers as the kernel reports them; one that does not hold the
 /// request ([`meshway_transport::raw::satisfies`]: Linux reports twice the
 /// grant) means the kernel limited it (`net.core.rmem_max`／`wmem_max`). A
-/// listener whose bind is being retried shows why it is unavailable.
+/// listener whose bind is being retried shows why it is unavailable. DROPS
+/// is the kernel's count of datagrams dropped on arrival (mostly a full
+/// receive buffer); empty when unknown.
 fn sockets(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()> {
-    let mut table = Table::new(vec!["SOCKET", "BOUND", "RECEIVE BUFFER", "SEND BUFFER"]);
+    let mut table = Table::new(vec![
+        "SOCKET",
+        "BOUND",
+        "RECEIVE BUFFER",
+        "SEND BUFFER",
+        "DROPS",
+    ]);
     let cell = |granted: Option<u32>, requested: Option<u32>| match (granted, requested) {
         (Some(granted), Some(requested))
             if !meshway_transport::raw::satisfies(granted as usize, requested as usize) =>
@@ -317,6 +325,11 @@ fn sockets(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<
             bound,
             cell(socket.receive_buffer, socket.receive_requested),
             cell(socket.send_buffer, socket.send_requested),
+            match socket.receive_drops {
+                Some(0) => Cell::new("0"),
+                Some(drops) => Cell::styled(drops.to_string(), Role::Warn),
+                None => Cell::new(""),
+            },
         ]);
     }
     table.render(output, term)

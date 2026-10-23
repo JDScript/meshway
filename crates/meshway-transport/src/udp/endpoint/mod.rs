@@ -58,6 +58,7 @@ fn read_buffers(
         send: reference.send_buffer_size()?,
         receive_requested,
         send_requested,
+        inode: crate::udp::inode(socket),
     })
 }
 

@@ -170,6 +170,11 @@ meshway_model::object! {
     /// The listener is not bound and its bind is being retried: the last failure, e.g. `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)`; null when bound.
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub unavailable: Option<String> [required = true],
+    /// Datagrams the kernel dropped on arrival at this socket since it was
+    /// opened, mostly because its receive buffer was full (Linux
+    /// `/proc/net/udp` `drops`); omitted while unavailable or unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receive_drops: Option<u64>,
 } }
 
 meshway_model::object! {
