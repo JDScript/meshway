@@ -99,7 +99,7 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 **版本**：`meshway-server --version` 输出构建身份、本构建写入的 schema 版本与最低可迁移版本，以及 target；`-V` 只输出第一行的版本号。升级脚本据第二行在停止服务之前检查 data-dir：
 
 ```text
-meshway-server 0.1.0-alpha.22 (v0.1.0-alpha.22-0-g1234abcd)
+meshway-server 0.1.0-alpha.23 (v0.1.0-alpha.23-0-g1234abcd)
 schema: 9 (migrates from 8)
 target: x86_64-unknown-linux-musl
 ```
