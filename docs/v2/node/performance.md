@@ -456,10 +456,29 @@ P3，alpha.22 现场只读观察（未重启、未改配置）。kr（Oracle Amp
 
 - **主因是单线程 owner 的每包成本**：N1 上发送约 22 µs、接收 22–25 µs，是同型号 [L0](#l0-arm64) A.send／A.recv（5.9／6.85 µs）的 3.4–3.7 倍；`perf` 采样中用户态 66–69 %、内核 27–29 %、vdso 时钟 4–5 %（发布件无符号表，用户态未按函数拆分）。单方向上限约 1／23 µs ≈ 43k pps ≈ 450 Mbit/s goodput，即同链路 underlay 的 0.45–0.5。x86 同样是 L0 的约 3.2–3.5 倍：Planck 容器（Ryzen 9950X）接收约 8.7 µs，it7（EPYC 2 vCPU VM）发送 30 µs、接收 27 µs；it7↔jp（106 ms）受路径限制，Mesh／underlay 为 0.94（173／184 Mbit/s）。
 - **kr 的容器形态再降一截**：1 核配额由 owner、UDP 接收 worker 与应用共用。反向（kr 接收）时 cgroup 95 %、jp owner 仅 73 %，即配额先封顶。Docker bridge 本身对普通 TCP 不是上限（容器内 783–1,045 Mbit/s，cgroup 15–25 %），但 bridge 转发、MASQUERADE 与 UDP GSO 软件分段在发送 owner 线程内同步执行（`udp_sendmsg` 占 meshwayd 样本 13.4 %，其中 `br_handle_frame` 8.4 %，约 2 µs／包），并计入配额。
-- **开头的重传丢在接收端 meshwayd 内**：两端网卡的满长数据报计数逐帧相等（正向 736,327／736,327，反向 601,206／601,206），内核 `kfree_skb` 无网络丢弃，UDP `RcvbufErrors` 与 socket `d` 为 0、接收 socket 积压始终为 0，而接收端写入 TUN 的字节少约 2–3k 段。重传集中在慢启动（Hystart 在约 3,357 段≈4.3 MB 退出，BDP≈1.6 MB）与 owner 峰值时：接收 owner 饱和时 Manager 事件队列（1024 帧）满，超出的业务帧在用户态丢弃，8 MiB 内核缓冲不起作用，Status 与日志均无计数。该判定为排除法，未用直接计数器证实。
+- **开头的重传丢在接收端 meshwayd 内**：两端网卡的满长数据报计数逐帧相等（正向 736,327／736,327，反向 601,206／601,206），内核 `kfree_skb` 无网络丢弃，UDP `RcvbufErrors` 与 socket `d` 为 0、接收 socket 积压始终为 0，而接收端写入 TUN 的字节少约 2–3k 段。重传集中在慢启动（Hystart 在约 3,357 段≈4.3 MB 退出，BDP≈1.6 MB）与 owner 峰值时：接收 owner 饱和时 Manager 事件队列（1024 帧）满，超出的业务帧在用户态丢弃，8 MiB 内核缓冲不起作用，Status 与日志均无计数。现场未用直接计数器（需要 `MESHWAY_PROFILE`，即重启）；同一机制已在隔离 L3 场景由接收端的直接计数器证实并修复，见下文 [CM-1 接收背压](#cm1-receive-backpressure)。
 - 预估：kr 改为宿主节点（无配额、无 bridge）后，正向受 jp 接收 owner 限制约 430–470 Mbit/s（约 +15 %），反向约 430–460（约 +40 %），与 underlay 的比值仍约 0.5。
 
 报告：`.meshway/validation/p3/`（采样与 tracepoint 脚本、逐次原始样本、`summary.txt`）。
+
+#### CM-1 接收背压 {#cm1-receive-backpressure}
+
+修复：Manager 事件队列满时 UDP 接收 owner 停止读取 socket，压力留在内核接收缓冲，250 ms 内无槽位才恢复读取并丢弃（[控制消息预算](/v2/node/connectivity#udp-控制消息预算)）。隔离 L3 `manager-direct`（Planck 容器，Ryzen 9950X），`--runtime multi-thread`（与 `meshwayd` 相同的调度器；默认 current-thread 下接收 owner 只在包处理 owner 让出时运行，队列从未满：`event_full` 0），TCP 单流 20 秒、omit 2、batch 32；“前”为 main `c6f2307e`，“后”为修复，同一测量工具，两臂交替。B 为接收端，`event_full` 是 B 的直接计数（profile 128，`manager.udp.drop event_full`）；两臂所有样本 B 的 `Udp RcvbufErrors` 与 Meshway socket `ss` 的 `d` 均为 0。Planck 同时有其他工作包的矩阵（load 3–15）。
+
+| 场景 | profile | 前：Mbit/s 中位数（范围）；重传；`event_full` | 后 |
+| --- | --- | --- | --- |
+| 每容器 2 CPU，RTT 约 1 ms | 0 | 2,375（2,352–2,384）；289–349 | 2,402（2,402–2,587）；0 |
+| 同上 | 128 | 2,335（2,288–2,465）；190–346；638–983 | 2,501（2,475–2,534）；0；0 |
+| B 0.5 CPU，RTT 约 1 ms（6 次） | 0 | 937（840–963）；17–225 | 936（852–971）；30–200 |
+| 同上 | 128 | 902（844–929）；77–213；135–949 | 880（798–948）；16–176；0 |
+| B 0.5 CPU，RTT 30 ms（两端 netem 15 ms） | 0 | 661（638–757，3 次）；495–617 | 773（756–775，6 次）；0 |
+| 同上 | 128 | 595（558–661，5 次）；74–1,608；727–3,295 | 750（729–762，4 次）；0；0 |
+
+- 修复前接收端在用户态丢弃、内核计数为 0，与 P3 的现场签名相同；修复后 `event_full` 为 0，2 CPU 与 30 ms RTT 两组重传为 0。
+- B 0.5 CPU、1 ms RTT 一组两臂吞吐与重传相同：修复后仍有 16–200 次重传而内核与 Manager 计数均为 0，未区分是配额节流停顿引起的伪重传还是其他丢弃位置。
+- 30 ms RTT 一组每臂 9 个样本中有 3–6 个在 fixture 就绪阶段失败（两臂都有，watcher 在新节点握手时加 netem），表中只统计成功样本。
+
+报告：`.meshway/validation/cm1/`（`b1/summary.txt`、逐次 `results.json` 与节点 profile、脚本）。
 
 ### 出口正向写路径 {#exit-write-path}
 

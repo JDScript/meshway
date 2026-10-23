@@ -156,7 +156,7 @@ Circuit 保留一次稳定分配；稳态 send／commit 通过拆分字段借用
 
 输出使用 `carrier::SendPending` 与 `TunPending` 两个独立 FIFO 驱动，和输入、crypto completion 一起按就绪状态轮询；不为每包 spawn 任务，不等待凑批。每个方向至多一个正在执行的批次。发送 future 在入队前冻结实际 channel；一次 owner `select!` 等待被取消时，队列继续保有原 future、guard 与 credit。TUN 使用同一个 `Delivery` 实现记录每次成功 syscall 的前缀，取消等待后只继续未写后缀。停止／换代显式取消旧 pending，并计入丢弃计数；不把旧输出迁到新权限。
 
-额度耗尽时，owner 停止读取新 TUN／业务承载批次，已读取而未准入的有界前缀保留原顺序；不会把受背压的队头搬到队尾。L3 直接 UDP 入口停止 socket 读取，后续压力留在内核。生产 Manager 的业务事件消费暂停，而控制事件使用独立 32 槽；共享 UDP socket 的 health／握手／STUN 解复用 owner 继续运行，因此其业务事件队列满时仍按[控制消息预算](/v2/node/connectivity#udp-控制消息预算)丢弃未接纳事件。这一边界不同于停止整个共享 UDP socket。
+额度耗尽时，owner 停止读取新 TUN／业务承载批次，已读取而未准入的有界前缀保留原顺序；不会把受背压的队头搬到队尾。L3 直接 UDP 入口停止 socket 读取，后续压力留在内核。生产 Manager 的业务事件消费暂停，而控制事件使用独立 32 槽；业务事件队列满后，共享 UDP socket 的接收 owner 同样停止读取该 socket，压力留在内核接收缓冲。消费者 250 ms 内仍未腾出槽位时，owner 才恢复读取并丢弃未接纳的业务事件，使同一 socket 上的 health／握手／STUN 控制至多等待这一上限，见[控制消息预算](/v2/node/connectivity#udp-控制消息预算)。
 
 #### Pending 存储上限
 

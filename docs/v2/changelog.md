@@ -50,6 +50,13 @@ V1 流式承载（VLESS）吞吐 1–4 秒断流（`v1/stream-stalls`）：只�
 
 证据 `.meshway/validation/v1/`（复现脚本、汇总与被否决的补丁；fixture 修改在分支 `v1/repro`，只作证据）。
 
+CM-1 connectivity Manager 现场问题（`cm1/manager-receive`）：wire、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+
+- B1（不变量：有界缓冲满时压力留在有计数的那一层；owner：Manager datagram 接收 `manager/datagram/receive.rs::Backlog`）：Manager 业务事件队列没有余量时，UDP 接收 owner 保留已读的一批（至多 32 帧）并停止读取 socket，后续数据报留在内核接收缓冲（溢出计入 `Udp RcvbufErrors`／`ss d`）；恢复由消费者出队腾出的槽位驱动（等待并持有该组额度，不轮询），其余分支照常。消费者 250 ms（`RECEIVE_STALL`）内没有腾出槽位时恢复读取并按原规则丢弃，停滞结束记一条 warn，因此同一 socket 上的 health／握手／探测控制数据报至多等待该上限加排空内核缓冲的时间。此前队列满即在用户态丢弃业务帧，只有 profile 计数（P3 现场的接收端缺口）。见[控制消息预算](/v2/node/connectivity#udp-控制消息预算)。
+- 测量：`perf:dataplane` 新增 `--runtime multi-thread`（`meshwayd` 的调度器；默认 current-thread 不变），默认调度下 Manager 接收 owner 不与包处理 owner 并行，复现不了队列满。
+
+验证：`a_full_event_queue_keeps_business_frames_in_the_socket_until_the_consumer_makes_room` 在旧代码上失败（192 帧只送达 63），修复后通过；Planck L3 `manager-direct` 前后对照见[CM-1 接收背压](/v2/node/performance#cm1-receive-backpressure)（2 CPU：重传 289–349 → 0，B 的 `event_full` 638–983 → 0；B 0.5 CPU、30 ms RTT：661 → 773 Mbit/s，重传 495–617 → 0）。证据 `.meshway/validation/cm1/`。
+
 ## v0.1.0-alpha.22
 
 范围：v0.1.0 soak 候选。RC-1 Node 恢复状态机收敛为共享的 `Recovery` 框架（含 G16 锚点证明只解码命中的 link）；X17 包调度入向与本机两方向各有配额；F7 默认矩阵新增 `fault/throttle` 行；R4 `roam/relay` fixture 的新流使用独立源端口；MIG-2 Server 部署形态（systemd unit `meshway-server.service`、`install.sh --component server`、Release 首次附 Server tar 与 Console 静态文件、离线 `backup`）；F8a／F8b 审阅修复（回退判据为 data-dir 的 `served` 记录、迁移在发布前验证主密钥、artifact 下载预算、登录失败退避、Actions 钉到完整 SHA）；`cargo-deny` 供应链检查。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 9 与 HTTP 契约均不变（F8b 只改两处说明文字），按先 Node 后 Server 普通升级（无断网窗口、无迁移）。
