@@ -240,14 +240,26 @@ impl Shared {
             retry_at: std::time::Instant::now() + wait,
             health: recovery.health().clone(),
         };
-        tracing::warn!(
-            key,
-            error = %report.detail,
-            recoverable = report.recoverable(),
-            attempts,
-            retry_ms = wait.as_millis() as u64,
-            "Listener unavailable; retrying its bind"
-        );
+        // Once per kind of health (unavailable, then needing an operator);
+        // each further attempt is a debug line.
+        if recovery.transitioned() {
+            tracing::warn!(
+                key,
+                error = %report.detail,
+                recoverable = report.recoverable(),
+                attempts,
+                retry_ms = wait.as_millis() as u64,
+                "Listener unavailable; retrying its bind"
+            );
+        } else {
+            tracing::debug!(
+                key,
+                error = %report.detail,
+                attempts,
+                retry_ms = wait.as_millis() as u64,
+                "Listener still unavailable; retrying its bind"
+            );
+        }
         let _ = self.unbound.with(|unbound| {
             unbound.insert(key.to_owned(), Unbound { token, report });
         });
@@ -469,5 +481,65 @@ mod tests {
         assert!(recoverable(&busy));
         assert!(!recoverable(&denied));
         assert!(recoverable(&Error::Underlay));
+    }
+
+    /// Counts WARN events on this thread.
+    struct Warnings(Arc<std::sync::atomic::AtomicUsize>);
+    impl tracing::Subscriber for Warnings {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// F8a F10: a listener whose bind keeps failing warns once per kind of
+    /// health (unavailable, then needing an operator), not at every retry.
+    #[tokio::test]
+    async fn a_retried_bind_warns_once_per_kind_of_health() {
+        let fixture = crate::manager::tests::netmap::support::Netmaps::start(false, false).await;
+        let (shared, _) =
+            crate::manager::datagram::tests::shared(&fixture.desired[1], &fixture.keys[1]);
+        let error = |kind: std::io::ErrorKind| Error::Bind {
+            key: "udp".into(),
+            address: "0.0.0.0:35000".parse().unwrap(),
+            source: kind.into(),
+        };
+        let warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut recovery = recovery();
+        tracing::subscriber::with_default(Warnings(warnings.clone()), || {
+            for attempts in 1..=4 {
+                shared.record_unbound(
+                    1,
+                    "udp",
+                    &error(std::io::ErrorKind::AddrInUse),
+                    attempts,
+                    &mut recovery,
+                );
+            }
+            assert_eq!(warnings.load(std::sync::atomic::Ordering::SeqCst), 1);
+            for attempts in 5..=7 {
+                shared.record_unbound(
+                    1,
+                    "udp",
+                    &error(std::io::ErrorKind::PermissionDenied),
+                    attempts,
+                    &mut recovery,
+                );
+            }
+        });
+        assert_eq!(warnings.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(shared.unbound.current()[0].attempts, 7);
+        fixture.close().await;
     }
 }
