@@ -91,7 +91,7 @@ U4 DNS 撤回后包平面不再重装（`u4/dns-recovered-reinstall`）：wire 6
 - Status（owner：daemon Status 投影）：DNS owner 已重证而包平面仍撤回或重新准备时，`retryAt` 为网络 worker 的下一次重装（此前为 null）。见[运行状态](/v2/node/runtime)。
 - fixture：underlay 内核测试序列的 `underlay-peer` 停止期限随测试数（每个 60 秒），不再固定 120 秒。
 
-验证：三个新测试在旧代码（`8b6221f5`，测试只把持锁线程改为 `blocking_lock`）上全部失败——保留未 poll 的输出使 socket owner 关闭 2 秒内不结束、不结束的 owner 的 join 不返回、`retryAt` 为 null——新代码通过（`.meshway/validation/u4/red-8b6221f5.log`）。Planck `20261023T205835Z-dbe4d464`（`fault/throttle`、`udp/resolved`、`exit/off`、`jammy/resolv-conf`、`udp/off`，并行 4）全部通过，`fault/throttle` 另两轮 `20261023T211744Z-88ab998b`、`20261023T212935Z-38922389` 通过；三轮 B 的每次 DNS 撤回都有重装 INFO，任何行都没有 owner 被中止。证据 `.meshway/validation/u4/`。
+验证：三个新测试在旧代码（`8b6221f5`，测试只把持锁线程改为 `blocking_lock`）上全部失败——保留未 poll 的输出使 socket owner 关闭 2 秒内不结束、不结束的 owner 的 join 不返回、`retryAt` 为 null——新代码通过（`.meshway/validation/u4/red-8b6221f5.log`）。Planck `20261023T205835Z-dbe4d464`（`fault/throttle`、`udp/resolved`、`exit/off`、`jammy/resolv-conf`、`udp/off`，并行 4）全部通过，`fault/throttle` 另两轮 `20261023T211744Z-88ab998b`、`20261023T212935Z-38922389` 通过；三轮 B 的每次 DNS 撤回都有重装 INFO，任何行都没有 owner 被中止；Planck `mise run --jobs 1 check` 在 `4a379efb` 通过（1,418 个测试）。证据 `.meshway/validation/u4/`。
 
 ## v0.1.0-alpha.22
 
