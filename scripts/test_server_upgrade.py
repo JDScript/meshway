@@ -1,5 +1,9 @@
-"""The upgrade test's reading of a Node status and of a database header."""
+"""The upgrade test's reading of a Node status and of a database header, and
+its failure path: every process stopped, evidence kept, never `passed`."""
 import importlib.util
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +28,40 @@ class ServerUpgradeTests(unittest.TestCase):
             header[60:64] = (9).to_bytes(4, "big")
             (Path(directory) / "controller.sqlite").write_bytes(bytes(header))
             self.assertEqual(upgrade.database_schema(Path(directory)), 9)
+
+    def test_a_run_that_stops_early_stops_every_process_and_does_not_pass(self):
+        class Started:
+            name = "server-started-before-the-failure"
+
+            def __init__(self):
+                self.process = subprocess.Popen(["sleep", "60"])
+
+            def stop(self):
+                self.process.terminate()
+                return self.process.wait(timeout=10)
+
+        started = Started()
+        upgrade.STARTED.append(started)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "report.json"
+            argv = sys.argv
+            sys.argv = ["server-upgrade.py", "--previous-tag", "v0.0.0", "--previous-server", str(root / "absent"),
+                        "--previous-node-bin", str(root), "--work", str(root / "work"), "--report", str(report)]
+            try:
+                self.assertEqual(upgrade.main(), 1)
+            finally:
+                sys.argv = argv
+                upgrade.STARTED.clear()
+            self.assertIsNotNone(started.process.poll(), "a started process was left running")
+            written = json.loads(report.read_text())
+            self.assertFalse(written["passed"])
+            self.assertFalse(written["completed"])
+            self.assertIn("error", written)
+            self.assertEqual(written["missing"], upgrade.REQUIRED)
+            self.assertIn("server-started-before-the-failure", written["stopped"])
+            # The work directory is kept as evidence.
+            self.assertTrue((root / "work" / "logs").is_dir())
 
 
 if __name__ == "__main__":
