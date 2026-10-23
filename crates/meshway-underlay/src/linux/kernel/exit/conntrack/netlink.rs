@@ -272,6 +272,8 @@ async fn exchange(
         socket.set_non_blocking(true).map_err(|error| io(&error))?;
         socket.bind_auto().map_err(|error| io(&error))?;
         let _ = socket.set_cap_ack(true);
+        // RUSTSEC-2026-0386: the AsyncFd owns this fd for life; nothing dups or closes it.
+        #[allow(deprecated)]
         let socket = AsyncFd::new(socket).map_err(|error| io(&error))?;
         let sequence = request.sequence;
         let bytes = request.finish()?;

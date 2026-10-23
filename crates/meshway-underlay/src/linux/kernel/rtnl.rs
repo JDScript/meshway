@@ -362,6 +362,8 @@ async fn named_once(
     let mut socket = Socket::new(NETLINK_ROUTE)?;
     socket.set_non_blocking(true)?;
     socket.bind_auto()?;
+    // RUSTSEC-2026-0386: the AsyncFd owns this fd for life; nothing dups or closes it.
+    #[allow(deprecated)]
     let socket = tokio::io::unix::AsyncFd::new(socket)?;
     let sequence = 1;
     let mut request = vec![0; NLMSG_HEADER + IFINFOMSG];

@@ -181,7 +181,10 @@ pub(super) fn open() -> Result<AsyncFd<Socket>> {
     ] {
         socket.add_membership(group as u32)?;
     }
-    Ok(AsyncFd::new(socket)?)
+    // RUSTSEC-2026-0386: the AsyncFd owns this fd for life; nothing dups or closes it.
+    #[allow(deprecated)]
+    let socket = AsyncFd::new(socket)?;
+    Ok(socket)
 }
 
 pub(super) async fn run(

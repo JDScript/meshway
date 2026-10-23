@@ -29,7 +29,10 @@ impl Socket {
             SockFlag::SOCK_NONBLOCK | SockFlag::SOCK_CLOEXEC,
             SockProtocol::Icmp,
         )?;
-        Ok(Self(tokio::io::unix::AsyncFd::new(fd)?))
+        // RUSTSEC-2026-0386: the AsyncFd owns this fd for life; nothing dups or closes it.
+        #[allow(deprecated)]
+        let fd = tokio::io::unix::AsyncFd::new(fd)?;
+        Ok(Self(fd))
     }
 }
 impl Icmp for Socket {

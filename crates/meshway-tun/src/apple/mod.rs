@@ -27,8 +27,12 @@ impl Utun {
         let flags = rustix::fs::fcntl_getfl(&fd).map_err(io::Error::from)?;
         rustix::fs::fcntl_setfl(&fd, flags | rustix::fs::OFlags::NONBLOCK)
             .map_err(io::Error::from)?;
+        // RUSTSEC-2026-0386: the AsyncFd owns this fd for life; the host never uses or
+        // closes a duplicate of it for packet I/O (see above).
+        #[allow(deprecated)]
+        let fd = AsyncFd::new(fd)?;
         Ok(Self {
-            fd: AsyncFd::new(fd)?,
+            fd,
             mtu,
             // Read the largest legal datagram, even if the host violated its
             // MTU contract. Never accept a silently truncated packet.
