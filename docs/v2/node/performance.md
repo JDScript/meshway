@@ -436,6 +436,30 @@ P2，alpha.21。**口径**：空闲 CPU 取 ≥ 60 秒窗口内每线程 `/proc/
 
 报告：`.meshway/validation/p2/`（窗口与 3 秒峰值脚本、`perf`／`bpftrace` 原始输出、符号化栈、FDE 对齐脚本、link dump 基准）。
 
+### 公网 ARM 实测 {#field-arm64}
+
+P3，alpha.22 现场只读观察（未重启、未改配置）。kr（Oracle Ampere Neoverse N1 4 核，节点在 Docker bridge 容器内，compose `cpus: 1`）与 jp（同型号物理机上的 systemd 节点）之间 native_udp 直连，RTT 31.7 ms，通道 MTU 1500／1386，内层 TUN 1366（TCP MSS 1294）；iperf3 单流 cubic，Mesh 20 秒、underlay 10 秒，iperf3 跑在节点所在 netns（kr 即容器内，与 meshwayd 共用 1 核配额）。
+
+| 路径 | 正向 kr→jp（Mbit/s；重传） | 反向 jp→kr |
+| --- | ---: | ---: |
+| underlay，kr 宿主 | 893；0 | 896；0 |
+| underlay，kr 容器（Docker NAT） | 783；0 | 1,045；0 |
+| Mesh `::5`→`::3`，6 次 | 359–419；47–2,332 | 280–309（3 次）；1,252–2,101 |
+
+| 每端（Mesh 正向，20 秒均值） | kr 容器（发送） | jp（接收） |
+| --- | ---: | ---: |
+| 网络 owner 线程（TUN I/O、准入、加密、UDP I/O 同一线程） | 76–83 % | 85–91 %（峰值 97–100 %） |
+| 进程／容器 cgroup | 83–90 %／90–97 %，每秒 6–9 次配额节流 | 107–113 %，无配额 |
+| 线上数据报 | 约 36.7k pps | 同左（两端网卡逐帧计数一致） |
+| owner CPU／数据报 | 约 22 µs | 22–25 µs |
+
+- **主因是单线程 owner 的每包成本**：N1 上发送约 22 µs、接收 22–25 µs，是同型号 [L0](#l0-arm64) A.send／A.recv（5.9／6.85 µs）的 3.4–3.7 倍；`perf` 采样中用户态 66–69 %、内核 27–29 %、vdso 时钟 4–5 %（发布件无符号表，用户态未按函数拆分）。单方向上限约 1／23 µs ≈ 43k pps ≈ 450 Mbit/s goodput，即同链路 underlay 的 0.45–0.5。x86 同样是 L0 的约 3.2–3.5 倍：Planck 容器（Ryzen 9950X）接收约 8.7 µs，it7（EPYC 2 vCPU VM）发送 30 µs、接收 27 µs；it7↔jp（106 ms）受路径限制，Mesh／underlay 为 0.94（173／184 Mbit/s）。
+- **kr 的容器形态再降一截**：1 核配额由 owner、UDP 接收 worker 与应用共用。反向（kr 接收）时 cgroup 95 %、jp owner 仅 73 %，即配额先封顶。Docker bridge 本身对普通 TCP 不是上限（容器内 783–1,045 Mbit/s，cgroup 15–25 %），但 bridge 转发、MASQUERADE 与 UDP GSO 软件分段在发送 owner 线程内同步执行（`udp_sendmsg` 占 meshwayd 样本 13.4 %，其中 `br_handle_frame` 8.4 %，约 2 µs／包），并计入配额。
+- **开头的重传丢在接收端 meshwayd 内**：两端网卡的满长数据报计数逐帧相等（正向 736,327／736,327，反向 601,206／601,206），内核 `kfree_skb` 无网络丢弃，UDP `RcvbufErrors` 与 socket `d` 为 0、接收 socket 积压始终为 0，而接收端写入 TUN 的字节少约 2–3k 段。重传集中在慢启动（Hystart 在约 3,357 段≈4.3 MB 退出，BDP≈1.6 MB）与 owner 峰值时：接收 owner 饱和时 Manager 事件队列（1024 帧）满，超出的业务帧在用户态丢弃，8 MiB 内核缓冲不起作用，Status 与日志均无计数。该判定为排除法，未用直接计数器证实。
+- 预估：kr 改为宿主节点（无配额、无 bridge）后，正向受 jp 接收 owner 限制约 430–470 Mbit/s（约 +15 %），反向约 430–460（约 +40 %），与 underlay 的比值仍约 0.5。
+
+报告：`.meshway/validation/p3/`（采样与 tracepoint 脚本、逐次原始样本、`summary.txt`）。
+
 ### 出口正向写路径 {#exit-write-path}
 
 X11：已安装流的包不再经出口 driver。driver 写出某流的一个包后，该流此后的包（投影已 ACK、FIFO 中无同流包）由包处理 owner 每轮至多 32 个交给出口 I/O owner 的有界队列，I/O owner 每次至多 64 个、逐包检查投影／guard／权限后以 offload 合并写入出口 TUN（与回程的批量读对称）；准入仍逐包。行为定义见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)。
