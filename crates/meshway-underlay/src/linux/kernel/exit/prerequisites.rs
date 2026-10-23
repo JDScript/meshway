@@ -66,7 +66,10 @@ pub(super) async fn check(commands: &mut Commands, owned: &[(String, String)]) -
             // An unreadable IPv6 table set blocks only the IPv6 family,
             // which the probe reports; installation needs IPv4.
             Err(_) if family == meshway_model::exit::ExitFamily::Ipv6 => {}
-            Err(_) => return Err(Error::Conflict),
+            // A legacy table that could not be read proves nothing; one
+            // read back unparseable is not one this owner can judge.
+            Err(Failure::Unavailable) => return Err(Error::Netlink),
+            Err(Failure::Malformed) => return Err(Error::Conflict),
         }
     }
     Ok(())

@@ -18,22 +18,24 @@ impl super::super::Kernel {
         let result = self
             .live_probe(instance_id, netmap, role_generation, families)
             .await;
-        match result {
-            Ok(observation) => observation,
-            Err(reason) => ExitCapability {
-                instance_id,
-                netmap,
-                role_generation,
-                families: families
-                    .iter()
-                    .map(|family| ExitFamilyCapability {
-                        family: *family,
-                        status: ExitStatus::Unavailable { reason },
-                        installed: false,
-                    })
-                    .collect(),
-                observed_at: std::time::SystemTime::now().into(),
-            },
+        let status = match result {
+            Ok(observation) => return observation,
+            Err(Unprobed::Unread) => ExitStatus::Probing,
+            Err(Unprobed::Unavailable(reason)) => ExitStatus::Unavailable { reason },
+        };
+        ExitCapability {
+            instance_id,
+            netmap,
+            role_generation,
+            families: families
+                .iter()
+                .map(|family| ExitFamilyCapability {
+                    family: *family,
+                    status: status.clone(),
+                    installed: false,
+                })
+                .collect(),
+            observed_at: std::time::SystemTime::now().into(),
         }
     }
     async fn live_probe(
@@ -42,37 +44,40 @@ impl super::super::Kernel {
         netmap: NetmapRef,
         role_generation: meshway_model::Digest,
         families: &[ExitFamily],
-    ) -> Result<ExitCapability, Reason> {
-        self.ready().await.map_err(|_| Reason::OwnershipConflict)?;
+    ) -> Result<ExitCapability, Unprobed> {
+        use Unprobed::Unavailable as Not;
+        self.ready()
+            .await
+            .map_err(judged(Reason::OwnershipConflict))?;
         // A proven change of an exit-owned object keeps the role withdrawn
         // until a re-read finds the evidence gone.
         if self.exit_blocked().await {
-            return Err(Reason::OwnershipConflict);
+            return Err(Not(Reason::OwnershipConflict));
         }
         self.reconcile_stopped_exit()
             .await
-            .map_err(|_| Reason::OwnershipConflict)?;
-        self.verify().await.map_err(|_| Reason::RouteConflict)?;
+            .map_err(judged(Reason::OwnershipConflict))?;
+        self.verify().await.map_err(judged(Reason::RouteConflict))?;
         if let Some(probe) = &mut self.probe {
-            probe.finish().await.map_err(|error| error.reason)?;
+            probe.finish().await.map_err(|error| Not(error.reason))?;
         }
         self.quiesce()
             .await
-            .map_err(|_| Reason::OwnershipConflict)?;
+            .map_err(judged(Reason::OwnershipConflict))?;
         self.expected
             .lock()
-            .map_err(|_| Reason::OwnershipConflict)?
+            .map_err(|_| Not(Reason::OwnershipConflict))?
             .probe_tun = None;
         let owned = self.owned_interfaces();
         let links = super::super::get_links(&self.handle, self.options.max_kernel_objects)
             .await
-            .map_err(|_| Reason::RouteConflict)?;
+            .map_err(judged(Reason::RouteConflict))?;
         let routes = super::super::get_routes(&self.handle, self.options.max_kernel_objects)
             .await
-            .map_err(|_| Reason::RouteConflict)?;
+            .map_err(judged(Reason::RouteConflict))?;
         let addresses = super::super::get_addresses(&self.handle, self.options.max_kernel_objects)
             .await
-            .map_err(|_| Reason::RouteConflict)?;
+            .map_err(judged(Reason::RouteConflict))?;
         let mut crossing = super::firewall::Crossing::observe(&links, &routes, &addresses);
         // An installed exit TUN is judged by its name, not as a fresh one.
         crossing.installed = self.exit.as_ref().map(|owner| owner.interface_name.clone());
@@ -99,8 +104,8 @@ impl super::super::Kernel {
                 Err(_) if !owner.role.is_active() => self
                     .reconcile_stopped_exit()
                     .await
-                    .map_err(|_| Reason::OwnershipConflict)?,
-                Err(_) => return Err(Reason::OwnershipConflict),
+                    .map_err(judged(Reason::OwnershipConflict))?,
+                Err(error) => return Err(judged(Reason::OwnershipConflict)(error)),
             }
         }
         if let Some(owner) = &self.egress {
@@ -109,7 +114,7 @@ impl super::super::Kernel {
                     .capture
                     .owned_tables()
                     .await
-                    .map_err(|_| Reason::OwnershipConflict)?,
+                    .map_err(judged(Reason::OwnershipConflict))?,
             );
         }
         let probe = self
@@ -120,21 +125,71 @@ impl super::super::Kernel {
         let observation = probe
             .observe(instance, netmap, role_generation, families, &interfaces)
             .await;
-        probe.finish().await.map_err(|error| error.reason)?;
+        probe.finish().await.map_err(|error| Not(error.reason))?;
         self.quiesce()
             .await
-            .map_err(|_| Reason::OwnershipConflict)?;
+            .map_err(judged(Reason::OwnershipConflict))?;
         self.expected
             .lock()
-            .map_err(|_| Reason::OwnershipConflict)?
+            .map_err(|_| Not(Reason::OwnershipConflict))?
             .probe_tun = None;
         Ok(observation)
+    }
+}
+
+/// Why the live probe produced no observation.
+#[derive(Debug, PartialEq, Eq)]
+enum Unprobed {
+    /// A read or change failed, or a stopped role's cleanup is still being
+    /// retried by its owner: nothing was proved. The families report
+    /// `probing`; the periodic probe reads again.
+    Unread,
+    /// Read back and found unusable for the role.
+    Unavailable(Reason),
+}
+
+/// A failed step of the probe judged by its error: an unknown one proves
+/// nothing (`Unread`); anything else is `reason`. A stopped role's cleanup
+/// its owner still retries keeps reporting `ownershipConflict` (with
+/// `exit.cleanupPending`) until it completed.
+fn judged(reason: Reason) -> impl Fn(crate::Error) -> Unprobed {
+    move |error| match error {
+        crate::Error::CleanupPending => Unprobed::Unavailable(Reason::OwnershipConflict),
+        error if error.judgement() == crate::Judgement::Unknown => Unprobed::Unread,
+        _ => Unprobed::Unavailable(reason),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// U3: a probe step whose read failed proves nothing: `probing`, read
+    /// again; what was read back and differs is a reason, and a stopped
+    /// role's cleanup its owner still retries stays `ownershipConflict`.
+    #[test]
+    fn a_failed_read_of_the_probe_is_probing_and_a_read_back_conflict_its_reason() {
+        for error in [
+            crate::Error::Netlink,
+            crate::Error::Drain,
+            crate::Error::JournalUnwritten,
+        ] {
+            assert_eq!(judged(Reason::RouteConflict)(error), Unprobed::Unread);
+        }
+        assert_eq!(
+            judged(Reason::RouteConflict)(crate::Error::CleanupPending),
+            Unprobed::Unavailable(Reason::OwnershipConflict)
+        );
+        assert_eq!(
+            judged(Reason::RouteConflict)(crate::Error::Conflict),
+            Unprobed::Unavailable(Reason::RouteConflict)
+        );
+        assert_eq!(
+            judged(Reason::RouteConflict)(crate::Error::PoolOverlap),
+            Unprobed::Unavailable(Reason::RouteConflict)
+        );
+    }
+
     #[tokio::test]
     #[ignore = "requires isolated Linux NET_ADMIN namespace and an external interface"]
     async fn live_probe_open_host_reports_ipv4_ready_without_external_change() {

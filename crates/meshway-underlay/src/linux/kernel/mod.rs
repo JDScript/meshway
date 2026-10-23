@@ -301,23 +301,50 @@ impl Kernel {
         .map_err(|_| Error::Drain)?
     }
 
-    /// The result of a Host `operation`. One that failed with its journal
-    /// step still pending left a kernel change whose outcome nothing read
-    /// back: this term ends (unavailable unless the failure read back a
-    /// difference), and the Host's re-proof completes the step from the
-    /// kernel's state in its next term, as a process start does
-    /// ([`journal::Journal::settle_pending`]). Never a journal every later
-    /// operation of this term refuses.
+    /// The result of a Host `operation`, judged where its checks live:
+    /// - failed with its journal step still pending: a kernel change whose
+    ///   outcome nothing read back. This term ends (unavailable unless the
+    ///   failure read back a difference), and the Host's re-proof completes
+    ///   the step from the kernel's state in its next term, as a process
+    ///   start does ([`journal::Journal::settle_pending`]). Never a journal
+    ///   every later operation of this term refuses;
+    /// - a journal write failed (`JournalUnwritten`): unavailable, the
+    ///   re-proof reads the file back in a new Store;
+    /// - read back different from what this owner records (`Proven`: a
+    ///   foreign rule, route, address or device, an owned object changed):
+    ///   the monitor's judgement of the same evidence. This term ends as a
+    ///   conflict (`<operation>`: `blocked`, read again every 60 s);
+    /// - a read that failed (unknown), a refusal of the configuration
+    ///   (`AnchorInPool`, invalid options) or the Mesh pool overlap
+    ///   (`PoolOverlap`, recovered when the address leaves) and a pending
+    ///   exit cleanup (`CleanupPending`, its owner retries it) keep the term:
+    ///   the caller retries or reports them.
     pub(super) fn interrupted<T>(&self, operation: &'static str, result: Result<T>) -> Result<T> {
-        if let Err(error) = &result
-            && self.journal.pending.is_some()
-        {
-            tracing::warn!(
-                operation,
-                %error,
-                "Kernel change interrupted with its journal step pending; kernel ownership ends"
-            );
-            self.end_after(operation, error);
+        if let Err(error) = &result {
+            if self.journal.pending.is_some() {
+                tracing::warn!(
+                    operation,
+                    %error,
+                    "Kernel change interrupted with its journal step pending; kernel ownership ends"
+                );
+                self.end_after(operation, error);
+            } else if self.store.unwritten() {
+                tracing::warn!(
+                    operation,
+                    %error,
+                    "Underlay journal write failed; kernel ownership ends and the journal is read back"
+                );
+                self.end_after("journal", &Error::JournalUnwritten);
+            } else if kind(error) == Kind::Proven {
+                if self.shared.ended().is_none() {
+                    tracing::warn!(
+                        operation,
+                        %error,
+                        "Kernel read back different from what this owner records; kernel ownership ends"
+                    );
+                }
+                self.end_after(operation, error);
+            }
         }
         result
     }
@@ -350,6 +377,7 @@ pub(in crate::linux) fn ended(operation: &'static str, error: &Error) -> crate::
     }
     let check = match (error, operation) {
         (Error::Drain, _) => "drain_unavailable",
+        (Error::JournalUnwritten, _) => "journal_unwritten",
         (_, "repair") => "repair_unavailable",
         (_, "monitor") => "monitor_unavailable",
         (_, "retire") => "retire_unavailable",

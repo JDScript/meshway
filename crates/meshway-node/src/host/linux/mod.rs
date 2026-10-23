@@ -105,6 +105,23 @@ fn dns_startup(error: SystemDnsError) -> OpenError {
     }
 }
 
+/// The Kernel's DNS anchor failure as the DNS owner judges it, keeping the
+/// Kernel's classification: read back different (a foreign device, address
+/// or route; the Kernel's ownership ended on it) is the proven
+/// `anchor_kernel`; refused settings are `Settings`; anything else (a read
+/// or change that failed) proves nothing, `anchor_create`.
+fn anchor_failure(error: meshway_underlay::Error) -> SystemDnsFailure {
+    let (kind, check) = match error.judgement() {
+        meshway_underlay::Judgement::Proven => (SystemDnsError::Conflict, "anchor_kernel"),
+        meshway_underlay::Judgement::Refused => (SystemDnsError::Settings, "anchor_create"),
+        meshway_underlay::Judgement::Unknown => (SystemDnsError::Backend, "anchor_create"),
+    };
+    SystemDnsFailure::new(kind, check)
+        .expected("the Kernel's DNS anchor for this reservation")
+        .actual(error)
+        .source("Underlay Kernel")
+}
+
 struct Attachment {
     inner: meshway_underlay::Host,
     directory: Arc<meshway_private_storage::Directory>,
@@ -132,12 +149,12 @@ impl Attachment {
         })?;
         let reserved = self.reservation.as_ref().expect("reserved above");
         let anchor = if matches!(self.dns.backend, SystemDnsBackend::Resolved) {
-            Some(self.inner.dns_anchor(reserved).await.map_err(|error| {
-                SystemDnsFailure::new(SystemDnsError::Backend, "anchor_create")
-                    .expected("the Kernel's DNS anchor for this reservation")
-                    .actual(error)
-                    .source("Underlay Kernel")
-            })?)
+            Some(
+                self.inner
+                    .dns_anchor(reserved)
+                    .await
+                    .map_err(anchor_failure)?,
+            )
         } else {
             None
         };
@@ -328,5 +345,26 @@ impl SystemDns for SystemDnsOwner {
     }
     fn local_domains(&self) -> Vec<meshway_protocol::ipc::LocalDnsDomain> {
         SystemDnsOwner::local_domains(self).to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// U3: the Kernel's judgement of a DNS anchor failure reaches the DNS
+    /// owner unchanged: read back different is proven, a failed read is not.
+    #[test]
+    fn an_anchor_failure_keeps_the_kernel_classification() {
+        use meshway_underlay::Error;
+        let proven = super::anchor_failure(Error::Conflict);
+        assert_eq!(proven.check, "anchor_kernel");
+        assert!(proven.proven());
+        for unknown in [Error::Netlink, Error::JournalUnwritten] {
+            let failure = super::anchor_failure(unknown);
+            assert_eq!(failure.check, "anchor_create");
+            assert!(!failure.proven());
+        }
+        let refused = super::anchor_failure(Error::Options);
+        assert_eq!(refused.error, meshway_dns::SystemDnsError::Settings);
+        assert!(!refused.proven());
     }
 }

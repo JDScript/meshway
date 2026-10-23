@@ -4,7 +4,14 @@ use super::*;
 
 impl Kernel {
     pub(super) async fn ready(&mut self) -> Result<()> {
-        self.store.settle().await?;
+        if let Err(error) = self.store.settle().await {
+            // A journal write of this term failed: the file holds either
+            // record, and this Store accepts no other. The term ends as
+            // unavailable (`journal_unwritten`); the re-proof opens the file
+            // again and judges what it reads back.
+            self.end_after("journal", &error);
+            return Err(error);
+        }
         self.shared.check()?;
         if self.journal.pending.is_some() {
             // Only a dropped operation leaves its step pending in a term
@@ -130,15 +137,37 @@ impl Kernel {
         };
         let expected = self.expected.lock().map_err(|_| Error::Worker)?;
         let tolerated = |route: &RouteMessage| overlap && monitor::overlap_route(&expected, route);
-        if routes
+        let routes: Vec<_> = routes
             .iter()
-            .any(|route| capture::route_conflicts(pools, owned, route) && !tolerated(route))
-            || addresses.iter().any(|address| {
+            .filter(|route| capture::route_conflicts(pools, owned, route) && !tolerated(route))
+            .collect();
+        let addresses: Vec<_> = addresses
+            .iter()
+            .filter(|address| {
                 capture::address_conflicts(pools, owned, address)
                     && !(overlap && expected.overlapping(address))
             })
-        {
-            return Err(Error::Conflict);
+            .collect();
+        if !routes.is_empty() || !addresses.is_empty() {
+            // The monitor's rule: an external interface's address inside a
+            // pool, and the kernel's local routes of such an address, are the
+            // overlap it publishes (whose departure reinstalls), not a
+            // conflict of this owner's objects; anything else is one.
+            let overlapping = addresses
+                .iter()
+                .all(|address| monitor::external(&expected, address.header.index))
+                && routes.iter().all(|route| {
+                    route.attributes.iter().any(|attribute| {
+                        matches!(attribute, rtnetlink::packet_route::route::RouteAttribute::Oif(index)
+                            if addresses.iter().any(|address| address.header.index == *index)
+                                || expected.overlaps.keys().any(|(owner, _)| owner == index))
+                    })
+                });
+            return Err(if overlapping {
+                Error::PoolOverlap
+            } else {
+                Error::Conflict
+            });
         }
         drop(expected);
         self.shared.check()

@@ -41,6 +41,10 @@ pub(super) async fn recover(
         monitored: false,
     };
     backend.initialize().await?;
+    if backend.ledger.removed {
+        // An interrupted retirement, completed from the kernel's state.
+        return Ok(());
+    }
     backend.pause().await?;
     backend.remove_rules().await?;
     if remove {

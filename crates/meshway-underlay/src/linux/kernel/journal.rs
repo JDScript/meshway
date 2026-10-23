@@ -38,12 +38,25 @@ pub(super) struct TunRecord {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", deny_unknown_fields)]
 pub(super) enum Pending {
-    AddRule { spec: RuleSpec },
-    DeleteRule { record: RuleRecord },
-    AddRoute { spec: RouteSpec },
-    DeleteRoute { record: RouteRecord },
+    AddRule {
+        spec: RuleSpec,
+    },
+    DeleteRule {
+        record: RuleRecord,
+    },
+    AddRoute {
+        spec: RouteSpec,
+    },
+    DeleteRoute {
+        record: RouteRecord,
+    },
     CreateTun,
-    CreateDnsAnchor,
+    /// `device`: the fingerprint the creation gives the device, recorded
+    /// before it is created; absent in a journal of an earlier build.
+    CreateDnsAnchor {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device: Option<super::anchor::Creation>,
+    },
     DeleteDnsAnchor,
 }
 
@@ -76,6 +89,14 @@ pub(super) struct Journal {
 impl Journal {
     pub fn end(&self) -> u32 {
         self.start + (self.pool_limit as u32) * 2 + 1
+    }
+
+    /// The DNS anchor's interface name and alias for this installation.
+    pub fn anchor_name(&self) -> String {
+        format!("mwd{}", &self.installation[..10])
+    }
+    pub fn anchor_alias(&self) -> String {
+        format!("meshway-dns:{}", self.installation)
     }
 
     /// Whether this namespace still holds what the journal says it installed:
@@ -115,9 +136,11 @@ impl Journal {
     /// (a live route in the private table stays a conflict there), so a
     /// TUN or route step completes as nothing; a rule step completes as
     /// what its exact recorded bytes read back; an anchor deletion as the
-    /// device's presence. A half-created DNS anchor whose device is there
-    /// was never recorded (no fingerprint to adopt it by) and stays an
-    /// unrecoverable journal.
+    /// device's presence. A half-created DNS anchor is reclaimed before by
+    /// the fingerprint its creation recorded (`anchor::reclaim`); a device
+    /// still there with its name or alias is not ours (or has no
+    /// fingerprint, from an earlier build) and stays an unrecoverable
+    /// journal: never claimed by name.
     pub fn settle_pending(
         &mut self,
         rules: &[Vec<u8>],
@@ -132,7 +155,7 @@ impl Journal {
             Pending::AddRoute { .. } => "AddRoute",
             Pending::DeleteRoute { .. } => "DeleteRoute",
             Pending::CreateTun => "CreateTun",
-            Pending::CreateDnsAnchor => "CreateDnsAnchor",
+            Pending::CreateDnsAnchor { .. } => "CreateDnsAnchor",
             Pending::DeleteDnsAnchor => "DeleteDnsAnchor",
         };
         match pending {
@@ -149,15 +172,15 @@ impl Journal {
                     self.rules.retain(|existing| existing.spec != record.spec);
                 }
             }
-            Pending::CreateDnsAnchor => {
-                let name = format!("mwd{}", &self.installation[..10]);
-                let alias = format!("meshway-dns:{}", self.installation);
+            Pending::CreateDnsAnchor { device } => {
+                let name = self.anchor_name();
+                let alias = self.anchor_alias();
                 if self.anchor.is_some()
                     || links.iter().any(|(_, link_name, link_alias)| {
                         link_name.as_deref() == Some(&name) || link_alias.as_deref() == Some(&alias)
                     })
                 {
-                    self.pending = Some(Pending::CreateDnsAnchor);
+                    self.pending = Some(Pending::CreateDnsAnchor { device });
                     return Err(Error::Journal);
                 }
             }
@@ -270,7 +293,15 @@ impl Journal {
         }
         // A pending step names only what this journal owns.
         let pending = match &self.pending {
-            None | Some(Pending::CreateTun | Pending::CreateDnsAnchor) => true,
+            None | Some(Pending::CreateTun | Pending::CreateDnsAnchor { device: None }) => true,
+            Some(Pending::CreateDnsAnchor {
+                device: Some(device),
+            }) => {
+                self.anchor.is_none()
+                    && device.name == self.anchor_name()
+                    && device.hardware_address.len() == 6
+                    && device.mtu != 0
+            }
             Some(Pending::AddRule { spec }) => {
                 spec.table == self.table && (self.start..=self.end()).contains(&spec.priority)
             }
@@ -341,7 +372,11 @@ impl Store {
         Ok((
             Self {
                 directory,
-                writes: meshway_private_storage::Writes::poisoning(|| Error::Journal),
+                // A failed write leaves the file as either record: this
+                // Store refuses every later one, and its owner ends the term
+                // (`Kernel::ready`); the next term opens the file again and
+                // judges what it reads back.
+                writes: meshway_private_storage::Writes::poisoning(|| Error::JournalUnwritten),
             },
             journal,
         ))
@@ -349,6 +384,12 @@ impl Store {
 
     pub async fn settle(&mut self) -> Result<()> {
         self.writes.settle().await
+    }
+
+    /// A write of this Store failed: it accepts none until a new one reads
+    /// the file back.
+    pub fn unwritten(&self) -> bool {
+        self.writes.poisoned()
     }
 
     /// Preserve a journal written in another namespace that reused this
@@ -369,8 +410,16 @@ impl Store {
             return Err(Error::Capacity);
         }
         let directory = self.directory.clone();
+        #[cfg(test)]
+        let failing = super::tool::command::faults::nth(
+            &super::tool::command::faults::FAILING_JOURNAL_WRITES,
+        );
         self.writes
             .run(move || {
+                #[cfg(test)]
+                if failing {
+                    return Err(std::io::Error::from_raw_os_error(28).into());
+                }
                 directory.replace(FILE, &bytes)?;
                 Ok(())
             })
@@ -627,17 +676,55 @@ mod tests {
         foreign.pending = Some(Pending::DeleteRoute { record: route });
         assert!(matches!(foreign.validate(), Err(Error::Journal)));
 
-        // A half-created anchor whose device is there has no fingerprint to
-        // adopt it by: still unrecoverable.
+        // A device with the half-created anchor's name still there after
+        // the reclaim (`anchor::reclaim`) is not ours, or an earlier build's
+        // without a fingerprint: still unrecoverable, never claimed by name.
+        let fingerprint = super::super::anchor::Creation {
+            name: base.anchor_name(),
+            hardware_address: vec![2, 1, 2, 3, 4, 5],
+            mtu: 1500,
+        };
+        for device in [None, Some(fingerprint.clone())] {
+            let mut creating = base.clone();
+            creating.pending = Some(Pending::CreateDnsAnchor { device });
+            creating.validate().unwrap();
+            let name = creating.anchor_name();
+            assert!(matches!(
+                creating.settle_pending(&[], &[(9, Some(name), None)]),
+                Err(Error::Journal)
+            ));
+            assert!(creating.pending.is_some());
+            creating.settle_pending(&[], &[]).unwrap();
+            assert!(creating.pending.is_none());
+        }
+        // A fingerprint of another name is not one of this journal's steps.
         let mut creating = base.clone();
-        creating.pending = Some(Pending::CreateDnsAnchor);
-        let name = format!("mwd{}", &creating.installation[..10]);
+        creating.pending = Some(Pending::CreateDnsAnchor {
+            device: Some(super::super::anchor::Creation {
+                name: "mwdforeign".into(),
+                ..fingerprint
+            }),
+        });
+        assert!(matches!(creating.validate(), Err(Error::Journal)));
+    }
+
+    /// U3: the intent an earlier build wrote (no fingerprint) and this
+    /// build's both read back; the fingerprint is written with the intent.
+    #[test]
+    fn a_dns_anchor_creation_intent_carries_its_fingerprint() {
+        let boot = Identity::current().unwrap().boot;
+        let mut journal: serde_json::Value = serde_json::from_slice(&journal(&boot)).unwrap();
+        journal["pending"] = serde_json::json!({"operation": "CreateDnsAnchor"});
+        let earlier: Journal = serde_json::from_value(journal.clone()).unwrap();
         assert!(matches!(
-            creating.settle_pending(&[], &[(9, Some(name), None)]),
-            Err(Error::Journal)
+            earlier.pending,
+            Some(Pending::CreateDnsAnchor { device: None })
         ));
-        assert!(creating.pending.is_some());
-        creating.settle_pending(&[], &[]).unwrap();
-        assert!(creating.pending.is_none());
+        journal["pending"] = serde_json::json!({"operation": "CreateDnsAnchor", "device": {
+            "name": earlier.anchor_name(), "hardware_address": [2, 1, 2, 3, 4, 5], "mtu": 1500}});
+        let current: Journal = serde_json::from_value(journal).unwrap();
+        current.validate().unwrap();
+        let written = serde_json::to_value(&current).unwrap();
+        assert_eq!(written["pending"]["device"]["mtu"], 1500);
     }
 }

@@ -117,6 +117,7 @@ async fn setup() -> Setup {
         pending_gate: None,
         receipt: None,
         rules: Vec::new(),
+        retiring: false,
         removed: false,
     };
     let commands =

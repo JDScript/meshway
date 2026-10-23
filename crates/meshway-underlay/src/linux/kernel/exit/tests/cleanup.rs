@@ -350,3 +350,88 @@ async fn dual_stack_exit_cleanup_retries_and_a_create_without_receipt_is_recover
     drop(kernel);
     tasks.shutdown().await.unwrap();
 }
+
+/// U3 A (exit): a failed exit journal write is no change of the role's
+/// objects. The audit reads the file back, records the ledger again and
+/// the role holds; a cleanup whose write failed completes on its retry from
+/// a new writer. A file that reads back as no ledger of this role is a
+/// proven change (`journal_invalid`). Before: the first failed write
+/// poisoned the Store for good: every audit read "journal_unwritten" (a
+/// proven change) and every cleanup retry failed at its write, forever.
+#[tokio::test]
+#[ignore = "requires an isolated Linux NFT/TUN namespace and NET_ADMIN"]
+async fn a_failed_exit_journal_write_is_read_back_and_the_cleanup_completes() {
+    use super::super::super::tool::command::faults::FAILING_EXIT_JOURNAL_WRITES;
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let directory = Arc::new(Directory::open(temp.path(), "node.lock").unwrap());
+    let tasks = Tasks::new(64);
+    let mut kernel = Kernel::open(directory.clone(), Default::default(), tasks.clone())
+        .await
+        .unwrap();
+    kernel
+        .retain_negative(&["100.96.0.0/11".parse().unwrap()])
+        .await
+        .unwrap();
+    let first_tun = tun(&kernel);
+    kernel.quiesce().await.unwrap();
+    let mut backend = create(&mut kernel, &first_tun).await;
+
+    FAILING_EXIT_JOURNAL_WRITES.store(1, SeqCst);
+    let ledger = backend.ledger.clone();
+    assert!(matches!(
+        backend.store.persist(&ledger).await,
+        Err(Error::JournalUnwritten)
+    ));
+    let verification = backend.check().await;
+    assert!(
+        matches!(verification, Verification::Holds),
+        "{verification}"
+    );
+    assert!(matches!(backend.check().await, Verification::Holds));
+    println!("U3_EXIT_JOURNAL_REREAD=holds");
+
+    // Read back as no ledger of this role: proven; valid again: holds.
+    FAILING_EXIT_JOURNAL_WRITES.store(1, SeqCst);
+    assert!(backend.store.persist(&ledger).await.is_err());
+    let file = crate::files::EXIT;
+    let saved = std::fs::read(directory.path().join(file)).unwrap();
+    directory.replace(file, b"{").unwrap();
+    let verification = backend.check().await;
+    assert!(
+        matches!(verification, Verification::Changed("journal_invalid")),
+        "{verification}"
+    );
+    directory.replace(file, &saved).unwrap();
+    assert!(matches!(backend.check().await, Verification::Holds));
+    println!("U3_EXIT_JOURNAL_CORRUPT=journal_invalid,valid-again-holds");
+
+    // A cleanup whose write fails keeps its resources; the retry reads the
+    // file back and completes.
+    FAILING_EXIT_JOURNAL_WRITES.store(1, SeqCst);
+    assert!(matches!(
+        backend.close(true).await,
+        Err(Error::JournalUnwritten)
+    ));
+    assert!(!removed(&kernel).await);
+    backend.close_observed(true).await.unwrap();
+    assert_eq!(
+        objects::present(&mut backend.commands, &backend.ledger.program)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(removed(&kernel).await);
+    drop(backend);
+    drop(first_tun);
+    kernel.quiesce().await.unwrap();
+    println!("U3_EXIT_CLEANUP=write-failed-kept,retry-read-back-removed");
+    kernel.down().await.unwrap();
+    drop(kernel);
+    tasks.shutdown().await.unwrap();
+}

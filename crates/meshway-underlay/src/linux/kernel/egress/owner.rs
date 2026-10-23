@@ -422,6 +422,7 @@ impl super::super::Kernel {
                 pending_gate: None,
                 receipt: None,
                 rules: Vec::new(),
+                retiring: false,
                 removed: false,
             }
         };
@@ -444,6 +445,11 @@ impl super::super::Kernel {
         };
         let mut installing = Installing(Some(self.shared.clone()));
         backend.initialize().await?;
+        if backend.ledger.removed {
+            // An interrupted retirement completed now: nothing is installed;
+            // the next attempt allocates a new capture table.
+            return Err(Error::Worker);
+        }
         backend.stage(plan.clone(), mesh(&self.expected)?).await?;
         self.quiesce().await?;
         let (sender, mut receiver) = mpsc::channel(16);

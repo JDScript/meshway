@@ -256,9 +256,10 @@ impl super::super::super::Kernel {
         for shift in 0..32 {
             let bit = 1u32 << ((shift + u32::from(random[0])) % 32);
             if mask & bit == 0
+                // A conntrack dump that failed read nothing: unknown.
                 && super::super::conntrack::mark_unused(bit)
                     .await
-                    .map_err(|_| Error::Conflict)?
+                    .map_err(|_| Error::Netlink)?
             {
                 selected = Some(bit);
                 break;

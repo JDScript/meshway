@@ -65,6 +65,22 @@ CASES = {
     # the re-proof reconciles the journal's TUN and route records.
     "pending-tun": ("meshway-underlay-kernel-tests",
                     "linux::kernel::tests::reproof::a_suspend_whose_read_fails_after_closing_the_tun_is_reproved_and_installs_again"),
+    # U3: a failed base journal write ends the term and the re-proof reads
+    # the file back (a corrupt one is a conflict); a half-created DNS anchor
+    # is reclaimed by its recorded fingerprint (a foreign one never); only a
+    # proven install failure ends the term as a conflict; a failed exit
+    # journal write is read back by the audit and the cleanup's retry; an
+    # egress retirement whose read-back failed completes on recovery.
+    "journal-unwritten": ("meshway-underlay-kernel-tests",
+                          "linux::kernel::tests::reproof::a_failed_journal_write_ends_the_term_and_is_read_back_by_the_reproof"),
+    "anchor-reclaim": ("meshway-underlay-kernel-tests",
+                       "linux::kernel::tests::reproof::a_half_created_dns_anchor_is_reclaimed_by_its_fingerprint_and_created_again"),
+    "install-conflict": ("meshway-underlay-kernel-tests",
+                         "linux::kernel::tests::reproof::only_a_proven_install_failure_ends_the_term_as_a_conflict"),
+    "exit-journal": ("meshway-underlay-kernel-tests",
+                     "linux::kernel::exit::tests::cleanup::a_failed_exit_journal_write_is_read_back_and_the_cleanup_completes"),
+    "egress-retire": ("meshway-underlay-kernel-tests",
+                      "linux::kernel::egress::tests::changes::a_retirement_whose_read_back_failed_completes_and_a_missing_table_otherwise_conflicts"),
     "changes-egress": ("meshway-underlay-kernel-tests",
                        "linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed"),
     "nft": ("meshway-underlay-kernel-tests",
@@ -107,7 +123,7 @@ def execute(report, image, platform, identity):
                        "--device", "/dev/net/tun", "--security-opt", "no-new-privileges", "--cpus", "2",
                        "--memory", "1g", "--pids-limit", "128", "--tmpfs", "/state:mode=700",
                        "--tmpfs", "/run:mode=755", "--env", "TMPDIR=/state", "--env", "RUST_MIN_STACK=8388608",
-                       "--env", "MESHWAY_UNDERLAY_ISOLATED=1", "--env", "MESHWAY_X4_EXTERNAL=" + remote + ":18080",
+                       "--env", "MESHWAY_UNDERLAY_ISOLATED=1", "--env", "MESHWAY_DNS_ISOLATED=1", "--env", "MESHWAY_X4_EXTERNAL=" + remote + ":18080",
                        "--env", "MESHWAY_X4_CLI=/fixtures/meshway",
                        "--sysctl", "net.ipv4.ip_forward=1",
                        "--sysctl", "net.ipv4.conf.all.rp_filter=0", "--sysctl", "net.ipv4.conf.default.rp_filter=0",

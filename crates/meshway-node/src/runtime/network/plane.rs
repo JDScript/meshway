@@ -425,6 +425,11 @@ impl meshway_engine::Components for Plane {
                 crate::host::Error::Unsupported(_) => {
                     self.fail(Problem::UnsupportedMode, ApplyFailure::Validation)
                 }
+                // The netmap's pools cover this host's DNS anchor: the same
+                // netmap never installs; another offer may.
+                crate::host::Error::Linux(meshway_underlay::Error::AnchorInPool { .. }) => {
+                    self.fail(Problem::Configuration, ApplyFailure::Validation)
+                }
                 _ => self.fail(Problem::Underlay, ApplyFailure::Underlay),
             });
         }

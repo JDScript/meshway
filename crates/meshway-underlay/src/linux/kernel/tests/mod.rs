@@ -42,6 +42,88 @@ fn dns_anchor_address_conflicts_with_specific_routes_but_not_the_default_route()
     assert!(anchor::route_conflicts(address, Some(7), &route));
 }
 
+/// U3 B: a half-created DNS anchor is ours only by the fingerprint its
+/// creation recorded (name, random hardware address, MTU, a dummy without a
+/// controller, no alias but its own); none there completes as nothing;
+/// anything else with its name or alias is not claimed.
+#[test]
+fn a_half_created_dns_anchor_is_recognised_by_its_fingerprint_only() {
+    use rtnetlink::packet_route::link::{InfoKind, LinkAttribute, LinkInfo};
+    let creation = anchor::Creation {
+        name: "mwd0123456789".into(),
+        hardware_address: vec![2, 9, 8, 7, 6, 5],
+        mtu: 1500,
+    };
+    let alias = "meshway-dns:0123456789abcdef0123456789abcdef";
+    let link = |index: u32, name: &str, address: &[u8], kind: InfoKind| {
+        let mut link = LinkMessage::default();
+        link.header.index = index;
+        link.attributes = vec![
+            LinkAttribute::IfName(name.into()),
+            LinkAttribute::Address(address.to_vec()),
+            LinkAttribute::Mtu(1500),
+            LinkAttribute::LinkInfo(vec![LinkInfo::Kind(kind)]),
+        ];
+        link
+    };
+    let ours = link(
+        7,
+        &creation.name,
+        &creation.hardware_address,
+        InfoKind::Dummy,
+    );
+    let other = link(3, "eth0", &[2, 0, 0, 0, 0, 1], InfoKind::Veth);
+    assert_eq!(
+        anchor::half_created(&creation, alias, std::slice::from_ref(&other)).unwrap(),
+        None
+    );
+    assert_eq!(
+        anchor::half_created(&creation, alias, &[other, ours.clone()]).unwrap(),
+        Some(7)
+    );
+    let mut aliased = ours.clone();
+    aliased
+        .attributes
+        .push(LinkAttribute::IfAlias(alias.into()));
+    assert_eq!(
+        anchor::half_created(&creation, alias, std::slice::from_ref(&aliased)).unwrap(),
+        Some(7)
+    );
+    // The same name with another hardware address, kind or alias, or a
+    // second device with its alias: never claimed by name.
+    for foreign in [
+        vec![link(
+            7,
+            &creation.name,
+            &[2, 1, 1, 1, 1, 1],
+            InfoKind::Dummy,
+        )],
+        vec![link(
+            7,
+            &creation.name,
+            &creation.hardware_address,
+            InfoKind::Veth,
+        )],
+        vec![{
+            let mut renamed = ours.clone();
+            renamed
+                .attributes
+                .push(LinkAttribute::IfAlias("someone-else".into()));
+            renamed
+        }],
+        vec![ours.clone(), {
+            let mut second = link(9, "dummy9", &[2, 3, 3, 3, 3, 3], InfoKind::Dummy);
+            second.attributes.push(LinkAttribute::IfAlias(alias.into()));
+            second
+        }],
+    ] {
+        assert!(matches!(
+            anchor::half_created(&creation, alias, &foreign),
+            Err(Error::Journal)
+        ));
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires an isolated Linux network namespace, private /run and NET_ADMIN"]
 async fn dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal() {

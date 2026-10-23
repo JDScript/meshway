@@ -96,13 +96,34 @@ fn routes(table: u32, gate: &Gate) -> Vec<RouteMessage> {
 }
 
 impl Backend {
+    /// Open the recorded capture table, or create it. A retirement that
+    /// deleted the table but did not read that back completes here
+    /// (`ledger.removed`; nothing more to open); a table missing otherwise
+    /// was removed by someone else.
     pub async fn initialize(&mut self) -> Result<()> {
         self.store.persist(&self.ledger).await?;
         if !self.present().await? {
             if self.ledger.receipt.is_some() {
+                if self.ledger.retiring
+                    && self.ledger.rules.is_empty()
+                    && self.ledger.pending_gate.is_none()
+                    && self.ledger.gate.device.is_none()
+                    && self.table_routes().await?.is_empty()
+                {
+                    tracing::info!(
+                        table = self.ledger.program.table(),
+                        "Egress capture retirement completed from the kernel's state"
+                    );
+                    self.ledger.removed = true;
+                    return self.store.persist(&self.ledger).await;
+                }
                 return Err(Error::Conflict);
             }
             let _result = objects::mutate(&mut self.commands, &self.ledger.program.create()).await;
+        } else if self.ledger.retiring {
+            // The deletion never took: the table is this owner's again.
+            self.ledger.retiring = false;
+            self.store.persist(&self.ledger).await?;
         }
         let observed = self.dump().await?;
         if let Some(receipt) = &self.ledger.receipt {
@@ -437,7 +458,8 @@ impl Backend {
             }
         })
         .await
-        .map_err(|_| Error::Conflict)?
+        // The monitor did not catch up: nothing was read, nothing proven.
+        .map_err(|_| Error::Drain)?
     }
     fn expect_route(&self, deleted: bool, bytes: Vec<u8>) -> Result<()> {
         if self.monitored {
@@ -517,7 +539,17 @@ impl Backend {
         self.pause().await?;
         self.remove_rules().await?;
         self.verify().await?;
+        // Recorded before the deletion: a table missing after this point
+        // is the retirement's own (`initialize`), never a foreign removal.
+        self.ledger.retiring = true;
+        self.store.persist(&self.ledger).await?;
         let _outcome = objects::mutate(&mut self.commands, &json!({"nftables": [{"delete": {"table": {"family": "inet", "name": self.ledger.program.table()}}}]})).await;
+        #[cfg(test)]
+        if super::super::tool::command::faults::take(
+            &super::super::tool::command::faults::FAILING_RETIRE_READS,
+        ) {
+            return Err(Error::Netlink);
+        }
         if self.present().await? {
             return Err(Error::Conflict);
         }

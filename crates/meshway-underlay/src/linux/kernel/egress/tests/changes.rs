@@ -221,3 +221,85 @@ async fn failed_capture_changes_are_read_back_and_completed() {
     );
     tasks.shutdown().await.unwrap();
 }
+
+/// U3 C: a retirement whose table deletion succeeded but whose read-back
+/// failed recorded `retiring` before deleting: the next recovery (a new
+/// term, `down` again, a process start) reads the table gone with every
+/// rule and route already removed and completes the retirement. A table
+/// that disappears outside a retirement stays a foreign removal. Before:
+/// "receipt present, table absent" was a permanent conflict.
+#[tokio::test]
+#[ignore = "requires an isolated Linux network namespace, TUN, nft and NET_ADMIN"]
+async fn a_retirement_whose_read_back_failed_completes_and_a_missing_table_otherwise_conflicts() {
+    use crate::linux::kernel::tool::command::faults::FAILING_RETIRE_READS;
+    use std::sync::atomic::Ordering::SeqCst;
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let tables = || {
+        String::from_utf8(
+            std::process::Command::new("/usr/sbin/nft")
+                .args(["list", "tables"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+    };
+    let Setup {
+        _temp,
+        tasks,
+        mut kernel,
+        mut backend,
+        mesh,
+        ..
+    } = setup().await;
+    backend.stage(full(), mesh.clone()).await.unwrap();
+    assert!(!backend.ledger.rules.is_empty());
+    let table = backend.ledger.program.table();
+    FAILING_RETIRE_READS.store(1, SeqCst);
+    assert!(matches!(backend.retire().await, Err(Error::Netlink)));
+    assert!(!tables().contains(&table), "the deletion took");
+    assert!(backend.ledger.retiring && !backend.ledger.removed);
+    drop(backend);
+    let directory = kernel.store.directory();
+    recover(&kernel.handle, directory.clone(), 65_536, false)
+        .await
+        .unwrap();
+    let (_, ledger) = Store::open(directory.clone()).await.unwrap();
+    assert!(
+        ledger.is_none(),
+        "completed: the removed record is archived"
+    );
+    println!("U3_EGRESS_RETIRE=read-back-failed,completed-by-recovery");
+    kernel.down().await.unwrap();
+    drop(kernel);
+    tasks.shutdown().await.unwrap();
+    drop(_temp);
+
+    // Outside a retirement, a missing table is someone else's removal.
+    let Setup {
+        _temp,
+        tasks,
+        kernel,
+        mut backend,
+        mesh,
+        ..
+    } = setup().await;
+    backend.stage(full(), mesh).await.unwrap();
+    let table = backend.ledger.program.table();
+    let status = std::process::Command::new("/usr/sbin/nft")
+        .args(["delete", "table", "inet", &table])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    drop(backend);
+    assert!(matches!(
+        recover(&kernel.handle, kernel.store.directory(), 65_536, false).await,
+        Err(Error::Conflict)
+    ));
+    println!("U3_EGRESS_FOREIGN=conflict");
+    drop(kernel);
+    tasks.shutdown().await.unwrap();
+}

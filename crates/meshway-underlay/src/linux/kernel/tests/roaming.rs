@@ -472,7 +472,12 @@ async fn an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves() {
     assert_eq!(found.interface, "r1-overlap");
     // Not a permanent conflict: installation refuses, removal proceeds.
     host.kernel.shared.check().unwrap();
-    assert!(host.kernel.verify_capture(&pools).await.is_err());
+    let refused = host.kernel.verify_capture(&pools).await;
+    assert!(matches!(refused, Err(Error::PoolOverlap)), "{refused:?}");
+    // U3: the install refusal keeps the term (no conflict end): the
+    // overlap's departure is what reinstalls.
+    assert!(host.kernel.interrupted("install", refused).is_err());
+    assert!(host.ownership_ended().is_none());
     host.kernel.verify().await.unwrap();
     handle
         .address()

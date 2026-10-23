@@ -131,8 +131,15 @@ impl Backend {
     /// the receipt and journal, classified: a read that fails is unknown,
     /// never a change.
     pub async fn check(&mut self) -> Verification {
-        if self.store.settle().await.is_err() {
-            return Verification::Changed("journal_unwritten");
+        // A failed journal write is no change of the kernel's objects: the
+        // file is read back and the ledger recorded again; only a file that
+        // does not match is one.
+        match self.store.recover(&self.ledger).await {
+            Ok(()) => {}
+            Err(error) if error.judgement() == crate::Judgement::Proven => {
+                return Verification::Changed("journal_invalid");
+            }
+            Err(error) => return Verification::Unavailable(error),
         }
         if self.commands.settle().await.is_err() {
             return Verification::Unavailable(Error::Netlink);
@@ -229,7 +236,8 @@ impl Backend {
     /// again from the start (each step re-reads and skips what is already
     /// gone); anything else is not this owner's to remove.
     pub async fn close_observed(&mut self, monitored: bool) -> Result<()> {
-        let _write = self.store.settle().await;
+        // A write of an earlier attempt that failed is read back first.
+        self.store.recover(&self.ledger).await?;
         let _command = self.commands.settle().await;
         let tables = self.ledger.program.tables().len();
         match objects::present(&mut self.commands, &self.ledger.program).await? {
@@ -364,7 +372,11 @@ pub(super) fn replicate(error: &Error) -> Error {
         Error::Io(error) | Error::Bind { source: error, .. } => {
             Error::Io(std::io::Error::new(error.kind(), error.to_string()))
         }
-        Error::Journal | Error::Storage(_) => Error::Journal,
+        Error::Journal => Error::Journal,
+        Error::JournalUnwritten | Error::Storage(_) => Error::JournalUnwritten,
+        Error::PoolOverlap => Error::PoolOverlap,
+        Error::CleanupPending => Error::CleanupPending,
+        Error::AnchorInPool { address } => Error::AnchorInPool { address: *address },
         Error::Tun(_) => Error::Worker,
     }
 }

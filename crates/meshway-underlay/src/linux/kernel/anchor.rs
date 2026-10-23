@@ -32,6 +32,85 @@ pub(super) struct Record {
     pub hardware_address: Vec<u8>,
     pub mtu: u32,
 }
+
+/// What a DNS anchor creation gives its device before the kernel sees it:
+/// the journal records it with the creation's intent, so a later term can
+/// tell the device this owner created (its random hardware address) from
+/// any other with the same name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Creation {
+    pub name: String,
+    pub hardware_address: Vec<u8>,
+    pub mtu: u32,
+}
+
+/// The device a recorded creation left, by its fingerprint: `Ok(Some(index))`
+/// is the one this owner created (its name, random hardware address, MTU,
+/// a dummy without a controller, and no alias but its own); `Ok(None)` none
+/// carries its name or alias; anything else with them is not ours
+/// (`Journal`, as before: never claimed by name).
+pub(super) fn half_created(
+    creation: &Creation,
+    alias: &str,
+    links: &[LinkMessage],
+) -> Result<Option<u32>> {
+    let named: Vec<_> = links
+        .iter()
+        .filter(|link| {
+            link.attributes.iter().any(|a| {
+                matches!(a, LinkAttribute::IfName(v) if v == &creation.name)
+                    || matches!(a, LinkAttribute::IfAlias(v) if v == alias)
+            })
+        })
+        .collect();
+    let [link] = named.as_slice() else {
+        return if named.is_empty() {
+            Ok(None)
+        } else {
+            Err(Error::Journal)
+        };
+    };
+    let ours = link.header.index != 0
+        && link.attributes.iter().any(|a| matches!(a, LinkAttribute::IfName(v) if v == &creation.name))
+        && link.attributes.iter().any(|a| matches!(a, LinkAttribute::Address(bytes) if bytes == &creation.hardware_address))
+        && link.attributes.iter().any(|a| matches!(a, LinkAttribute::Mtu(mtu) if *mtu == creation.mtu))
+        && !link.attributes.iter().any(|a| matches!(a, LinkAttribute::Controller(index) if *index != 0))
+        && !link.attributes.iter().any(|a| matches!(a, LinkAttribute::IfAlias(v) if !v.is_empty() && v != alias))
+        && link.attributes.iter().any(|a| matches!(a, LinkAttribute::LinkInfo(infos) if infos.iter().any(|info| matches!(info, LinkInfo::Kind(InfoKind::Dummy)))));
+    if ours {
+        Ok(Some(link.header.index))
+    } else {
+        Err(Error::Journal)
+    }
+}
+
+/// Remove the device a creation interrupted in an ended term or process
+/// left, identified by its recorded fingerprint ([`half_created`]); the DNS
+/// owner creates the anchor again on the new term. A read or deletion that
+/// fails proves nothing (the re-proof retries it); a device of its name
+/// that is not ours stays, and the journal with it.
+pub(super) async fn reclaim(
+    handle: &Handle,
+    creation: &Creation,
+    alias: &str,
+    limit: usize,
+) -> Result<()> {
+    let Some(index) = half_created(creation, alias, &get_links(handle, limit).await?)? else {
+        return Ok(());
+    };
+    execute(handle.link().del(index).execute()).await?;
+    if half_created(creation, alias, &get_links(handle, limit).await?)?.is_some() {
+        return Err(Error::Conflict);
+    }
+    tracing::info!(
+        index,
+        name = creation.name,
+        "Half-created DNS anchor of an interrupted creation reclaimed by its fingerprint"
+    );
+    Ok(())
+}
+
 struct Guard {
     /// The read-only verifier's own request socket. Cloning Kernel.handle
     /// would share its multipart-dump slot with mutations and their
@@ -222,27 +301,33 @@ impl Kernel {
         ) {
             return Err(Error::Options);
         }
+        // Configuration refusals: no kernel object was read for them.
         let address = reservation.settings().anchor_address;
         if address.is_unspecified()
             || address.is_multicast()
             || address.is_loopback()
             || address.is_link_local()
             || address.is_broadcast()
-            || self
-                .journal
-                .pools
-                .iter()
-                .any(|pool| pool.contains(&IpAddr::V4(address)))
         {
-            return Err(Error::Conflict);
+            return Err(Error::Options);
+        }
+        if self
+            .journal
+            .pools
+            .iter()
+            .any(|pool| pool.contains(&IpAddr::V4(address)))
+        {
+            return Err(Error::AnchorInPool { address });
         }
         if let Some(record) = &self.journal.anchor {
+            // The settings name another address than the anchor this host
+            // holds (removed only by `down`).
             if record.identity.address != address {
-                return Err(Error::Conflict);
+                return Err(Error::Options);
             }
         } else {
-            let name = format!("mwd{}", &self.journal.installation[..10]);
-            let alias = format!("meshway-dns:{}", self.journal.installation);
+            let name = self.journal.anchor_name();
+            let alias = self.journal.anchor_alias();
             let links = get_links(&self.handle, self.options.max_kernel_objects).await?;
             if links.iter().any(|link| {
                 link.attributes.iter().any(|a| {
@@ -280,7 +365,15 @@ impl Kernel {
                 .map_err(|_| Error::Worker)?
                 .anchor_creating = Some((name.clone(), None));
             let created = async {
-                self.journal.pending = Some(Pending::CreateDnsAnchor);
+                // The fingerprint is durable before the device exists: a
+                // later term reclaims exactly this device (`reclaim`).
+                self.journal.pending = Some(Pending::CreateDnsAnchor {
+                    device: Some(Creation {
+                        name: name.clone(),
+                        hardware_address: hardware_address.clone(),
+                        mtu,
+                    }),
+                });
                 self.store.persist(&self.journal).await?;
                 // rtnl_create_link validates AF_SPEC before register_netdevice;
                 // inet6_validate_link_af then rejects the not-yet-created inet6_dev
@@ -292,6 +385,12 @@ impl Kernel {
                     .down()
                     .build();
                 execute(self.handle.link().add(link).execute()).await?;
+                #[cfg(test)]
+                if super::tool::command::faults::take(
+                    &super::tool::command::faults::FAILING_ANCHOR_READS,
+                ) {
+                    return Err(Error::Netlink);
+                }
                 let links = collect(
                     self.handle.link().get().match_name(name.clone()).execute(),
                     self.options.max_kernel_objects,

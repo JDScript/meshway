@@ -47,6 +47,12 @@ pub(super) struct Ledger {
     pub receipt: Option<super::super::exit::objects::Receipt>,
     /// Owned RPDB rules: the capture-table selector of each family.
     pub rules: Vec<Vec<u8>>,
+    /// Retirement deleted (or is deleting) the table after every rule and
+    /// route was removed and the table read back closed: only then is a
+    /// missing table the retirement's own completion, not a foreign
+    /// removal. Absent in a ledger of an earlier build.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retiring: bool,
     pub removed: bool,
 }
 pub(super) struct Store {

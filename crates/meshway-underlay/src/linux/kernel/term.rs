@@ -62,6 +62,26 @@ impl Kernel {
             false,
         )
         .await?;
+        // A fresh Store: whatever an ended term's failed write left in the
+        // file is read back here and judged like any process start's.
+        let (mut store, mut previous) = Store::open(directory).await?;
+        // An interrupted DNS anchor creation: its own device, by the
+        // fingerprint recorded before it was created, is removed before the
+        // monitor subscribes (the DNS owner creates the anchor again on this
+        // term); `settle_pending` then completes the step as nothing.
+        if let Some(journal) = previous.as_ref().filter(|journal| journal.anchor.is_none())
+            && let Some(Pending::CreateDnsAnchor {
+                device: Some(creation),
+            }) = &journal.pending
+        {
+            anchor::reclaim(
+                &handle,
+                creation,
+                &journal.anchor_alias(),
+                options.max_kernel_objects,
+            )
+            .await?;
+        }
         let monitor_socket = monitor::open()?;
         // Observation (change fingerprints, route lookups) has its own
         // request socket: it never queues behind or interleaves with the
@@ -72,7 +92,6 @@ impl Kernel {
             observer_connection.await;
             observer_failed();
         })?;
-        let (mut store, mut previous) = Store::open(directory).await?;
         let rules = get_rules(&handle, options.max_kernel_objects).await?;
         let routes = get_routes(&handle, options.max_kernel_objects).await?;
         // The same boot and nsfs inode but none of the journal's objects: a

@@ -53,6 +53,13 @@ impl<E: Send + 'static> Writes<E> {
         Ok(())
     }
 
+    /// Whether a settled write failed and this poisoning owner now refuses
+    /// every write. What the file holds is unknown to it: only reading it
+    /// back (a new owner) tells.
+    pub fn poisoned(&self) -> bool {
+        self.failed && matches!(self.policy, Failure::Poison(_))
+    }
+
     pub async fn run(
         &mut self,
         work: impl FnOnce() -> Result<(), E> + Send + 'static,
@@ -98,7 +105,9 @@ mod tests {
     #[tokio::test]
     async fn failure_policy_preserves_poisoning_and_per_write_errors() {
         let mut sticky = Writes::poisoning(|| "storage");
+        assert!(!sticky.poisoned());
         assert_eq!(sticky.run(|| Err("write")).await, Err("storage"));
+        assert!(sticky.poisoned());
         assert_eq!(sticky.settle().await, Err("storage"));
         let admitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let attempted = admitted.clone();
@@ -114,6 +123,7 @@ mod tests {
         assert!(!admitted.load(std::sync::atomic::Ordering::SeqCst));
         let mut retryable = Writes::per_write(|| "worker");
         assert_eq!(retryable.run(|| Err("write")).await, Err("write"));
+        assert!(!retryable.poisoned());
         retryable.run(|| Ok(())).await.unwrap();
     }
 }

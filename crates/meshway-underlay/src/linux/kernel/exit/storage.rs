@@ -114,42 +114,37 @@ pub(super) struct Store {
 
 impl Store {
     pub async fn open(directory: Arc<Directory>) -> Result<(Self, Option<Ledger>)> {
-        let reader = directory.clone();
-        let ledger = tokio::task::spawn_blocking(move || -> Result<Option<Ledger>> {
-            super::child::settled(&reader)?;
-            let Some(file) = reader.file(FILE, false)? else {
-                return Ok(None);
-            };
-            let mut bytes = Vec::new();
-            file.take(LIMIT as u64 + 1).read_to_end(&mut bytes)?;
-            if bytes.len() > LIMIT {
-                return Err(Error::Journal);
-            }
-            let ledger = super::legacy::decode(&bytes)?;
-            if !super::super::namespace::Identity::current()?.is(
-                &ledger.boot,
-                ledger.namespace_device,
-                ledger.namespace_inode,
-                ledger.namespace_cookie,
-            ) {
-                reader.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
-                return Ok(None);
-            }
-            ledger.validate()?;
-            Ok(Some(ledger))
-        })
-        .await
-        .map_err(|_| Error::Worker)??;
+        let ledger = read(directory.clone(), true).await?;
         Ok((
             Self {
                 directory,
-                writes: meshway_private_storage::Writes::poisoning(|| Error::Journal),
+                writes: writes(),
             },
             ledger,
         ))
     }
     pub async fn settle(&mut self) -> Result<()> {
         self.writes.settle().await
+    }
+    /// After a write of `ledger`'s owner failed, what the file holds is
+    /// unknown (the previous record or the new one): read it back. A ledger
+    /// of the same program (or none yet) is this owner's, and the owner
+    /// continues with a new writer that records `ledger` again; a read that
+    /// fails proves nothing (`Err` unknown, retried by the owner); anything
+    /// else read back is a journal that does not match (`Journal`). Without a
+    /// failed write this only settles.
+    pub async fn recover(&mut self, ledger: &Ledger) -> Result<()> {
+        if self.settle().await.is_ok() {
+            return Ok(());
+        }
+        if let Some(recorded) = read(self.directory.clone(), false).await?
+            && recorded.program.installation != ledger.program.installation
+        {
+            return Err(Error::Journal);
+        }
+        tracing::info!("Exit journal read back after a failed write; recording it again");
+        self.writes = writes();
+        self.persist(ledger).await
     }
     pub async fn persist(&mut self, ledger: &Ledger) -> Result<()> {
         self.settle().await?;
@@ -159,11 +154,59 @@ impl Store {
             return Err(Error::Capacity);
         }
         let directory = self.directory.clone();
+        #[cfg(test)]
+        let failing = super::super::tool::command::faults::take(
+            &super::super::tool::command::faults::FAILING_EXIT_JOURNAL_WRITES,
+        );
         self.writes
             .run(move || {
+                #[cfg(test)]
+                if failing {
+                    return Err(std::io::Error::from_raw_os_error(28).into());
+                }
                 directory.replace(FILE, &bytes)?;
                 Ok(())
             })
             .await
     }
+}
+
+/// A failed write refuses every later one of the same writer: its owner
+/// reads the file back ([`Store::recover`]) before writing again.
+fn writes() -> meshway_private_storage::Writes<Error> {
+    meshway_private_storage::Writes::poisoning(|| Error::JournalUnwritten)
+}
+
+/// The ledger the file holds. `archive`: a ledger of another boot or
+/// namespace is archived (a process start); otherwise it is not this
+/// owner's (`Journal`).
+async fn read(directory: Arc<Directory>, archive: bool) -> Result<Option<Ledger>> {
+    tokio::task::spawn_blocking(move || -> Result<Option<Ledger>> {
+        super::child::settled(&directory)?;
+        let Some(file) = directory.file(FILE, false)? else {
+            return Ok(None);
+        };
+        let mut bytes = Vec::new();
+        file.take(LIMIT as u64 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > LIMIT {
+            return Err(Error::Journal);
+        }
+        let ledger = super::legacy::decode(&bytes)?;
+        if !super::super::namespace::Identity::current()?.is(
+            &ledger.boot,
+            ledger.namespace_device,
+            ledger.namespace_inode,
+            ledger.namespace_cookie,
+        ) {
+            if !archive {
+                return Err(Error::Journal);
+            }
+            directory.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
+            return Ok(None);
+        }
+        ledger.validate()?;
+        Ok(Some(ledger))
+    })
+    .await
+    .map_err(|_| Error::Worker)?
 }

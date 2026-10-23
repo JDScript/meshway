@@ -244,8 +244,8 @@ impl ExitRole {
             .ok_or(Error::Conflict)
     }
     /// Close positive I/O immediately, then await the first cleanup attempt.
-    /// A failed one is `Conflict` at once; the owner keeps retrying it (see
-    /// [`Self::cleanup_pending`]).
+    /// A failed one is `CleanupPending` at once (unknown, not a conflict:
+    /// the owner keeps retrying it, see [`Self::cleanup_pending`]).
     pub async fn retire(&self) -> Result<()> {
         self.stop.cancel();
         let mut done = self.done.clone();
@@ -253,7 +253,7 @@ impl ExitRole {
             match &*done.borrow() {
                 Closing::Serving => {}
                 Closing::Done(true) => return Ok(()),
-                Closing::Done(false) | Closing::Pending(_) => return Err(Error::Conflict),
+                Closing::Done(false) | Closing::Pending(_) => return Err(Error::CleanupPending),
             }
             done.changed().await.map_err(|_| Error::Worker)?;
         }

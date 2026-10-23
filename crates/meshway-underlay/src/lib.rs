@@ -259,6 +259,26 @@ pub enum Error {
     Protection,
     #[error("private underlay journal is invalid or requires recovery")]
     Journal,
+    /// A write of a private journal failed: what the file holds now is
+    /// unknown (the previous record or the new one) until its owner reads it
+    /// back in a new term. Never a corrupt journal by itself.
+    #[error("private underlay journal write failed; what it holds is read back again")]
+    JournalUnwritten,
+    /// An external interface holds an address (or its local route) inside a
+    /// Mesh address pool: capture stays failed closed until it leaves.
+    #[error(
+        "an external interface address is inside a Mesh address pool; capture waits until it leaves"
+    )]
+    PoolOverlap,
+    /// A stopped exit role's cleanup failed; its owner retries it.
+    #[error("exit role cleanup pending; its owner retries it")]
+    CleanupPending,
+    /// The configured Mesh address pools cover this host's DNS anchor
+    /// address: a configuration problem, not a kernel one.
+    #[error(
+        "a Mesh address pool covers this host's DNS anchor address {address}; change the pool or the anchor address (`meshway down` removes the anchor)"
+    )]
+    AnchorInPool { address: std::net::Ipv4Addr },
     /// A journal an earlier version wrote, still owning host resources this
     /// version cannot recover.
     #[error(
@@ -321,8 +341,12 @@ impl Error {
             | Self::Origin
             | Self::Unsupported
             | Self::Resolver
-            | Self::ControlUnavailable => Judgement::Refused,
+            | Self::ControlUnavailable
+            | Self::PoolOverlap
+            | Self::AnchorInPool { .. } => Judgement::Refused,
             Self::Netlink
+            | Self::JournalUnwritten
+            | Self::CleanupPending
             | Self::Io(_)
             | Self::Drain
             | Self::Worker

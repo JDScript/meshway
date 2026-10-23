@@ -157,10 +157,27 @@ pub(in crate::linux::kernel) mod faults {
     /// Netlink dump attempts the kernel refuses with `EBUSY` (another dump
     /// runs on the socket).
     pub static INTERRUPTED_DUMPS: AtomicU32 = AtomicU32::new(0);
+    /// `n`: the n-th base journal write from now fails (a full disk, `EIO`)
+    /// before the file is replaced ([`nth`]).
+    pub static FAILING_JOURNAL_WRITES: AtomicU32 = AtomicU32::new(0);
+    /// Exit journal writes that fail before the file is replaced.
+    pub static FAILING_EXIT_JOURNAL_WRITES: AtomicU32 = AtomicU32::new(0);
+    /// The read-back of a DNS anchor right after the kernel created its
+    /// device that fails (a stalled host).
+    pub static FAILING_ANCHOR_READS: AtomicU32 = AtomicU32::new(0);
+    /// Egress capture table listings that fail right after the table's
+    /// deletion was submitted (a stalled host).
+    pub static FAILING_RETIRE_READS: AtomicU32 = AtomicU32::new(0);
     pub(in crate::linux::kernel) fn take(counter: &AtomicU32) -> bool {
         counter
             .fetch_update(SeqCst, SeqCst, |left| left.checked_sub(1))
             .is_ok()
+    }
+    /// Counts `counter` down: true only for the call that takes it to 0.
+    pub(in crate::linux::kernel) fn nth(counter: &AtomicU32) -> bool {
+        counter
+            .fetch_update(SeqCst, SeqCst, |left| left.checked_sub(1))
+            .is_ok_and(|left| left == 1)
     }
 }
 

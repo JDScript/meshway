@@ -407,6 +407,246 @@ async fn a_suspend_whose_read_fails_after_closing_the_tun_is_reproved_and_instal
     host.down().await.unwrap();
 }
 
+/// U3 A: a base journal write that fails (a full disk) leaves the file as
+/// either record, and its Store refuses every later write. The term ends as
+/// unavailable (`journal_unwritten`); the re-proof opens the file again in a
+/// new Store, judges what it reads back like a process start, and the same
+/// content installs again. A file that reads back corrupt is a proven
+/// journal conflict (`blocked`, read again every 60 s), recovered once it
+/// reads back valid. Before: the failed write of a suspend's last step (its
+/// TUN and routes gone, nothing pending) kept the term with a Store that
+/// returned "journal invalid" to every later install, suspend and down.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "isolated Linux NET_ADMIN namespace with TUN and nft required"]
+async fn a_failed_journal_write_ends_the_term_and_is_read_back_by_the_reproof() {
+    use crate::OwnershipEnd;
+    use crate::linux::kernel::tool::command::faults::FAILING_JOURNAL_WRITES;
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("private"), "test.lock").unwrap());
+    let mut host = Host::open(directory.clone(), Options::default())
+        .await
+        .unwrap();
+    let desired = source_desired();
+    host.install(desired.clone()).await.unwrap();
+    let installation = host.kernel.journal.installation.clone();
+    let routes = host.kernel.journal.routes.len() as u32;
+    assert!(routes > 0);
+
+    // Each route's deletion writes twice; the suspension's last write (TUN
+    // record cleared, nothing pending) fails.
+    FAILING_JOURNAL_WRITES.store(2 * routes + 1, std::sync::atomic::Ordering::SeqCst);
+    let error = host.suspend().await.unwrap_err();
+    println!("U3_SUSPEND_FAILED={error}");
+    assert!(matches!(error, Error::JournalUnwritten), "{error:?}");
+    assert!(host.kernel.journal.pending.is_none());
+    assert_eq!(
+        host.ownership_ended(),
+        Some(OwnershipEnd::Unavailable {
+            check: "journal_unwritten"
+        }),
+        "a failed write ends the term; install after it: {:?}",
+        host.install(desired.clone()).await.err()
+    );
+    assert!(!host.ownership().borrow().is_blocked());
+    let due = host
+        .recovery_at()
+        .expect("an unavailable end is proved again");
+    assert!(due <= std::time::Instant::now() + std::time::Duration::from_secs(2));
+    let started = std::time::Instant::now();
+    host.recover().await.unwrap();
+    assert_eq!(host.kernel.journal.installation, installation);
+    host.install(desired.clone()).await.unwrap();
+    assert!(host.tun().is_some());
+    host.kernel.shared.check().unwrap();
+    println!(
+        "U3_JOURNAL_REREAD=term-ended,read-back,content-reinstalled,elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+
+    // The next write fails, and the file then reads back corrupt: proven.
+    FAILING_JOURNAL_WRITES.store(1, std::sync::atomic::Ordering::SeqCst);
+    assert!(host.suspend().await.is_err());
+    assert!(matches!(
+        host.ownership_ended(),
+        Some(OwnershipEnd::Unavailable { .. })
+    ));
+    let file = crate::files::JOURNAL;
+    let saved = std::fs::read(directory.path().join(file)).unwrap();
+    directory.replace(file, b"{\"version\":").unwrap();
+    assert!(matches!(host.recover().await, Err(Error::Journal)));
+    assert_eq!(
+        host.ownership_ended(),
+        Some(OwnershipEnd::Conflict { check: "reproof" })
+    );
+    assert!(host.ownership().borrow().is_blocked());
+    assert!(host.recovery_at().is_some(), "read again every 60 s");
+    println!("U3_JOURNAL_CORRUPT=conflict:reproof");
+    // Valid again: the next read-only re-proof owns a new term.
+    directory.replace(file, &saved).unwrap();
+    host.recover().await.unwrap();
+    assert!(host.ownership().borrow().is_healthy());
+    host.install(desired).await.unwrap();
+    host.kernel.shared.check().unwrap();
+    host.down().await.unwrap();
+}
+
+/// U3 B: a DNS anchor creation whose read-back fails after the kernel
+/// created the device ends the term (`anchor_unavailable`); its fingerprint
+/// was recorded with the intent before the device existed, so the re-proof
+/// removes exactly that device and the same reservation creates the anchor
+/// again, without a new namespace. A foreign device with the anchor's name
+/// is never claimed: the re-proof stays a conflict until it is gone. Before:
+/// "pending creation and the device exists" was an unrecoverable journal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "isolated Linux NET_ADMIN namespace with TUN and nft required"]
+async fn a_half_created_dns_anchor_is_reclaimed_by_its_fingerprint_and_created_again() {
+    use crate::OwnershipEnd;
+    use crate::linux::kernel::tool::command::faults::FAILING_ANCHOR_READS;
+    assert_eq!(std::env::var("MESHWAY_DNS_ISOLATED").as_deref(), Ok("1"));
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("private"), "test.lock").unwrap());
+    let mut reservation =
+        meshway_dns::SystemDnsOwner::reserve(Default::default(), directory.clone())
+            .await
+            .unwrap();
+    let mut host = Host::open(directory.clone(), Options::default())
+        .await
+        .unwrap();
+    let name = host.kernel.journal.anchor_name();
+    let present = |name: &str| {
+        std::process::Command::new("/usr/sbin/ip")
+            .args(["link", "show", "dev", name])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    };
+
+    FAILING_ANCHOR_READS.store(1, std::sync::atomic::Ordering::SeqCst);
+    let error = host.dns_anchor(&reservation).await.err().unwrap();
+    println!("U3_ANCHOR_FAILED={error}");
+    assert!(present(&name), "the kernel created the device");
+    assert!(matches!(
+        host.kernel.journal.pending,
+        Some(Pending::CreateDnsAnchor { device: Some(_) })
+    ));
+    assert_eq!(
+        host.ownership_ended(),
+        Some(OwnershipEnd::Unavailable {
+            check: "anchor_unavailable"
+        })
+    );
+    let started = std::time::Instant::now();
+    host.recover().await.unwrap();
+    assert!(!present(&name), "its own half-created device reclaimed");
+    assert!(host.kernel.journal.pending.is_none() && host.kernel.journal.anchor.is_none());
+    let guard = host.dns_anchor(&reservation).await.unwrap();
+    guard.verify().await.unwrap();
+    // A journal that held nothing else is allocated anew by the new term.
+    let name = host.kernel.journal.anchor_name();
+    println!(
+        "U3_ANCHOR_RECLAIMED=reclaimed,created-again,elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    drop(guard);
+    host.remove_dns_anchor().await.unwrap();
+
+    // Interrupted again; then the device is replaced by a foreign one with
+    // the same name: never claimed, the journal stays a conflict.
+    FAILING_ANCHOR_READS.store(1, std::sync::atomic::Ordering::SeqCst);
+    let error = host.dns_anchor(&reservation).await.err().unwrap();
+    println!(
+        "U3_ANCHOR_FAILED_AGAIN={error} pending={} ended={:?}",
+        host.kernel.journal.pending.is_some(),
+        host.ownership_ended()
+    );
+    assert!(present(&name));
+    let ip = |arguments: &[&str]| {
+        let status = std::process::Command::new("/usr/sbin/ip")
+            .args(arguments)
+            .status()
+            .unwrap();
+        assert!(status.success(), "ip {arguments:?}");
+    };
+    ip(&["link", "del", "dev", &name]);
+    ip(&["link", "add", &name, "type", "dummy"]);
+    assert!(matches!(host.recover().await, Err(Error::Journal)));
+    assert_eq!(
+        host.ownership_ended(),
+        Some(OwnershipEnd::Conflict { check: "reproof" })
+    );
+    assert!(present(&name), "a foreign device is never removed");
+    println!("U3_ANCHOR_FOREIGN=kept,conflict:reproof");
+    ip(&["link", "del", "dev", &name]);
+    host.recover().await.unwrap();
+    let guard = host.dns_anchor(&reservation).await.unwrap();
+    guard.verify().await.unwrap();
+    drop(guard);
+    host.remove_dns_anchor().await.unwrap();
+    host.down().await.unwrap();
+    reservation.release_uninstalled().await.unwrap();
+}
+
+/// U3: a Host operation's failure ends the term only on what its checks
+/// proved. Read back different (a foreign object) is the monitor's
+/// judgement: a conflict, `blocked`, read again every 60 s. A failed read,
+/// a refused configuration (the pools covering the DNS anchor), the Mesh
+/// pool overlap (recovered when the address leaves) and a pending exit
+/// cleanup (its owner retries it) keep the term.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "isolated Linux NET_ADMIN namespace with TUN and nft required"]
+async fn only_a_proven_install_failure_ends_the_term_as_a_conflict() {
+    use crate::OwnershipEnd;
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("private"), "test.lock").unwrap());
+    let mut host = Host::open(directory.clone(), Options::default())
+        .await
+        .unwrap();
+    for kept in [
+        Error::Netlink,
+        Error::PoolOverlap,
+        Error::CleanupPending,
+        Error::AnchorInPool {
+            address: "198.18.255.254".parse().unwrap(),
+        },
+        Error::Options,
+    ] {
+        assert!(
+            host.kernel
+                .interrupted("install", Err::<(), _>(kept))
+                .is_err()
+        );
+        assert!(host.ownership_ended().is_none());
+    }
+    assert!(
+        host.kernel
+            .interrupted("install", Err::<(), _>(Error::Conflict))
+            .is_err()
+    );
+    assert_eq!(
+        host.ownership_ended(),
+        Some(OwnershipEnd::Conflict { check: "install" })
+    );
+    assert!(host.ownership().borrow().is_blocked());
+    let reread = host.recovery_at().expect("a proven conflict is read again");
+    assert!(
+        reread.saturating_duration_since(std::time::Instant::now())
+            > std::time::Duration::from_secs(50)
+    );
+    // Nothing foreign is there: the read-only re-proof owns a new term.
+    host.recover().await.unwrap();
+    host.install(source_desired()).await.unwrap();
+    host.down().await.unwrap();
+}
+
 /// X15: a monitor drain that misses its 3 s deadline is an unavailable end
 /// with its own cause (re-proved like any other), not a conflict; a
 /// read-back that differs still is one. The stopped request connection's

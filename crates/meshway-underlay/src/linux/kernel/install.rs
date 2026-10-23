@@ -65,12 +65,16 @@ impl Kernel {
             view.addresses(),
             self.options.max_pools,
         )?;
-        if self.journal.anchor.as_ref().is_some_and(|anchor| {
-            pools
+        // A configuration refusal: this host's DNS anchor (kept until
+        // `down`) holds an address the new pools would capture.
+        if let Some(anchor) = &self.journal.anchor
+            && pools
                 .iter()
                 .any(|pool| pool.contains(&IpAddr::V4(anchor.identity.address)))
-        }) {
-            return Err(Error::Conflict);
+        {
+            return Err(Error::AnchorInPool {
+                address: anchor.identity.address,
+            });
         }
         let addresses = view.addresses().clone();
         self.verify_capture(&pools).await?;
@@ -134,6 +138,16 @@ impl Kernel {
             self.options.max_pools,
         )?;
         if !same_pools(&old_pools, pools) {
+            return Ok(false);
+        }
+        // New addresses of this Node in the same pools are new content for
+        // a new TUN, not a TUN that differs from its record.
+        if self
+            .journal
+            .tun
+            .as_ref()
+            .is_some_and(|record| record.addresses != *addresses)
+        {
             return Ok(false);
         }
 
