@@ -375,6 +375,11 @@ pub(crate) async fn serve(
     view: View,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), &'static str> {
+    #[cfg(test)]
+    if FAIL_SERVE.take() {
+        drop(channels);
+        return Err("IPC service failed.");
+    }
     let mut clients = JoinSet::new();
     let outcome = loop {
         tokio::select! { biased;
@@ -397,6 +402,13 @@ pub(crate) async fn serve(
     };
     clients.shutdown().await;
     outcome
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The next service on this thread fails at once, dropping its request
+    /// senders, as a listener that stopped unexpectedly.
+    pub(crate) static FAIL_SERVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]

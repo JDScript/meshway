@@ -7,6 +7,8 @@ pub(crate) mod network;
 mod peers;
 mod ping;
 mod status;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use intent::{Action, Mutation};
 use intent::{Desired, Store};
@@ -181,13 +183,19 @@ async fn run(
     let mut control_done = false;
     let mut failure = None;
     let mut rotations = Vec::new();
+    // A closed request channel or report watch is never ready again: its
+    // branch is disabled, so the listener's or control's join is reached.
+    let mut netchecks_open = true;
+    let mut pings_open = true;
+    let mut completions_open = true;
     lifecycle.send_replace(Lifecycle::Ready);
     while failure.is_none() {
         tokio::select! { biased;
             _ = &mut shutdown => break,
             _ = ping_forwarders.join_next(), if !ping_forwarders.is_empty() => {},
             _ = netcheck_runs.join_next(), if !netcheck_runs.is_empty() => {},
-            reply = netcheck_requests.recv() => {
+            reply = netcheck_requests.recv(), if netchecks_open => {
+                netchecks_open = reply.is_some();
                 if let Some(reply) = reply {
                     // Bounded like the IPC queue: four in flight at most.
                     if netcheck_runs.len() < 4 {
@@ -214,7 +222,8 @@ async fn run(
                     failure = Some("Node intent persistence failed.");
                 }
             },
-            updated = completions.changed() => {
+            updated = completions.changed(), if completions_open => {
+                completions_open = updated.is_ok();
                 if updated.is_ok() {
                     let report = completions.borrow_and_update().clone();
                     if complete(&mut store, &desired, &report, &mut rotations).await.is_err() {
@@ -222,7 +231,8 @@ async fn run(
                     }
                 }
             },
-            ping = ping_requests.recv() => {
+            ping = ping_requests.recv(), if pings_open => {
+                pings_open = ping.is_some();
                 if let Some(mut ping) = ping {
                     let code = ping::admission(&view.status(), platform.capabilities().packets).err().or_else(|| (ping_forwarders.len() >= 8).then_some(meshway_protocol::ipc::PingError::Busy));
                     if let Some(code) = code {

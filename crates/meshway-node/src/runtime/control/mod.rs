@@ -919,6 +919,7 @@ async fn online_session(
     };
     let (errors, mut error_rx) = watch::channel(None);
     let mut errors_open = true;
+    let mut netmaps_open = true;
     let mut sync = {
         let shared = shared.clone();
         let stop = stop.clone();
@@ -989,8 +990,9 @@ async fn online_session(
                 }
                 sync_status.send_modify(|status| status.error = error);
             },
-            changed = netmap_rx.changed() => {
+            changed = netmap_rx.changed(), if netmaps_open => {
                 if changed.is_err() {
+                    netmaps_open = false;
                     continue;
                 }
                 let synced = netmap_rx.borrow_and_update().is_some();
