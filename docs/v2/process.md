@@ -48,13 +48,13 @@ T2 的每一行都受生产时间常量约束（60 秒租约、续租、退避�
 
 ## v0.1.0 交付门槛 {#v0-1-gate}
 
-v0.1.0 只含 Linux Node 与 Server：一个小团队能自行安装，在真实网络上连续运行 14 天无需人工值守，已知限制写明。到达门槛前**功能冻结**——不开新功能工作包；以下移到 v0.1.0 之后：自动方案地区推断（GeoIP）、多出口 DNS plan、IPv6 出口前缀变化与出口合成 PTB（I6-2，列为已知限制）、千节点规模、非 root／netstack、Apple。
+v0.1.0 只含 Linux Node 与 Server：一个小团队能自行安装，在真实网络上连续运行 7 天（按日程注入故障）无需人工值守，已知限制写明。到达门槛前**功能冻结**——不开新功能工作包；以下移到 v0.1.0 之后：自动方案地区推断（GeoIP）、多出口 DNS plan、IPv6 出口前缀变化与出口合成 PTB（I6-2，列为已知限制）、千节点规模、非 root／netstack、Apple。
 
 | 里程碑 | 内容 | 退出条件 |
 | --- | --- | --- |
 | A 还债 | 已登记缺陷（X16、R4、X17 及 `fault/throttle` 行暴露的问题）；恢复状态机收敛为一个共享框架；[验收范围](/v2/node/validation)改为对外参考格式 | 无未登记的矩阵失败签名；`fault/throttle` 行连续 3 轮全绿 |
 | B 交付件 | Server 存储迁移（schema 升级不 reset、不重新接入）；Server 部署形态（systemd unit、备份、远程升级）；含 compilerVersion 断网窗口的升级演练 | 在现场从上一版本按[安装](/v2/install)文档升级成功 |
-| C 现场 soak | 常驻六台连续 14 天 | 零人工重启；每次 `blocked` 都有已证实的原因；空闲 CPU 按 [60 秒口径](/v2/node/performance#idle-cpu)每线程 <5%；中继／出口节点进程合计 ≤ 固定周期开销 ＋ 每秒转发包数 × 29 µs，固定周期开销在 2 vCPU 的 it7 上 ≤ 8 %（P2 实测 7.0–7.3 %），出口节点的 `nft` 子进程另计 ≤ 5 %（实测约 4.2 %） |
+| C 现场 soak | 连续 7 天，公网节点为主证据：it7、jp-tyo-arm64、kr-icn-arm64（物理机）与 planck、cn-hkg-dmit（Docker），Server 在 planck 的 Docker；按日程注入故障（T0 所在 UTC 日为 D1）：D2 10:00Z Server 升级，D3 10:00Z Server 停机 30 分钟，D4 10:00Z `meshway-server rotate-netmap-key`，D5 10／12／14／16 点依次 jp `systemctl restart`、kr `kill -9`（由 systemd 拉起）、hk `docker restart`、it7 `systemctl restart`，D6 10:00Z planck 容器 netns 内丢弃全部 UDP 5 分钟、12:00Z hk 容器内丢弃到 Server 的 TCP 10 分钟、14:00Z jp 选 `us-exit` 方案跑 10 分钟出口流量后撤回，D7 不注入；物理机只做进程级故障。采集、日志、注入与判定由 `scripts/soak/`（`README.md`）在采集机 kr 上执行 | 零人工重启（计划外的进程启动为 0；计划内＝故障窗口加 15 分钟宽限）；每次 `blocked` 都有已证实的原因；空闲 CPU 按 [60 秒口径](/v2/node/performance#idle-cpu)每小时一次、每线程 <5%；中继／出口节点进程合计 ≤ 固定周期开销 ＋ 每秒转发包数 × 29 µs，固定周期开销在 2 vCPU 的 it7 上 ≤ 8 %（P2 实测 7.0–7.3 %），出口节点的 `nft` 子进程另计 ≤ 5 %（实测约 4.2 %）；RSS／fd／socket 7 天无持续增长（每个进程段的线性斜率外推 7 天超过限值、且末 24 小时中位比首 24 小时高出限值的四分之一才算增长；RSS 限值 max(8 MiB, 首 24 小时中位的 10 %)，fd／socket 8 个）；计划外的 sync 失败只属于 tunnel／Server 可达性（`Network`／`ServerBusy`）；每天 10 条边 `meshway ping` 各 10/10 |
 | D 审阅 | 威胁模型／安全审阅与最终代码审阅（只读，与 C 并行） | 无高危未修 |
 
 ## 分支与证据
