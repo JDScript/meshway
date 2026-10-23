@@ -63,6 +63,8 @@ CM-1b（`cm1b/udp-upgrade-drops`）：wire、`compilerVersion`、Server schema 9
 - 可见性：IPC Status `sockets[]` 每个 UDP socket 增加可省略的 `receiveDrops`（内核为该 socket 计的到达即丢弃数，主要是接收缓冲已满；按 inode 读 `/proc/self/net/udp`／`udp6`，读不到时省略），`meshway status` 的 SOCKET 表增加 `DROPS` 列。CM-1 B1 之后过载时的丢弃在内核，此前在 Status 中不可见。见[运行状态](/v2/node/runtime)。
 - 矩阵：`udp/off` 的 R 另有其后的 Native TCP listener，新增承载回归阶段（A 外发 UDP 被 `tc` 丢弃时退到 TCP，放开后 ≤ 75 秒回到 Native UDP、circuit CID 不变）。
 
+验证：`manager::tests::netmap::upgrade::*` 两项在旧代码上失败（未回到 UDP；UDP 不可达时 7 秒内 0 次尝试），修复后通过；`udp/off` 承载回归阶段在旧代码上失败（`A–R did not reach NativeUdp within 75s`），修复后退到 TCP 12.1 秒、放开后 1.0 秒回到 Native UDP、CID 不变。Planck 26 行矩阵 `20261023T165212Z-528ea923`（`7b81c695`，并行 4）25 行通过，`netmap/restart` 失败在行前 underlay 内核测试的 90 秒信号期限（`container_restart_archives_previous_namespace_journal`），单行复跑 `20261023T173206Z-f70df365` 通过；Planck `mise run --jobs 1 check` 在 `7b81c695` 通过。证据 `.meshway/validation/cm1b/`。
+
 
 U2b 同族的另外两种形态（`u2b/read-failure-not-conflict`）：wire、IPC 13、`compilerVersion`、Server schema 与 HTTP 契约均不变，无新 flag。
 

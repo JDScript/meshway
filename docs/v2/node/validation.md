@@ -25,36 +25,36 @@
 
 ## 默认矩阵 {#matrix}
 
-`scripts/validate_matrix.py` 的 `ROWS` 定义 26 行，默认全部运行。**当前状态：25／25 通过；DNS-2 新增的 `jammy/resolv-conf` 在 4 行矩阵 `20261023T122956Z-d4a0ca36`（`ac2ca8e7`，与 `udp/resolved`、`udp/resolv-conf`、`exit/off` 一起全长通过），DNS-2b 之后在 2 行矩阵 `20261023T134911Z-c1d7c13d`（`5a558e52`，与 `udp/resolved`）全长通过，私有证据 `.meshway/validation/dns2/`；尚未进入全量矩阵**——Planck 矩阵 `20261022T145506Z-d176310c`（`d2cb2f72`，并行 4，墙钟 1,977 秒，启动 load 4.2），私有证据 `.meshway/validation/r4/remote/full/`。下表“报告”列为该矩阵中的行报告 ID。
+`scripts/validate_matrix.py` 的 `ROWS` 定义 26 行，默认全部运行。**当前状态：26／26 通过**——Planck 矩阵 `20261023T165212Z-528ea923`（`7b81c695`，CM-1b，并行 4，墙钟 2,031 秒，启动 load 6.0）25 行通过，`netmap/restart` 在行前 underlay 内核测试的 90 秒信号期限失败（环境），单行复跑 `20261023T173206Z-f70df365` 通过，表中为复跑报告；私有证据 `.meshway/validation/cm1b/matrix/`。下表“报告”列为该矩阵中的行报告 ID。
 
 | 行 | 拓扑与承载 | 覆盖 | 门槛摘要 | 报告 | 定义 |
 | --- | --- | --- | --- | --- | --- |
-| `tun` | 单 namespace | 真实 TUN 创建与双栈包 I/O | 全部用例通过 | `20261022T145729Z-ab737fe0` | [tun 与 packet](#tun-packet) |
-| `packet` | A→R→B，Native TCP | 受保护包流、满 MTU／MTU+1、多 MSS TCP、R 只转发密文、原路径回复 | R 明文交付 0 | `20261022T145729Z-b9d439ad` | [tun 与 packet](#tun-packet) |
-| `udp/off` | A→R→B，Native UDP 仅本机上报端点；A–R 另有其后的 Native TCP | 共同场景；listener 端口被占后自愈（U1）；UDP 阻断时退到 TCP、放开后回到 Native UDP（CM-1b） | 共同场景全部检查；放开后 ≤ 75 秒回到 `native_udp`、circuit 不变 | `20261023T163435Z-7269c29d` | [共同场景](#runtime-共同场景) |
-| `tcp/off` | A→R→B，Native TCP | 共同场景 | 同上 | `20261022T150249Z-29fc5cfd` | [共同场景](#runtime-共同场景) |
-| `vless/off` | 仅 R listener，VLESS TCP/TLS | 共同场景＋精确叶证书 | 同上 | `20261022T150252Z-9c2c453d` | [共同场景](#runtime-共同场景) |
-| `trojan/off` | 仅 R listener，Trojan TCP/TLS | 共同场景＋精确叶证书 | 同上 | `20261022T150753Z-c13c88f9` | [共同场景](#runtime-共同场景) |
-| `udp/resolv-conf` | Native UDP 静态端点 | 共同场景＋文件代理 DNS | 同上＋DNS 场景 | `20261022T150753Z-2184a347` | [DNS 场景](#dns-场景) |
-| `udp/resolved` | Native UDP 静态端点 | 共同场景＋resolved 后端 | 同上＋resolved 重启 ≤ 5 秒再解析 | `20261022T150843Z-6e527d7c` | [DNS 场景](#dns-场景) |
-| `jammy/resolv-conf` | Native UDP 静态端点，Ubuntu 22.04 DNS 镜像 | 共同场景＋文件代理 DNS；resolved 后端的明确不支持 | 同 `udp/resolv-conf`＋resolved 检查报 `probe` 版本要求；真实 daemon 60 秒内探测 ≤ 6 次 | `20261023T140203Z-72dac874` | [DNS 场景](#dns-场景) |
-| `nat/off` | A、R 各在端口保持型 SNAT 后 | 共同场景＋协调穿透 | R 只接受 A 的 offer | `20261022T151205Z-2c4d8408` | [穿透场景](#穿透场景) |
-| `nat+fallback/off` | 同上＋A–R Native TCP 退路 | 穿透后切到 TCP 退路 | 同一 socket、circuit 与路径跨切换保留 | `20261022T151255Z-44bbec33` | [穿透场景](#穿透场景) |
-| `nat/resolved` | 同 `nat/off` | 穿透＋resolved | 两场景全部检查 | `20261022T151259Z-757716fd` | [穿透场景](#穿透场景) |
-| `nat/relay` | 5 节点，A–B 直连被路由器丢弃 | 新流经第三节点中继 | 提交后 ≤ 30 秒经 R2 回复 | `20261022T151355Z-8f3e2373` | [中继兜底行](#relay-row) |
-| `nat/reconnect` | A 端点相关映射 ↔ 公网 R | NAT 映射丢失、Server 重启、两端 daemon 重启后打洞边自愈 | 每阶段 ≤ 60 秒 `direct` | `20261022T151659Z-dfd601ba` | [重启自愈行](#reconnect-row) |
-| `exit/off` | A→R→E，IPv4 出口 | 出口 16 阶段：能力、NAT、DNS、域名关联、方案、ICMP／PMTU、auto、echo、吞吐 | 各阶段断言 | `20261022T145729Z-4e89da45` | [出口场景](#exit-scenario) |
-| `exit6/off` | 同上，双栈，NAT66 | IPv6 出口 | 各阶段断言 | `20261022T151725Z-4952ac78` | [exit6/off 行](#exit6-off) |
-| `roam/direct` | A 两个 SNAT 上联，公网 B，LAN C | 运行中换上联 | 首个回复 ≤ 3 秒、circuit 与 TCP 保持 | `20261022T151802Z-fce6fb05` | [漫游行](#roam-row) |
-| `roam/nat` | A、B 都在 NAT 后 | 漫游后重新穿透 | 首个回复 ≤ 5 秒、A 发起 | `20261022T152140Z-6636608b` | [roam/nat 行](#roam-nat-row) |
-| `roam/relay` | 同上＋公网中继 R | 空窗内新流经中继 | 空窗新流 1 秒内经 R | `20261022T152017Z-2cac8205` | [roam/relay 行](#roam-relay-row) |
-| `roam/flap` | A 两个上联 | 快速往返 | 反应数＝path 变化数、无 circuit 退役 | `20261022T152401Z-b33d6914` | [roam/flap 行](#roam-flap-row) |
-| `roam/exit` | 出口节点 A 漫游 | 出口能力重探、新流经新上联 | 5 秒内再 `ready` | `20261022T152300Z-f6bfa531` | [roam/exit 行](#roam-exit-row) |
-| `fault/throttle` | A→R→B，B 经出口 E，四端 resolved | 外部压力下自动恢复与空闲 CPU | 无 `blocked`、≤ 10 秒恢复、线程 < 5 % | `20261022T145729Z-bb3df91c` | [fault/throttle 行](#fault-row) |
-| `netmap/offline` | 本机上报端点 | Server 不可达 3 分钟（多次租约内） | 一切照常 | `20261022T152140Z-e0e440e1` | [netmap 生命周期行](#netmap-rows) |
-| `netmap/revoke` | Native TCP | 端口、密钥、成员变化到达数据面 | ≤ 5 秒 | `20261022T152300Z-851c7dad` | [netmap 生命周期行](#netmap-rows) |
-| `netmap/expiry` | Native UDP | 越过租约后 fail closed 并恢复 | TUN ≤ 2 秒删除 | `20261022T152401Z-cbfa8235` | [租约到期撤回](#lease-expiry-withdrawal) |
-| `netmap/restart` | 本机上报端点 | Server 不可达时空闲重拨与 daemon 重启 | 只用最后已知事实重建 | `20261022T152505Z-2e163adb` | [netmap 生命周期行](#netmap-rows) |
+| `tun` | 单 namespace | 真实 TUN 创建与双栈包 I/O | 全部用例通过 | `20261023T165645Z-236164ff` | [tun 与 packet](#tun-packet) |
+| `packet` | A→R→B，Native TCP | 受保护包流、满 MTU／MTU+1、多 MSS TCP、R 只转发密文、原路径回复 | R 明文交付 0 | `20261023T165645Z-89b67424` | [tun 与 packet](#tun-packet) |
+| `udp/off` | A→R→B，Native UDP 仅本机上报端点；A–R 另有其后的 Native TCP | 共同场景；listener 端口被占后自愈（U1）；UDP 阻断时退到 TCP、放开后回到 Native UDP（CM-1b） | 共同场景全部检查；放开后 ≤ 75 秒回到 `native_udp`、circuit 不变 | `20261023T165646Z-e12cc5bf` | [共同场景](#runtime-共同场景) |
+| `tcp/off` | A→R→B，Native TCP | 共同场景 | 同上 | `20261023T170152Z-f62a2e6a` | [共同场景](#runtime-共同场景) |
+| `vless/off` | 仅 R listener，VLESS TCP/TLS | 共同场景＋精确叶证书 | 同上 | `20261023T170231Z-a002235b` | [共同场景](#runtime-共同场景) |
+| `trojan/off` | 仅 R listener，Trojan TCP/TLS | 共同场景＋精确叶证书 | 同上 | `20261023T170811Z-4b0e77e9` | [共同场景](#runtime-共同场景) |
+| `udp/resolv-conf` | Native UDP 静态端点 | 共同场景＋文件代理 DNS | 同上＋DNS 场景 | `20261023T170949Z-90e25608` | [DNS 场景](#dns-场景) |
+| `udp/resolved` | Native UDP 静态端点 | 共同场景＋resolved 后端 | 同上＋resolved 重启 ≤ 5 秒再解析 | `20261023T170951Z-80dbbede` | [DNS 场景](#dns-场景) |
+| `jammy/resolv-conf` | Native UDP 静态端点，Ubuntu 22.04 DNS 镜像 | 共同场景＋文件代理 DNS；resolved 后端的明确不支持 | 同 `udp/resolv-conf`＋resolved 检查报 `probe` 版本要求；真实 daemon 60 秒内探测 ≤ 6 次 | `20261023T171126Z-f7929ac3` | [DNS 场景](#dns-场景) |
+| `nat/off` | A、R 各在端口保持型 SNAT 后 | 共同场景＋协调穿透 | R 只接受 A 的 offer | `20261023T171311Z-2aaf175f` | [穿透场景](#穿透场景) |
+| `nat+fallback/off` | 同上＋A–R Native TCP 退路 | 穿透后切到 TCP 退路 | 同一 socket、circuit 与路径跨切换保留 | `20261023T171455Z-667fd19a` | [穿透场景](#穿透场景) |
+| `nat/resolved` | 同 `nat/off` | 穿透＋resolved | 两场景全部检查 | `20261023T171508Z-0c469ef5` | [穿透场景](#穿透场景) |
+| `nat/relay` | 5 节点，A–B 直连被路由器丢弃 | 新流经第三节点中继 | 提交后 ≤ 30 秒经 R2 回复 | `20261023T171740Z-cef37f3b` | [中继兜底行](#relay-row) |
+| `nat/reconnect` | A 端点相关映射 ↔ 公网 R | NAT 映射丢失、Server 重启、两端 daemon 重启后打洞边自愈 | 每阶段 ≤ 60 秒 `direct` | `20261023T171815Z-7c71a963` | [重启自愈行](#reconnect-row) |
+| `exit/off` | A→R→E，IPv4 出口 | 出口 16 阶段：能力、NAT、DNS、域名关联、方案、ICMP／PMTU、auto、echo、吞吐 | 各阶段断言 | `20261023T165645Z-a2081f3a` | [出口场景](#exit-scenario) |
+| `exit6/off` | 同上，双栈，NAT66 | IPv6 出口 | 各阶段断言 | `20261023T172001Z-d58cf796` | [exit6/off 行](#exit6-off) |
+| `roam/direct` | A 两个 SNAT 上联，公网 B，LAN C | 运行中换上联 | 首个回复 ≤ 3 秒、circuit 与 TCP 保持 | `20261023T172037Z-2be64ea5` | [漫游行](#roam-row) |
+| `roam/nat` | A、B 都在 NAT 后 | 漫游后重新穿透 | 首个回复 ≤ 5 秒、A 发起 | `20261023T172458Z-0bd54827` | [roam/nat 行](#roam-nat-row) |
+| `roam/relay` | 同上＋公网中继 R | 空窗内新流经中继 | 空窗新流 1 秒内经 R | `20261023T172618Z-5c36e644` | [roam/relay 行](#roam-relay-row) |
+| `roam/flap` | A 两个上联 | 快速往返 | 反应数＝path 变化数、无 circuit 退役 | `20261023T172251Z-13969448` | [roam/flap 行](#roam-flap-row) |
+| `roam/exit` | 出口节点 A 漫游 | 出口能力重探、新流经新上联 | 5 秒内再 `ready` | `20261023T172355Z-e02e156a` | [roam/exit 行](#roam-exit-row) |
+| `fault/throttle` | A→R→B，B 经出口 E，四端 resolved | 外部压力下自动恢复与空闲 CPU | 无 `blocked`、≤ 10 秒恢复、线程 < 5 % | `20261023T165645Z-92789924` | [fault/throttle 行](#fault-row) |
+| `netmap/offline` | 本机上报端点 | Server 不可达 3 分钟（多次租约内） | 一切照常 | `20261023T172426Z-da09bcb0` | [netmap 生命周期行](#netmap-rows) |
+| `netmap/revoke` | Native TCP | 端口、密钥、成员变化到达数据面 | ≤ 5 秒 | `20261023T172458Z-667b5ff9` | [netmap 生命周期行](#netmap-rows) |
+| `netmap/expiry` | Native UDP | 越过租约后 fail closed 并恢复 | TUN ≤ 2 秒删除 | `20261023T172618Z-24221823` | [租约到期撤回](#lease-expiry-withdrawal) |
+| `netmap/restart` | 本机上报端点 | Server 不可达时空闲重拨与 daemon 重启 | 只用最后已知事实重建 | `20261023T173212Z-dada88c2` | [netmap 生命周期行](#netmap-rows) |
 
 **新增行或更新状态**：新行在本表按 `ROWS` 顺序加一行，并在[行定义](#rows)下按同一模板（拓扑、阶段与断言、门槛来源、不覆盖）加一个小节；后续运行只更新本节开头的矩阵 ID 与“报告”列。行暴露的已修问题加到[已修复问题索引](#fixed)，未修的加到[剩余边界](#remaining-boundaries)，真机结论加到[真机证据](#real-hosts)；运行过程写 changelog 与私有证据。修复合入的工作包负责把对应的剩余边界条目移到已修复问题索引。
 
