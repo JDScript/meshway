@@ -1,0 +1,31 @@
+{
+  "base": "ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956",
+  "snapshot": "https://snapshot.ubuntu.com/ubuntu/20261020T000000Z",
+  "repositories": [
+    {
+      "suite": "jammy",
+      "sha256": "6883c1cb0fcfeefc2ad2e99746fcbb28cf8b2df66ce49904765d883dbf94a1ca",
+      "indexes": {
+        "amd64": {"main": "37cb57f1554cbfa71c5a29ee9ffee18a9a8c1782bb0568e0874b7ff4ce8f9c11"},
+        "arm64": {"main": "b80d1f097198f4a2d80f84db0252263d902051a695040acbc085f033048bc9bb"}
+      }
+    },
+    {
+      "suite": "jammy-security",
+      "sha256": "1530bec83491216433a0d75bab99e7cc8e230c5f44140cb9d16b7600fe892105",
+      "indexes": {
+        "amd64": {"main": "58766fccf3968f7bdbb8b6425cab9f46be559c089b5bc2c183d2f50e4dbee53a"},
+        "arm64": {"main": "9213fc0a2c60990f76ef01bf6f0faf39e9bd64311632e6bbcf43dfd9d39383d0"}
+      }
+    },
+    {
+      "suite": "jammy-updates",
+      "sha256": "897fe8c6fa0edc3bff519cf52d4fe2dde826a712a7d0ea3ec2931bea83e5848f",
+      "indexes": {
+        "amd64": {"main": "9d09ef662325b89b2dfe6066b5d6c256bcb68a779cf035b2685625f96f8742df"},
+        "arm64": {"main": "27e529035e849083dc4f28f701e1d149817a89f935f0230231e7ae480a469da1"}
+      }
+    }
+  ],
+  "packages": ["systemd", "dbus", "iproute2", "util-linux", "procps"]
+}

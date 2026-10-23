@@ -249,6 +249,11 @@ pub trait SystemDns: Send {
         meshway_dns::SystemResolverSnapshot,
         meshway_model::exit::ExitDnsUnavailableReason,
     >;
+    /// Other links' specific domains that coexist with the installed plan's
+    /// fallback, as the last successful observation read them.
+    fn local_domains(&self) -> Vec<meshway_protocol::ipc::LocalDnsDomain> {
+        Vec::new()
+    }
 }
 
 /// Direct diagnostics socket. Receive returns a complete IPv4 packet, as

@@ -46,15 +46,61 @@ fn routing_conflicts_are_label_bounded_and_include_foreign_more_specific_routes(
         plan.domains().first(),
         Some(&("mesh.example".into(), false))
     );
-    assert!(plan.conflicts("mesh.example."));
-    assert!(plan.conflicts("Private.Mesh.Example"));
-    assert!(!plan.conflicts("notmesh.example"));
-    assert!(!plan.conflicts("example"));
-    assert!(!plan.conflicts("."));
+    use ForeignRoute::*;
+    assert_eq!(plan.foreign_route("mesh.example."), Conflict);
+    assert_eq!(plan.foreign_route("Private.Mesh.Example"), Conflict);
+    assert_eq!(plan.foreign_route("notmesh.example"), Unrelated);
+    assert_eq!(plan.foreign_route("example"), Unrelated);
+    // A pure Mesh plan has no fallback: another link's `~.` or search
+    // domain routes nothing it covers.
+    assert_eq!(plan.foreign_route("."), Unrelated);
+    assert_eq!(plan.foreign_route("tko.oraclevcn.com"), Unrelated);
     cfg.override_local = true;
     let plan = SystemDnsPlan::new(&cfg, &DnsPlan::NoExit).unwrap();
-    assert!(plan.conflicts("."));
-    assert!(plan.conflicts("ordinary.example"));
+    assert_eq!(plan.foreign_route("."), Conflict);
+    assert_eq!(plan.foreign_route("a.mesh.example"), Conflict);
+}
+
+/// D5: a plan whose fallback (`~.`) covers a name yields it to another
+/// link's specific domain (resolved's most specific match), reported as a
+/// local domain; its explicit domains and its `~.` still conflict.
+#[test]
+fn a_fallback_yields_to_specific_foreign_domains_and_explicit_domains_do_not() {
+    use ForeignRoute::*;
+    let mut cfg = settings();
+    cfg.routes
+        .insert("corp.example".into(), vec!["10.0.0.53".into()]);
+    for plan in [
+        SystemDnsPlan::required(
+            &cfg,
+            &DnsPlan::Unavailable {
+                reason: DnsEgressUnavailable::ExitPlanRequired,
+            },
+        )
+        .unwrap(),
+        SystemDnsPlan::new(
+            &DnsConfiguration {
+                override_local: true,
+                ..cfg.clone()
+            },
+            &DnsPlan::NoExit,
+        )
+        .unwrap(),
+    ] {
+        // OCI's DHCP search domain on enp0s6 (jp-tyo).
+        assert_eq!(plan.foreign_route("tko.oraclevcn.com"), Local);
+        assert_eq!(plan.foreign_route("Example."), Local);
+        // An explicit domain covers the name: equal or more specific.
+        assert_eq!(plan.foreign_route("corp.example"), Conflict);
+        assert_eq!(plan.foreign_route("a.corp.example."), Conflict);
+        assert_eq!(plan.foreign_route("mesh.example"), Conflict);
+        assert_eq!(plan.foreign_route("node.mesh.example"), Conflict);
+        // Less specific than an explicit domain: only the fallback's names.
+        assert_eq!(plan.foreign_route("notcorp.example"), Local);
+        // A second `~.` competes with the fallback.
+        assert_eq!(plan.foreign_route("."), Conflict);
+        assert_eq!(plan.foreign_route(""), Conflict);
+    }
 }
 
 #[test]

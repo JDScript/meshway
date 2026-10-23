@@ -69,6 +69,23 @@ def closure(index, roots):
     return [selected[name] for name in sorted(selected)]
 
 
+def package_index(lock, arch):
+    """The locked package index: Debian trixie main, or a lock's ordered
+    `repositories` (Ubuntu suites; a later suite's record replaces an earlier one)."""
+    if "repositories" not in lock:
+        fetch(lock["snapshot"] + "/dists/trixie/Release", lock["releaseSha256"])
+        data = fetch(lock["snapshot"] + f"/dists/trixie/main/binary-{arch}/Packages.xz", lock["indexes"][arch])
+        return records(lzma.decompress(data).decode())
+    index = {}
+    for repository in lock["repositories"]:
+        base = lock["snapshot"] + "/dists/" + repository["suite"]
+        fetch(base + "/Release", repository["sha256"])
+        for component, sha in repository["indexes"][arch].items():
+            data = fetch(base + f"/{component}/binary-{arch}/Packages.xz", sha)
+            index.update(records(lzma.decompress(data).decode()))
+    return index
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"), required=True)
@@ -83,9 +100,7 @@ def main():
     lock_bytes = args.lock_file.read_bytes()
     lock = json.loads(lock_bytes)
     arch = args.platform.split("/")[1]
-    fetch(lock["snapshot"] + "/dists/trixie/Release", lock["releaseSha256"])
-    index_bytes = fetch(lock["snapshot"] + f"/dists/trixie/main/binary-{arch}/Packages.xz", lock["indexes"][arch])
-    selected = closure(records(lzma.decompress(index_bytes).decode()), lock["packages"])
+    selected = closure(package_index(lock, arch), lock["packages"])
     packages = [{"name": item["Package"], "version": item["Version"], "architecture": item["Architecture"],
                  "filename": item["Filename"], "sha256": item["SHA256"]} for item in selected]
     record = {"base": lock["base"], "platform": args.platform, "lockSha256": digest(lock_bytes),

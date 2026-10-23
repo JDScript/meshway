@@ -9,6 +9,7 @@ mod capture_plan;
 mod classification;
 mod network_changes;
 mod reproof;
+mod resolved;
 mod restart;
 mod roaming;
 

@@ -292,7 +292,7 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 | resolved | resolved 的代理 stub `127.0.0.54:53`，保留 resolved 按链路、按后缀选择上游；不做本地合成、LLMNR、mDNS | 锚点尚未安装或清单读取失败（`unobserved`）；resolved 的服务器清单（`DNSEx`、`FallbackDNSEx`，不含本节点锚点自己的 bind）为空（`noServers`）、含 loopback／未指定／组播或未知族地址（`localServer`）或锚点地址（`anchorServer`）；本 namespace 内 `127.0.0.54:53` 没有已绑定的 UDP socket 与监听中的 TCP socket（`proxyStubMissing`，systemd < 248 或 `DNSStubListener=no`；每 2 秒及 resolved 换进程时重读 `/proc/net/{udp,tcp}`） |
 | 显式文件代理 | 安装前记录的原 resolv.conf nameserver（同时是本节点自身未受管名称的上游） | 没有记录（`unobserved`）或为空（`noServers`）；原 nameserver 为 loopback／未指定／组播／带 scope 的链路本地地址或带 `no-reload` 时文件后端本身无法安装 |
 
-快照再按出口的 netmap 判定（`meshway_dns::exit_resolvers`）：任一上游或 resolved 可能选择的服务器属于 Mesh 地址池（`meshServer`），或不是出口 egress 分割里的 Direct／Unmanaged（`exitRoutedServer`），出口查询不可用。查询名落在本节点锚点已安装的域（MagicDNS 域、split 路由、搜索域、安装标记）之下时不交给 resolved，回 SERVFAIL，避免出口用自己的记录回答；出口模式下要用 split 后缀，在源节点把该解析器标 `useWithExit`。
+快照再按出口的 netmap 判定（`meshway_dns::exit_resolvers`）：任一上游或 resolved 可能选择的服务器属于 Mesh 地址池（`meshServer`），或不是出口 egress 分割里的 Direct／Unmanaged（`exitRoutedServer`），出口查询不可用。查询名落在本节点锚点已安装的域（MagicDNS 域、split 路由、搜索域、安装标记）之下时不交给 resolved，回 SERVFAIL，避免出口用自己的记录回答；出口模式下要用 split 后缀，在源节点把该解析器标 `useWithExit`。源节点其他链路的具体域与出口兜底共存，其下名称由本地网络解析、不经出口，见[其他链路的域](#foreign-domains)。
 
 出口查询的可用性独立于本节点自身 DNS 安装：served 快照不可用只使出口对源回 SERVFAIL，不选公共 DNS 补救，本节点的 MagicDNS 与系统 DNS 照常安装（文件后端的原 nameserver 同时是本节点自身上游，按无出口节点同样校验）。原因由 DNS owner 唯一产生，经 daemon 报告为 IPC Status 的 `exit.dnsUnavailable` 与 State 的 [`exitDns`](/v2/state-reference)。resolved 快照随每次观察（250 ms）续期；服务器清单、代理 stub 或判定结果变化即换新快照并重新发布同内容的 scope，这会结束出口节点自身在途的旧 scope 查询（源的查询按各自截止失败后重试）。代理快照只用于出口查询，出口节点自己的查询仍按 resolved 自身路由。
 
@@ -308,8 +308,21 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 | 后端 | 安装与限制 |
 | --- | --- |
-| resolved | 使用同一 network namespace 中真实 resolve1 服务；要求系统解析使用其动态维护的 stub resolv.conf，且真实 UDP→TCP 按链路探测通过。静态 stub 文件不发布搜索域，当前不作为已支持的系统安装模式。只修改独立锚点的 DNS／domain／安全选项，回读确认；外部相同或更精确的域路由冲突时拒绝安装。 |
+| resolved | 使用同一 network namespace 中真实 resolve1 服务；要求系统解析使用其动态维护的 stub resolv.conf，且真实 UDP→TCP 按链路探测通过。探测要求 resolved 把查询送到锚点链路的 loopback DNS 服务器：systemd-resolved 253 起，或含 systemd commit 5f9041af 的稳定版（249.15、250.10、251.11、252.5 起）；更早的版本（如 Ubuntu 22.04 的 249.11）把该查询绑在锚点链路上发出、永远到不了 bind，探测以 `probe`（`Unsupported`）失败并写明这一要求，不回退到文件代理（见 [Linux 安装 · Ubuntu 22.04](/v2/install#ubuntu-2204)）。静态 stub 文件不发布搜索域，当前不作为已支持的系统安装模式。只修改独立锚点的 DNS／domain／安全选项，回读确认；其他链路的域按[其他链路的域](#foreign-domains)判定。 |
 | 显式文件代理 | 只替换已验证所有权、祖先目录、mount identity 的普通 `/etc/resolv.conf`，不接管 symlink、硬链接或文件 bind mount。保存私有原文与安装身份，原子替换并同步；只在当前 inode／内容仍匹配时恢复，外部修改保留并报告冲突。不支持[漫游](/v2/node/connectivity#roaming)：保存的原上游属于安装时的网络，DHCP 客户端改写文件即为外来修改；会漫游的节点使用 resolved 后端。 |
+
+#### 其他链路的域 {#foreign-domains}
+
+resolved 按最具体匹配把名称交给路由域最长的链路。锚点安装的计划分两部分判定其他链路（含 resolved 全局设置）的搜索域与 `~domain`，唯一实现为 `SystemDnsPlan::foreign_route`，安装与每次观察（250 ms）都读 resolve1 Manager `Domains`：
+
+| 其他链路的域 | 判定 |
+| --- | --- |
+| 与计划的显式域（MagicDNS 域、split 路由、搜索域）相等或更具体 | 冲突：`foreign_domain`，拒绝安装；安装后出现则撤回，外来域消失后自动恢复（未知类，见[健康检查](#dns-health)） |
+| `~.`（计划自己也有兜底 `~.` 时） | 冲突：`foreign_domain` |
+| 其他具体域，而计划对其下名称的覆盖只来自兜底 `~.`（出口方案 `viaExit`、`dns.overrideLocal` 或不可用方案的负向兜底） | 共存：这些后缀由该链路的 resolver 解析，其余名称仍经兜底；安装或集合变化时 INFO `Other links resolve these domains; every other name takes this Node's DNS fallback`（`domains`）一次，IPC Status `localDnsDomains` 与 `meshway status` 的 `Local DNS` 行列出（域、链路序号与名称） |
+| 计划没有兜底时的其他域（含 `~.`） | 无关 |
+
+安全说明：共存的后缀（如 OCI DHCP 下发的 `tko.oraclevcn.com`）的查询由本地网络的 resolver 看到并回答，不经出口；出口方案只保证其余名称经出口。需要这些后缀也经出口时，从该链路的 DHCP／网络配置中去掉它们。
 
 两种后端均使用 namespace 级私有预约，避免不同数据目录竞争同一系统 DNS。MagicDNS 域加入系统搜索域；额外搜索域仍按配置执行。resolved 保留未捕获域的原有系统路由，不把原系统的分域配置压平成任意 nameserver 列表。需要这种未实现 fallback 的搜索域组合明确失败。
 
@@ -348,9 +361,9 @@ DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒�
 | `resolved_link` | resolved 识别锚点链路 | resolve1 `GetLink` |
 | `link_settings` | 锚点链路的设置与记录的已安装值（未安装时为原始值）完全一致；`expected`／`actual` 只列出不同字段 | resolve1 Link 属性 |
 | `link_settings_applied` | 安装或恢复中的每一步设置回读一致 | resolve1 Link 属性 |
-| `foreign_domain` | 没有其他链路路由本计划的域 | resolve1 Manager `Domains` |
+| `foreign_domain` | 没有其他链路的域覆盖本计划的显式域，也没有第二个 `~.`（[其他链路的域](#foreign-domains)） | resolve1 Manager `Domains` |
 | `record_*` | resolved 私有记录可读、版本、计划、链路、bind 一致且没有中断的变更 | 记录文件 |
-| `probe` | 首次安装的 UDP→TCP 探测通过 | — |
+| `probe` | 首次安装的 UDP→TCP 探测通过；没有查询到达锚点的 loopback 服务器时 `expected` 写明所需的 systemd-resolved 版本、`actual` 给出 systemd 版本（读不到为 `systemd version unknown`） | — |
 | `resolv_conf` | 显式文件代理的 resolv.conf 检查 | 文件路径 |
 | `query_service` | DNS 查询服务仍在服务 bind | — |
 

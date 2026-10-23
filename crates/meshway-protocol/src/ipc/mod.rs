@@ -419,6 +419,27 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     /// and accepts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub control_relay: Option<ControlRelay>,
+    /// Domains another link's resolver answers while this Node's installed
+    /// DNS plan sends every other name to its fallback (`~.`: the exit, or
+    /// the `dns.overrideLocal` resolvers); omitted when there are none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_dns_domains: Option<Vec<LocalDnsDomain>>,
+} }
+
+meshway_model::object! {
+/// A specific routing domain of another resolved link (a search domain or
+/// `~domain`) that coexists with this Node's fallback `~.`: by resolved's
+/// most specific match that link resolves the names under it, so its
+/// network's resolver sees those queries.
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct LocalDnsDomain {
+    /// The domain, lowercase and without its trailing dot.
+    pub domain: String,
+    /// The link's interface index; 0 for resolved's global settings.
+    pub link_index: u32,
+    /// The link's interface name; null for the global settings or when it
+    /// could not be read.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub link_name: Option<String> [required = true],
 } }
 
 meshway_model::string_enum! {

@@ -63,6 +63,7 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
         last_network_change: None,
         change_pending: None,
         control_relay: None,
+        local_dns_domains: None,
     };
     match sample {
         ClientSample::Unenrolled => {}

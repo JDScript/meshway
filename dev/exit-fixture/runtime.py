@@ -788,6 +788,40 @@ def execute(report, artifacts, runtime_os, platform, short, load, variant="ipv4"
             dns["restore"] = command("e", "ip", "route", "del", "unreachable", addresses["external"]["external"] + "/32")
         dns["unblocked"] = resolves("unblocked-" + dns_tag + "." + exit_zone, ["198.51.100.10"])
         no_source_fallback()
+        # DNS-2 D5: another link's DHCP search domain (OCI's) beside A's exit
+        # fallback `~.` coexists: within 5 s A's Status lists it with its
+        # link, A stays running with DNS applied and exit names still resolve
+        # through E; the list empties within 5 s of the link's removal.
+        foreign = {"add": [command("a", "ip", "link", "add", "dns2-foreign", "type", "dummy"),
+                           command("a", "ip", "link", "set", "dns2-foreign", "up")]}
+        samples = []
+
+        def sample():
+            value = status("a")
+            samples.append({key: value.get(key) for key in ("phase", "dataPlane", "lastError", "localDnsDomains")})
+            return value
+
+        try:
+            foreign["domain"] = command("a", "resolvectl", "domain", "dns2-foreign", "tko.oraclevcn.com")
+            started = time.monotonic()
+            wait_for(lambda: [(item.get("domain"), item.get("linkName")) for item in sample().get("localDnsDomains") or []]
+                     == [("tko.oraclevcn.com", "dns2-foreign")], "A's Status lists the foreign search domain", timeout=5)
+            foreign["listedSeconds"] = round(time.monotonic() - started, 3)
+            name = "foreign-" + dns_tag + "." + exit_zone
+            foreign["exitName"] = resolves(name, ["198.51.100.10"])
+            if {query["peer"].rsplit(":", 1)[0] for query in dns_queries("external")
+                    if query["name"].rstrip(".") == name} != {addresses["external"]["e"]}:
+                raise RuntimeError("an exit name beside the foreign search domain was not resolved by E")
+            sample()
+            if any(item["phase"] != "running" or item["dataPlane"] != "ready" or item["lastError"] is not None
+                   for item in samples):
+                raise RuntimeError("a foreign search domain beside the exit fallback disturbed A's DNS")
+        finally:
+            foreign["remove"] = command("a", "ip", "link", "del", "dns2-foreign", required=False)
+        wait_for(lambda: not sample().get("localDnsDomains"), "A's Status drops the removed link's domain", timeout=5)
+        foreign["samples"] = samples
+        no_source_fallback()
+        dns["foreignSearchDomain"] = foreign
         write(report / "dns-exit.json", dns)
 
         # `meshway ping` outside the Mesh (phase 13): A's CLI prints its local

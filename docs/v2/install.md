@@ -10,7 +10,7 @@
 | init | systemd（`/run/systemd/system` 存在），unit 使用 `Type=notify` |
 | 权限 | 安装与 CLI 需要 root；daemon 以 root 运行，但 capability 限于下表 |
 | 设备 | `/dev/net/tun` |
-| DNS | 默认 `--dns-backend resolved`：需要运行中的 systemd-resolved，且 `/etc/resolv.conf` 指向其动态 stub（`/run/systemd/resolve/stub-resolv.conf`）；见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
+| DNS | 默认 `--dns-backend resolved`：需要运行中的 systemd-resolved 253 或更高版本，或含 systemd commit 5f9041af 的稳定版（249.15、250.10、251.11、252.5 起；Debian 12 的 252.39 可用，**Ubuntu 22.04 的 249.11 不可用**，见 [Ubuntu 22.04](#ubuntu-2204)），且 `/etc/resolv.conf` 指向其动态 stub（`/run/systemd/resolve/stub-resolv.conf`）；见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
 | 出口 DNS | resolved 后端的出口节点为源解析普通名称需要 systemd ≥ 248 且 `DNSStubListener=yes`（默认），以提供代理 stub `127.0.0.54:53`；缺少时出口查询不可用（`exit.dnsUnavailable=proxyStubMissing`），IPv4 出口与本节点 DNS 不受影响。见[出口 resolver](/v2/node/dataplane#exit-resolver) |
 | 下载 | 在线安装需要 `curl`、`sha256sum`、`tar`；私有仓库需 `GITHUB_TOKEN`（releases 读权限） |
 | Server | 可达的 HTTPS Server origin；数字 loopback 可用 HTTP |
@@ -127,6 +127,21 @@ ReadWritePaths=/etc
 ```
 
 并用 `--daemon-options "--dns-backend resolv-conf"` 重新运行安装脚本。
+
+### Ubuntu 22.04 {#ubuntu-2204}
+
+Ubuntu 22.04 的 systemd-resolved 249.11 把发往链路 DNS 服务器的查询绑在该链路上发出，锚点链路的 loopback 服务器（Meshway 的 bind）收不到，resolved 后端不可用：Status 为 `lastError: dns`，`lastErrorDetail` 为 `DNS probe check failed (system DNS backend is unsupported): expected resolved sends a nonce query to the owned link's loopback DNS server over UDP then TCP (systemd-resolved 253 or later, or stable 249.15, 250.10, 251.11, 252.5 or later); found no query reached 127.0.0.1:<port> within 5 s; systemd 249.11-…`。daemon 不会自动改用其他后端，按下列步骤显式选择文件代理：
+
+```sh
+sudo meshway down                      # 结束 resolved 后端的预约与锚点
+# /etc/resolv.conf 改为普通文件，内容为 resolved 记录的真实上游（不是 127.0.0.53 stub）
+sudo cp --remove-destination /run/systemd/resolve/resolv.conf /etc/resolv.conf
+sudo systemctl edit meshwayd           # [Service] ReadWritePaths=/etc（见上）
+sudo sh install.sh --daemon-options "--dns-backend resolv-conf"
+sudo meshway up
+```
+
+文件代理的限制见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装)：上游固定为安装时文件中的 nameserver，DHCP 后来的变化不跟随，不支持漫游；libc 不再经 resolved 的按链路路由。恢复 resolved 时先 `meshway down`（还原文件），再 `sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf`，去掉 `--dns-backend` 后重新运行安装脚本。隔离验收见[验收范围](/v2/node/validation)的 `jammy/resolv-conf` 行。
 
 ## 重启与离线
 

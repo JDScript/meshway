@@ -1,10 +1,13 @@
 //! The nonce UDP→TCP probe server that proves local link DNS behavior.
 use crate::system::linux::SystemDnsError;
 
+/// `reached` is set once any UDP datagram arrives: resolved sent the query
+/// to the owned link's server at all.
 pub(super) async fn serve_probe(
     udp: tokio::net::UdpSocket,
     tcp: tokio::net::TcpListener,
     expected: &str,
+    reached: &std::sync::atomic::AtomicBool,
 ) -> Result<(), SystemDnsError> {
     use hickory_proto::rr::{Name, RData, Record, RecordType, rdata};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,6 +18,7 @@ pub(super) async fn serve_probe(
         .recv_from(&mut buffer)
         .await
         .map_err(|_| SystemDnsError::Backend)?;
+    reached.store(true, std::sync::atomic::Ordering::Relaxed);
     let query = crate::decode_query(&buffer[..size]).map_err(|_| SystemDnsError::Backend)?;
     if !peer.ip().is_loopback()
         || query.question().name() != &expected

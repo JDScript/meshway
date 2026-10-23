@@ -25,7 +25,7 @@
 
 ## 默认矩阵 {#matrix}
 
-`scripts/validate_matrix.py` 的 `ROWS` 定义 25 行，默认全部运行。**当前状态：25／25 通过**——Planck 矩阵 `20261022T145506Z-d176310c`（`d2cb2f72`，并行 4，墙钟 1,977 秒，启动 load 4.2），私有证据 `.meshway/validation/r4/remote/full/`。下表“报告”列为该矩阵中的行报告 ID。
+`scripts/validate_matrix.py` 的 `ROWS` 定义 26 行，默认全部运行。**当前状态：25／25 通过，`jammy/resolv-conf`（DNS-2 新增）未在全量矩阵运行**——Planck 矩阵 `20261022T145506Z-d176310c`（`d2cb2f72`，并行 4，墙钟 1,977 秒，启动 load 4.2），私有证据 `.meshway/validation/r4/remote/full/`。下表“报告”列为该矩阵中的行报告 ID。
 
 | 行 | 拓扑与承载 | 覆盖 | 门槛摘要 | 报告 | 定义 |
 | --- | --- | --- | --- | --- | --- |
@@ -37,6 +37,7 @@
 | `trojan/off` | 仅 R listener，Trojan TCP/TLS | 共同场景＋精确叶证书 | 同上 | `20261022T150753Z-c13c88f9` | [共同场景](#runtime-共同场景) |
 | `udp/resolv-conf` | Native UDP 静态端点 | 共同场景＋文件代理 DNS | 同上＋DNS 场景 | `20261022T150753Z-2184a347` | [DNS 场景](#dns-场景) |
 | `udp/resolved` | Native UDP 静态端点 | 共同场景＋resolved 后端 | 同上＋resolved 重启 ≤ 5 秒再解析 | `20261022T150843Z-6e527d7c` | [DNS 场景](#dns-场景) |
+| `jammy/resolv-conf` | Native UDP 静态端点，Ubuntu 22.04 DNS 镜像 | 共同场景＋文件代理 DNS；resolved 后端的明确不支持 | 同 `udp/resolv-conf`＋resolved 检查报 `probe` 版本要求 | 未运行 | [DNS 场景](#dns-场景) |
 | `nat/off` | A、R 各在端口保持型 SNAT 后 | 共同场景＋协调穿透 | R 只接受 A 的 offer | `20261022T151205Z-2c4d8408` | [穿透场景](#穿透场景) |
 | `nat+fallback/off` | 同上＋A–R Native TCP 退路 | 穿透后切到 TCP 退路 | 同一 socket、circuit 与路径跨切换保留 | `20261022T151255Z-44bbec33` | [穿透场景](#穿透场景) |
 | `nat/resolved` | 同 `nat/off` | 穿透＋resolved | 两场景全部检查 | `20261022T151259Z-757716fd` | [穿透场景](#穿透场景) |
@@ -93,7 +94,16 @@
 
 ### DNS 场景
 
-`udp/resolv-conf`、`udp/resolved` 在共同场景上加：真实 `getaddrinfo`、短名称、可见性 REFUSED、分域 UDP／TCP、系统 UDP→TCP 截断重试、进程重启、长时包流、失效阻断及 DNS／接口恢复。测试 namespace 使用私有 mount namespace 与私有 D-Bus／resolver，不改写 Docker 的 resolver bind 源；固定 OS 资产见 `dev/dns-fixture/README.md`。`udp/resolved` 另在 namespace 内重启 resolved，要求 5 秒内再次解析 Mesh 名称（与[系统服务实测](/v2/install#systemd-resolved-重启与停止)的门槛相同）。
+`udp/resolv-conf`、`udp/resolved`、`jammy/resolv-conf` 在共同场景上加：真实 `getaddrinfo`、短名称、可见性 REFUSED、分域 UDP／TCP、系统 UDP→TCP 截断重试、进程重启、长时包流、失效阻断及 DNS／接口恢复。测试 namespace 使用私有 mount namespace 与私有 D-Bus／resolver，不改写 Docker 的 resolver bind 源；固定 OS 资产见 `dev/dns-fixture/README.md`。`udp/resolved` 另在 namespace 内重启 resolved，要求 5 秒内再次解析 Mesh 名称（与[系统服务实测](/v2/install#systemd-resolved-重启与停止)的门槛相同）。
+
+三行都在 Node 之前运行一次 resolved 后端检查（`dns-resolved-backend`，`resolved_backend_installs_beside_foreign_domains_or_names_its_systemd_requirement`）：在该行 DNS 镜像自己的 D-Bus／resolved 上用 Kernel 的真实锚点与生产 owner，另建一条带 DHCP 式搜索域 `tko.oraclevcn.com` 的外来链路。
+
+| 镜像 | 断言 |
+| --- | --- |
+| Debian trixie（systemd 257；`udp/*` 行） | 兜底 `~.` 计划安装成功，`local_domains` 恰为该域与外来链路的序号和名称；外来链路加 `~a.corp.example`（计划的 split 路由之下）或 `~.` 时观察以 `foreign_domain` 失败，移除后重证并重装；无兜底的计划在外来 `~.` 下安装、观察成功且不列出；down 后 resolved 设置与开始时一致 |
+| Ubuntu 22.04（systemd 249.11；`jammy/resolv-conf`） | 安装以 `Unsupported`／`probe` 失败，`expected` 写明 `systemd-resolved 253 or later, or stable 249.15…`，`actual` 以 `no query reached 127.0.0.1:` 开头；锚点设置还原，down 后 resolved 设置一致 |
+
+`jammy/resolv-conf` 的 DNS 镜像由 `dev/dns-fixture/jammy.lock.json`（`ubuntu:22.04` digest、Ubuntu snapshot `20261020T000000Z` 的 jammy／jammy-security／jammy-updates 索引）离线构建，其余与 `udp/resolv-conf` 相同；它验收的是 [Ubuntu 22.04](/v2/install#ubuntu-2204) 的显式文件代理路径。门槛来源：D4（resolved 249 收不到锚点 loopback 服务器的查询，[真机证据](#dns2-hosts)）与 D5（其他链路的搜索域使兜底计划整体挂起）。
 
 ### 穿透场景
 
@@ -141,7 +151,7 @@
 | --- | --- |
 | 1–8 基本出口 | 能力／前置条件、saved／applied 与租约、投影（A 的 egress 规则与 fallback、三端相同的外部 Access、E 的 exit role、R 无 role）、IPv6 默认 sink、公网与 LAN、原始与 NAT tuple、nft／conntrack、服务日志、R 只见密文、E 阻断对照、持续／仅接收窗口、`exitEnabled` 撤回、关闭 IPv4 转发时的投影拒绝、journal 恢复。HTTP 中断同时结束在途 sync：已有 TCP 与每 2 秒新建的 UDP 出口流继续往返，直到路径上首个租约到期才结束（节点持有的 peer 事实不早于租约过期）；E 在自身租约到期时撤回 role，owned nft 表与 conntrack 精确清理，A 保留负向 egress 门（`managed4` 非空、无活动 selector）；恢复 HTTP 后无第二次 `up` 取得新租约并以新 circuit 建立新流 |
 | 2 前置条件 | E 在 `ip_forward=0` 下启动仍 running（applied＝saved、data plane ready），IPC 与 State 的 `exitCapability` 为 `unavailable`／`ipForwardDisabled` 且未安装角色；打开 forwarding 后不重启、不发新 netmap，周期探测观测到 ready 即以同一内容安装（`ready`、`installedFamilies=[ipv4]`、applied 不变） |
-| 9 出口 DNS | A 的计划为 `viaExit`，E 为 `serveExitResolver` 且只服务 A，split 解析器为 `direct`。A 的 `getaddrinfo` 得到 E 的系统 resolver 的回答：A、A＋AAAA（AAAA 原样）、90 条 A 记录（超出 Mesh UDP 1,232 B，只能经 Mesh TCP）；authority 只见 E 的 external 地址；A 的 MagicDNS 名本地解析，未知 MagicDNS 名本地拒绝，均不出现在上游；`split.test` 只从 A 的 split 地址到达 Resolver；E 上加 unreachable 路由阻断 authority 时 A 查询失败且 Resolver 不收到该名；E 撤回与 A 租约到期后失败，租约内 HTTP 中断时成功，恢复后成功；`exit-dns` 字节只出现在 E 的 external 接口 |
+| 9 出口 DNS | A 的计划为 `viaExit`，E 为 `serveExitResolver` 且只服务 A，split 解析器为 `direct`。A 的 `getaddrinfo` 得到 E 的系统 resolver 的回答：A、A＋AAAA（AAAA 原样）、90 条 A 记录（超出 Mesh UDP 1,232 B，只能经 Mesh TCP）；authority 只见 E 的 external 地址；A 的 MagicDNS 名本地解析，未知 MagicDNS 名本地拒绝，均不出现在上游；`split.test` 只从 A 的 split 地址到达 Resolver；E 上加 unreachable 路由阻断 authority 时 A 查询失败且 Resolver 不收到该名；E 撤回与 A 租约到期后失败，租约内 HTTP 中断时成功，恢复后成功；`exit-dns` 字节只出现在 E 的 external 接口；A 的另一条链路设 DHCP 式搜索域 `tko.oraclevcn.com` 时 5 秒内 Status `localDnsDomains` 恰列出该域与链路名，期间每次采样 running／ready、`lastError` 为 null，经出口的名称仍只由 E 解析，链路删除后 5 秒内不再列出（[其他链路的域](/v2/node/dataplane#foreign-domains)，DNS-2 D5） |
 | 10 域名出口 | 名称规则 `*.name.exit-dns.test` → Exit E via R、其余 direct、Access `domain:name.exit-dns.test`：A 的捕获在关联期间恰含服务地址；不经名称直连该地址按 IP 规则 direct（失败）；第一次 `getaddrinfo` 一次得到地址（E 的回答被 A 持有至签名关联应用），按名称的 TCP 只以 E 的地址到达服务；同名第二次连接不增加 Server 往返；按名称建立、每 2 秒往返的 TCP 与 connected UDP 持续 100 秒越过关联 60 秒 TTL：到期后不经名称新连失败，持有的 TCP 每次成功、UDP 至多丢 1 次、服务只见 E；流结束后地址退出捕获；撤销 `domain:` 后按名称失败 |
 | 11 方案切换 | assignment 允许 `exit`、`exit-alt`、`mesh`、`global:E`：`meshway exit exit-alt` 在 A 应用带该版本的 netmap 后返回，切换后旧 socket 的往返全部失败、新连接经 E；`meshway exit off` 后无受管区间与默认捕获、外部服务不可达；`global:E` 下 A 保持 running，split 地址仍是 direct 例外、只由 A 自己问到 Resolver |
 | 12 ICMP、PMTU、MSS | 另有只转发 IPv4 的 router 连接 external 与 `far` 网段（far 接口 MTU 1,280）。`traceroute -I` 第 1 跳 E、第 2 跳 router、第 3 跳目标，后续跳比第 1 跳多出 ≤ 20 ms（同轮到达的投影合并安装）；64 KiB TCP echo 经 fragmentation needed 收敛，A 路由缓存 `mtu 1280`；router 伪造 5 条引用不存在 tuple 与 30 条引用该流 NAT 后 tuple 的 time exceeded，A 只收到后者且在每流每秒 10 条预算内（≥ 1 条）。A–R 链路 MTU 1,400 时通道为 `1400/1286`、MSS 表限 1,246，经 E 的 64 KiB echo 不限 MSS 也完整返回，`ping -M do -s 1259` 收到 A 自己合成的 `Frag needed (mtu = 1286)`，`-s 1258` 成功 |
@@ -249,6 +259,7 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | <a id="d3-dns-health"></a>宿主 RTNL 停顿 | Planck 宿主 Wi-Fi（ath12k）每 8 h 24 min 的 PTK 重新协商使宿主 netlink 停顿约 5 秒；D3 之后节点 `observe_deadline` 后约 0.15 秒恢复、0.3 秒内重装，不再阻断至重启（4.11 秒停顿一次，249 份 Status 仅 1 份 `preparing`）；本机 lab 以拆除大量 dummy 接口复现 6–13 秒停顿均自动恢复 | D3，`.meshway/validation/d3/`、`.meshway/node-lab/ops10/d3-rekey/` |
 | 漫游（lab） | lax 换 bridge（soft）ping 无中断；断开再接回（hard）sha／nyc 0.11 秒内经挑战跟随新来源，最长中断 ≤ 0.62 秒，channel ID 不变 | R1 `.meshway/validation/r1/lab/`；OPS13 |
 | 漫游（VM） | 加第二地址／改 `src`／恢复三次都分类为 path、每次重新发布 STUN 观测；sha→VM 最长中断 0.31 秒，it7 跟随 NAT 映射往返 | R3 `.meshway/validation/r3/vm/`；OPS14 `.meshway/node-lab/ops14/r3-vm/` |
+| <a id="dns2-hosts"></a>公网主机上的 resolved 后端 | kr（Ubuntu 22.04，systemd 249.11-0ubuntu3.23）resolved 对锚点链路上的探测域回答 “No appropriate name servers or networks”、探测 5 秒无回答（不是防火墙）；隔离复现：同一 resolved 把发往链路 `127.0.0.1:<port>` 的查询从未送达，Ubuntu 24.04（255）与 Debian 12（252.39）送达。jp（OCI）enp0s6 的 DHCP 搜索域 `tko.oraclevcn.com` 使全量出口方案 `foreign_domain` | PROD-1 `.meshway/prod/README.md`、`.meshway/prod/migrate/kr-dns-unsupported.txt`；DNS-2 `.meshway/validation/dns2/` |
 | 出口 DNS 与域名出口（lab） | lax 经 Exit nyc via sha 时名称只经 nyc 的 resolved 发往上游，阻断上游时查询失败；`geosite:openai` 只经 nyc 出口；nyc resolved 把 Mesh 地址作 DNS 服务器后 0.5 秒内报 `exitDns: unavailable`、源 SERVFAIL、恢复后再解析 | X5／X5b／X6，`.meshway/node-lab/x5/`、`x6/` |
 | 空闲 CPU | alpha.21 六台 meshwayd 空闲最忙线程（`top -H` 快照）：lab 1.0–2.0 %、VM 0.4–0.6 %、Planck 0.4 %、it7 3.8–7.6 %；X18 修复后 VM release 空闲 0.56 %。it7 按 60 秒口径：两个 worker 各 3.1–3.2 %、进程 7.0–7.3 %、`nft` 子进程另约 4.2 %，逐项归因见[空闲 CPU 口径](/v2/node/performance#idle-cpu)（剩余边界 P2） | OPS20 `.meshway/node-lab/ops20/cpu-idle*/`；X18；P2 `.meshway/validation/p2/` |
 | 吞吐 | 常驻 lab 与 Planck 的分层吞吐、出口正向写路径与 WARP 路径限制见[分层性能测量](/v2/node/performance)与 [OrbStack 与 WARP](/v2/install#orbstack-warp) | performance.md |
@@ -285,6 +296,8 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | <a id="h4"></a>H4 | 撤回期间 `lastError` 为 null、无重装日志、`observedAt` 停在故障前 | 撤回报告在清理结束后才发布；日志只在 DNS 恢复分支 | alpha.19 | `fault/throttle` 的 `retrying`＋原因与重装 INFO；`status::tests::*` |
 | <a id="n6"></a>N6 | `nat/resolved` 恢复后 prepare 一直 `notAvailable` | Control 时钟先读单调后读墙钟，延迟被永久计入，节点时钟超前 Server 的 10 秒期限 | alpha.19 | Control 时钟单测；`nat/resolved` |
 | <a id="x18-tracker-spin"></a>X18 | 每台 TUN 节点一个线程 100 % CPU | Status 跟踪任务克隆的 DNS guard 未 `mark_unchanged`，`changed()` 永远立即返回 | alpha.20 | `the_tracker_is_not_woken_by_a_dns_guard_send_it_has_seen`；`fault/throttle` CPU 门槛 |
+| <a id="dns2-d4"></a>DNS-2 D4 | kr（Ubuntu 22.04）`DNS probe check failed (system DNS backend is unsupported) … no reply within 5 s`，原因不明 | systemd-resolved 249.11 把链路 DNS 查询的 socket 绑在锚点链路上（`SO_BINDTOIFINDEX`），发往 loopback bind 的查询到不了；systemd 5f9041af（253，稳定版 249.15／250.10／251.11／252.5）才对 localhost 免绑。锚点无法以两版都支持的方式成立 | 未发布（DNS-2） | 探测报明确的版本要求（`probe` 的 `expected`／`actual`）；`jammy/resolv-conf` 的 resolved 检查；[Ubuntu 22.04](/v2/install#ubuntu-2204) 显式文件代理 |
+| <a id="dns2-d5"></a>DNS-2 D5 | jp（OCI）选 fallback＝exit 的方案时 `retrying · dns`（`foreign_domain`：enp0s6 的 DHCP 搜索域 `tko.oraclevcn.com`），整个包平面挂起 | `SystemDnsPlan::conflicts` 把计划的兜底 `~.` 当作覆盖一切名称，任何其他链路的域都判冲突 | 未发布（DNS-2） | `a_fallback_yields_to_specific_foreign_domains_and_explicit_domains_do_not`、`local_domains_follow_successful_observations_and_clear_with_a_fault`、`local_dns_domains_are_read_live_from_the_dns_owner`、`domains_resolved_by_the_local_network_are_listed`；`udp/resolved` 的 resolved 检查；`exit/off` 第 9 阶段 |
 | <a id="x16-dump"></a>X16 | `exit/off` 第 15 阶段 echo 299／300（约每 10 轮一次） | 同一 netlink socket 上的并发 dump 被内核以 `EBUSY` 拒绝，出口投影安装失败、首包丢弃 | alpha.21 | `dumps_of_one_socket_are_taken_one_at_a_time`；`exit/off` 组件 `dumps-exit` |
 | <a id="s5"></a>S5 | `compilerVersion` 升级后全部 State 503 | 旧编译器的 delta 基准按当前格式解码 | alpha.21 | `a_base_another_compiler_wrote_is_no_base_for_state_or_sync`、`a_start_after_a_compiler_upgrade_compiles_auto_again` |
 | <a id="rc1-recovery"></a>RC-1 | 暂态安装失败约 20 秒后 `blocked`；已证实的 DNS／中继／出口不一致显示 `retrying` 并被自动越过；持久冲突需要重启；Status 读 worker 快照（G1–G13，[恢复语义](/v2/node/runtime#recovery)） | 各 owner 各写一份分类、期限与 Status 拼合 | 未发布（`rc1/recovery`） | `recovery::tests::*`、`kernel::tests::classification`、`lifecycle::tests::*`、`status::tests::a_transient_failure_retries_and_only_a_proven_one_blocks`；`fault/throttle` |

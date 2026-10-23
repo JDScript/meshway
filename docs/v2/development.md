@@ -179,7 +179,7 @@ mise run validate:matrix
 mise run validate:matrix --short --rows nat/off nat+fallback/off
 ```
 
-`scripts/validate_matrix.py` 的 `ROWS` 是可执行行的唯一声明，与[默认矩阵](/v2/node/validation#matrix)的 25 行一一对应。`--rows` 使用行 ID，省略时运行全部；重复 ID 只执行一次。runtime 构建一次，全部 runtime 行和 packet 的内嵌 daemon 检查都使用同一 `--artifacts`；packet／TUN 各构建一次。三个入口共享同一 Cargo target：默认工作树 `target/node-kernel-tests/`，环境变量 `MESHWAY_VALIDATION_TARGET` 可指定其他目录（远程矩阵用它让各 run 共享一个 target）。构建锁 `build.lock` 位于该 target 内，覆盖构建及从 target 复制冻结产物，也覆盖 OS 镜像缓存的构建；因此共享同一 target 的不同工作树之间不会互相覆盖尚未复制的二进制。导入已经冻结且逐文件校验的产物与执行阶段不持构建锁。Cargo 使用全部可用核构建，`CARGO_INCREMENTAL=0`。
+`scripts/validate_matrix.py` 的 `ROWS` 是可执行行的唯一声明，与[默认矩阵](/v2/node/validation#matrix)的 26 行一一对应。`--rows` 使用行 ID，省略时运行全部；重复 ID 只执行一次。runtime 构建一次，全部 runtime 行和 packet 的内嵌 daemon 检查都使用同一 `--artifacts`；packet／TUN 各构建一次。三个入口共享同一 Cargo target：默认工作树 `target/node-kernel-tests/`，环境变量 `MESHWAY_VALIDATION_TARGET` 可指定其他目录（远程矩阵用它让各 run 共享一个 target）。构建锁 `build.lock` 位于该 target 内，覆盖构建及从 target 复制冻结产物，也覆盖 OS 镜像缓存的构建；因此共享同一 target 的不同工作树之间不会互相覆盖尚未复制的二进制。导入已经冻结且逐文件校验的产物与执行阶段不持构建锁。Cargo 使用全部可用核构建，`CARGO_INCREMENTAL=0`。
 
 构建阶段从可变 Cargo target 复制并冻结产物。导入阶段仍校验源码／目标／二进制摘要，同一文件系统以硬链接共享只读可执行文件，避免每行复制多 GiB 的 debug 程序；跨文件系统才复制。容器对程序目录只读挂载，可写的外来产物不作为冻结输入接受。
 

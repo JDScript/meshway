@@ -59,6 +59,9 @@ pub(crate) struct DnsFact {
     /// The owner's recovery of the fault: retrying (unknown) or blocked
     /// (proven); healthy once re-proved, or without a fault.
     pub health: Health,
+    /// Other links' domains that coexist with the installed plan's fallback,
+    /// as the last successful operation read them; empty while faulted.
+    pub local_domains: Vec<meshway_protocol::ipc::LocalDnsDomain>,
 }
 
 /// Private I/O seam for the actor loop. Runtime is the sole production owner;
@@ -79,6 +82,10 @@ trait Owner: Send + 'static {
     /// Why the last failed operation failed, if it recorded the check.
     fn failure(&self) -> Option<SystemDnsFailure> {
         None
+    }
+    /// The system installer's coexisting local domains.
+    fn local_domains(&self) -> Vec<meshway_protocol::ipc::LocalDnsDomain> {
+        Vec::new()
     }
 }
 
@@ -126,6 +133,9 @@ impl Owner for Runtime {
         Runtime::failure(self)
             .or_else(|| self.system.failure())
             .cloned()
+    }
+    fn local_domains(&self) -> Vec<meshway_protocol::ipc::LocalDnsDomain> {
+        self.system.local_domains()
     }
 }
 
@@ -181,6 +191,19 @@ impl Faults {
             // Why before the fault itself: one send carries both.
             fact.detail = Some(failure);
             fact.health = health;
+            fact.local_domains.clear();
+        });
+    }
+    /// Publish the owner's coexisting local domains after a success; a
+    /// send only when they changed.
+    fn local(&self, owner: &impl Owner) {
+        let domains = owner.local_domains();
+        self.state.send_if_modified(|fact| {
+            if fact.local_domains == domains {
+                return false;
+            }
+            fact.local_domains = domains;
+            true
         });
     }
     /// The failed owner re-proved its installation; the fault stays until
@@ -263,6 +286,9 @@ impl Actor {
                                     runtime.hold(&netmap).await
                                 }
                             };
+                            if result.is_ok() {
+                                faults.local(&runtime);
+                            }
                             if let Err(error) = result {
                                 let failure = match blocked {
                                     Some(_) => faults.state.borrow().detail.clone(),
@@ -279,6 +305,9 @@ impl Actor {
                         }
                         Some(Command::Install(desired, reply)) => {
                             let result = runtime.install(*desired).await;
+                            if result.is_ok() {
+                                faults.local(&runtime);
+                            }
                             match result {
                                 Err(error) => {
                                     let failure = failure_of(&runtime, error);
@@ -365,7 +394,7 @@ impl Actor {
                         tracing::info!("DNS owner recovered its system installation");
                         faults.recovered();
                     }
-                    Ok(()) => {}
+                    Ok(()) => faults.local(&runtime),
                 }
             }
         });

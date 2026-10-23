@@ -528,6 +528,13 @@ impl View {
                         }
                     }
                 }),
+            local_dns_domains: network
+                .dns_guard
+                .as_ref()
+                // The installed system plan's, whatever Control holds now.
+                .filter(|_| active)
+                .map(|guard| guard.borrow().local_domains.clone())
+                .filter(|domains| !domains.is_empty()),
         }
     }
 }
@@ -944,6 +951,31 @@ mod tests {
             "{:?}",
             status.last_error_detail
         );
+    }
+
+    /// D5: the DNS owner's coexisting local domains are Status's, live, and
+    /// omitted while there are none.
+    #[test]
+    fn local_dns_domains_are_read_live_from_the_dns_owner() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Ready;
+        network.completion = Some(Ok(()));
+        network.content = Some(std::sync::Arc::new(meshway_test_server::single_node(
+            "a", None,
+        )));
+        let (fact, guard) = watch::channel(super::super::network::DnsFact::default());
+        network.dns_guard = Some(guard);
+        let (view, _reported, _network, _desired) = view(network);
+        assert_eq!(view.status().local_dns_domains, None);
+        let local = meshway_protocol::ipc::LocalDnsDomain {
+            domain: "tko.oraclevcn.com".into(),
+            link_index: 2,
+            link_name: Some("enp0s6".into()),
+        };
+        fact.send_modify(|fact| fact.local_domains = vec![local.clone()]);
+        assert_eq!(view.status().local_dns_domains, Some(vec![local]));
+        fact.send_modify(|fact| fact.local_domains.clear());
+        assert_eq!(view.status().local_dns_domains, None);
     }
 
     fn retrying(reason: &str) -> meshway_model::recovery::Health {

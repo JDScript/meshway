@@ -326,4 +326,7 @@ impl SystemDns for SystemDnsOwner {
     > {
         SystemDnsOwner::served_resolvers(self)
     }
+    fn local_domains(&self) -> Vec<meshway_protocol::ipc::LocalDnsDomain> {
+        SystemDnsOwner::local_domains(self).to_vec()
+    }
 }

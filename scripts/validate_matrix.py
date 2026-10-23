@@ -28,6 +28,10 @@ ROWS = {
     "trojan/off": ("runtime", ("--transport", "trojan", "--dns-backend", "off")),
     "udp/resolv-conf": ("runtime", ("--transport", "native-udp", "--dns-backend", "resolv-conf")),
     "udp/resolved": ("runtime", ("--transport", "native-udp", "--dns-backend", "resolved")),
+    # Ubuntu 22.04 (systemd 249): its resolved cannot serve the resolved
+    # backend (the row's resolved check expects the named failure); the
+    # documented explicit file proxy runs the whole DNS scenario.
+    "jammy/resolv-conf": ("runtime", ("--transport", "native-udp", "--dns-backend", "resolv-conf", "--dns-os", "jammy")),
     "nat/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off")),
     "nat+fallback/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--traversal-fallback", "--dns-backend", "off")),
     "nat/resolved": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "resolved")),
@@ -91,6 +95,7 @@ def parse_args(argv=None):
                             help=f"frozen {kind} --build-only output to import instead of building")
     parser.add_argument("--runtime-image-manifest", type=Path)
     parser.add_argument("--dns-image-manifest", type=Path)
+    parser.add_argument("--dns-jammy-image-manifest", type=Path)
     parser.add_argument("--traversal-image-manifest", type=Path)
     args = parser.parse_args(argv)
     if args.run and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}", args.run):
@@ -119,18 +124,21 @@ def script(kind):
 def prepare_images(args, directory, platform):
     """OS inputs already pin both amd64 and arm64; select the Docker-native arch."""
     needed = {"runtime"} if any(name != "tun" for name in args.rows) else set()
-    if any(name.endswith(("/resolved", "/resolv-conf")) for name in args.rows):
-        needed.add("dns")
+    for name in args.rows:
+        kind = dns_image(name)
+        if kind:
+            needed.add(kind)
     if any(name.startswith(("nat", "roam")) for name in args.rows):
         needed.add("traversal")
     images = {}
     for kind in sorted(needed):
-        supplied = getattr(args, kind + "_image_manifest")
+        supplied = getattr(args, kind.replace("-", "_") + "_image_manifest")
         if supplied:
             images[kind] = supplied.resolve()
             continue
         builder = image_builder() if kind == "runtime" else None
-        lock = ROOT / f"dev/{kind}-fixture/assets.lock.json"
+        lock = ROOT / ("dev/dns-fixture/jammy.lock.json" if kind == "dns-jammy"
+                       else f"dev/{kind}-fixture/assets.lock.json")
         digest = builder.source_digest() if builder else sha256(lock)
         output = validation_root() / "os" / (kind + "-" + platform.split("/")[1] + "-" + digest)
         manifest = output / "image-manifest.json"
@@ -177,11 +185,18 @@ def row_command(name, report, artifacts, images, short):
         command += ["--runtime-image-manifest", str(images["runtime"])]
         if short:
             command.append("--short")
-    for image_kind, needed in (("dns", name.endswith(("/resolved", "/resolv-conf"))),
-                               ("traversal", name.startswith(("nat", "roam")))):
-        if needed:
-            command += ["--" + image_kind + "-image-manifest", str(images[image_kind])]
+    if dns_image(name):
+        command += ["--dns-image-manifest", str(images[dns_image(name)])]
+    if name.startswith(("nat", "roam")):
+        command += ["--traversal-image-manifest", str(images["traversal"])]
     return command
+
+
+def dns_image(name):
+    """The DNS OS image a row's actors run on, if any."""
+    if name.startswith("jammy/"):
+        return "dns-jammy"
+    return "dns" if name.endswith(("/resolved", "/resolv-conf")) else None
 
 
 def failure_excerpt(report, logfile):

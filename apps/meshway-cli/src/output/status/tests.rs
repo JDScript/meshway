@@ -206,6 +206,54 @@ fn a_control_relay_that_does_not_serve_every_connection_is_shown() {
     assert_eq!(value["controlObservedAt"], "2026-10-11T11:59:48Z");
 }
 
+/// D5: another link's specific domains beside the DNS fallback are listed
+/// with their links, and absent (omitted on the wire) otherwise.
+#[test]
+fn domains_resolved_by_the_local_network_are_listed() {
+    let mut status = status();
+    let text = String::from_utf8({
+        let mut output = Vec::new();
+        write(&mut output, &Term::plain(), &status, now()).unwrap();
+        output
+    })
+    .unwrap();
+    assert!(!text.contains("Local DNS"), "{text}");
+    let mut json = Vec::new();
+    crate::output::json(&mut json, &status).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert!(value.get("localDnsDomains").is_none());
+    status.local_dns_domains = Some(vec![
+        meshway_protocol::ipc::LocalDnsDomain {
+            domain: "tko.oraclevcn.com".into(),
+            link_index: 2,
+            link_name: Some("enp0s6".into()),
+        },
+        meshway_protocol::ipc::LocalDnsDomain {
+            domain: "corp.example".into(),
+            link_index: 7,
+            link_name: None,
+        },
+    ]);
+    let mut output = Vec::new();
+    write(&mut output, &Term::plain(), &status, now()).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(
+        text.contains(
+            "  Local DNS  tko.oraclevcn.com (enp0s6), corp.example (link 7) · resolved by the local network, not the DNS fallback\n"
+        ),
+        "{text}"
+    );
+    let mut json = Vec::new();
+    crate::output::json(&mut json, &status).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(
+        value["localDnsDomains"][0],
+        serde_json::json!({"domain":"tko.oraclevcn.com","linkIndex":2,"linkName":"enp0s6"})
+    );
+    let decoded: Status = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded.local_dns_domains, status.local_dns_domains);
+}
+
 /// H4 decision 1: a packet plane withdrawn for a failure that recovers by
 /// itself reads `retrying` (not the operator's `blocked`) with its cause.
 #[test]

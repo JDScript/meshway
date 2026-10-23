@@ -487,3 +487,91 @@ async fn a_failed_preparation_is_judged_and_published_as_a_running_owners_fault(
     let at = attachment.prepare_at().unwrap();
     assert!(at >= started + PREPARE_RETRY && at < started + REREAD_PROVEN);
 }
+
+/// D5: the installer's coexisting local domains reach the one DNS fact
+/// after a successful observation, change it once, and leave it with a
+/// fault (unknown then).
+struct LocalOwner {
+    scopes: watch::Sender<Option<meshway_dns::Scope>>,
+    observations: Arc<AtomicUsize>,
+    domains: Arc<std::sync::Mutex<Vec<meshway_protocol::ipc::LocalDnsDomain>>>,
+    fail_after: usize,
+}
+
+impl Owner for LocalOwner {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>> {
+        self.scopes.clone()
+    }
+    async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        if self.observations.fetch_add(1, Ordering::SeqCst) >= self.fail_after {
+            Err(SystemDnsError::Backend)
+        } else {
+            Ok(())
+        }
+    }
+    async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        Err(SystemDnsError::Backend)
+    }
+    async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
+        unreachable!("this regression covers observation only")
+    }
+    async fn install(&mut self, _: Desired) -> Result<(), SystemDnsError> {
+        unreachable!("this regression covers observation only")
+    }
+    async fn shutdown(self, _: bool) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    fn local_domains(&self) -> Vec<meshway_protocol::ipc::LocalDnsDomain> {
+        self.domains.lock().unwrap().clone()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn local_domains_follow_successful_observations_and_clear_with_a_fault() {
+    let (scopes, _) = watch::channel(None);
+    let observations = Arc::new(AtomicUsize::new(0));
+    let local = meshway_protocol::ipc::LocalDnsDomain {
+        domain: "tko.oraclevcn.com".into(),
+        link_index: 2,
+        link_name: Some("enp0s6".into()),
+    };
+    let domains = Arc::new(std::sync::Mutex::new(vec![local.clone()]));
+    let actor = Actor::start(LocalOwner {
+        scopes,
+        observations: observations.clone(),
+        domains: domains.clone(),
+        fail_after: 6,
+    });
+    let mut state = actor.state.clone();
+    state.mark_unchanged();
+    tokio::time::timeout(Duration::from_secs(1), state.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.borrow_and_update().local_domains, vec![local.clone()]);
+    // The same domains on the next observations send nothing.
+    while observations.load(Ordering::SeqCst) < 4 {
+        tokio::time::sleep(super::super::OBSERVE_INTERVAL).await;
+    }
+    assert!(!state.has_changed().unwrap());
+    domains.lock().unwrap().clear();
+    tokio::time::timeout(Duration::from_secs(1), state.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(state.borrow_and_update().local_domains.is_empty());
+    domains.lock().unwrap().push(local);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            state.changed().await.unwrap();
+            let fact = state.borrow_and_update();
+            if fact.fault.is_some() {
+                assert!(fact.local_domains.is_empty());
+                return;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    actor.shutdown(true).await.unwrap();
+}

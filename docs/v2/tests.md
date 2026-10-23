@@ -73,7 +73,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | --- | --- | ---: | --- |
 | `test:tun:linux` | tun | 秒级 | 真实 TUN 设备、双栈包 I/O、GSO/GRO 能力 |
 | `test:packet:linux` | packet | ~9 分钟 | A→R→B 受保护包流：小包、满 MTU、MTU+1 拒绝、多 MSS TCP、原路径回复、内嵌真实 daemon 整组 |
-| `test:runtime:linux` | udp/off、tcp/off、udp/resolv-conf、udp/resolved、nat/off、nat+fallback/off、nat/resolved | 各 ~8 分钟（NAT 行失败时更短） | 真实 meshwayd／CLI＋Server：接入、续租、70 秒流（[锚点](/v2/node/validation#traffic-anchor)）、HTTP 中断恢复、Access 撤销恢复、lease 失效、离线清理；DNS 行加系统解析；NAT 行加双路由器穿透与 pcap 证据 |
+| `test:runtime:linux` | udp/off、tcp/off、udp/resolv-conf、udp/resolved、jammy/resolv-conf、nat/off、nat+fallback/off、nat/resolved | 各 ~8 分钟（NAT 行失败时更短） | 真实 meshwayd／CLI＋Server：接入、续租、70 秒流（[锚点](/v2/node/validation#traffic-anchor)）、HTTP 中断恢复、Access 撤销恢复、lease 失效、离线清理；DNS 行加系统解析；NAT 行加双路由器穿透与 pcap 证据 |
 | `test:runtime:linux --traversal nat --netmap-scenario relay` | nat/relay | ~6 分钟 | nat/off 的共同启动与 70 秒流之后，A–B 改为获准直连但被 A 的 NAT 路由器丢弃：新流与 CLI ping 须在提交后 30 秒内经 R 中继，status 显示 `relay via R`，路由器计数证明 A 尝试过直连，见[中继兜底](/v2/node/validation#relay-row) |
 | `test:runtime:linux --traversal roam` | roam/direct | ~2 分钟 | A 两个 SNAT 上联、公网 B、LAN 上的 C，A 经独立 IPv6 网络连 Server；A 拨号与 listener 两个阶段各一次 soft（换默认路由＋删地址）、hard（断开／接入上联）与 dual-stack（只改 IPv4 默认路由，要求 A 判为 path 并反应）漫游，持续 UDP／ping／TCP 下测首个回复、丢包、TCP 中断、circuit 与 channel 连续性，门槛见[漫游行](/v2/node/validation#roam-row) |
 | `test:runtime:linux --traversal roam --netmap-scenario roam-nat` | roam/nat | ~1.5 分钟 | B 也在端口相关过滤 NAT 后、A–B 只经协调穿透；A 换上联（soft／hard）后由 A 发起的重新穿透、首个回复 ≤ 5 秒、同一 circuit，见 [roam/nat 行](/v2/node/validation#roam-nat-row) |
@@ -85,7 +85,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | `test:runtime:linux --traversal exit` | exit/off | 短模式诊断／全长验收 | 真实 Controller／A／R／E、隔离公网分类目标与私有 LAN；能力／安装、NAT tuple、完整路径、长流／仅接收、撤回／到期／journal／精确清理；内部 ACK／截止边界单独调用正式组件测试 |
 | `test:runtime:linux` | vless/off、trojan/off | 各 ~8 分钟 | 同一 daemon 共同场景；A/B 只经所选 TCP/TLS 承载拨入 R，SecureNode 包流与原路径回复；独立 TLS 材料与精确叶证书验证 |
 
-25 行由 `validate:matrix` 统一定义；planck 默认并行 8，全量约 18 分钟（最长行 `exit/off` 约 13.5 分钟），`roam/*` 行逐个运行；`--short` 把流缩到约 30 秒只作诊断。当前每行状态见[默认矩阵](/v2/node/validation#matrix)。
+26 行由 `validate:matrix` 统一定义；planck 默认并行 8，全量约 18 分钟（最长行 `exit/off` 约 13.5 分钟），`roam/*` 行逐个运行；`--short` 把流缩到约 30 秒只作诊断。当前每行状态见[默认矩阵](/v2/node/validation#matrix)。
 
 ## Fixture 与工具
 

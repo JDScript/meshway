@@ -27,6 +27,13 @@ KERNEL_BINARY = "meshway-underlay-kernel-tests"
 BOOTSTRAP_BINARY = "meshway-underlay-bootstrap-tests"
 LIFECYCLE_BINARY = "meshway-daemon-lifecycle-tests"
 UNDERLAY_NETMAP_BINARY = "meshway-underlay-netmap-tests"
+# The production resolved backend on the DNS image's own systemd-resolved
+# (DNS-2): installs beside foreign domains, or names its systemd requirement.
+RESOLVED_BACKEND_TEST = ("linux::kernel::tests::resolved::"
+                         "resolved_backend_installs_beside_foreign_domains_or_names_its_systemd_requirement")
+# DNS OS images: the pinned lock of each, and what resolved does on it.
+DNS_OS = {"trixie": ("dev/dns-fixture/assets.lock.json", "installs"),
+          "jammy": ("dev/dns-fixture/jammy.lock.json", "unsupported")}
 LIFECYCLE_TEST = "cleanup::blocked_down_retries_real_dns_reservation_cleanup_without_going_online"
 OWNER_CONFLICT_TEST = "runtime::control::tests::live_tun_owner_conflict_retries_and_recovers_without_new_up"
 PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests"),
@@ -213,6 +220,8 @@ def main():
                         help="real libc DNS conformance in an owned private mount namespace")
     parser.add_argument("--dns-image-manifest", type=Path,
                         help="parent-built dev/dns-fixture/build.py immutable OS image manifest")
+    parser.add_argument("--dns-os", choices=tuple(DNS_OS), default="trixie",
+                        help="DNS OS image lock: Debian trixie (systemd 257) or Ubuntu 22.04 (systemd 249)")
     parser.add_argument("--traversal", choices=("off", "nat", "exit", "exit6", "roam", "fault"), default="off",
                         help="real two-router IPv4 NAT acquisition with empty UDP endpoints; exit, roam and "
                              "fault select their own topologies")
@@ -256,7 +265,7 @@ def main():
     report = report_directory("runtime", args.report_dir)
     identity = report.name
     for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES, *RELAY_ROLES,
-                  "underlay-peer", "bootstrap", "daemon-cleanup", "daemon-owner-conflict", "restart", *KERNEL_TESTS, *PLATFORM_BINARIES):
+                  "underlay-peer", "bootstrap", "dns-resolved-backend", "daemon-cleanup", "daemon-owner-conflict", "restart", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
     # One source/cache owner per invocation; never leak the lock FD to Cargo,
@@ -301,7 +310,7 @@ def main():
     dns_assets = None
     if args.dns_backend != "off":
         dns_assets = json.loads(args.dns_image_manifest.read_text())
-        lock_path = ROOT / "dev/dns-fixture/assets.lock.json"
+        lock_path = ROOT / DNS_OS[args.dns_os][0]
         lock = json.loads(lock_path.read_text())
         if (dns_assets.get("status") != "built" or dns_assets.get("platform") != platform
                 or dns_assets.get("base") != lock["base"] or dns_assets.get("lockSha256") != sha256(lock_path)
@@ -358,6 +367,7 @@ def main():
                  "passed": False, "processes": {}, "resources": {"containers": containers},
                   "carrier": args.transport,
                   "dnsBackend": args.dns_backend,
+                  "dnsOs": args.dns_os if args.dns_backend != "off" else None,
                    "dnsOsAssets": dns_assets,
                    "traversal": args.traversal,
                    "reportedEndpoints": args.reported_endpoints,
@@ -375,10 +385,12 @@ def main():
     write_json(metadata, manifest)
 
     def create(role, arguments, address=None, address6=None, private=False, tun=False, admin=False,
-               prepare=False, executable="meshway-runtime-fixture", environment=None):
+               prepare=False, executable="meshway-runtime-fixture", environment=None, dns_backend=None):
         if args.only and role not in (*ROLES, "prepare"):
             return
-        dns_actor = args.dns_backend != "off" and role in ("a", "r", "b")
+        if dns_backend is None and args.dns_backend != "off" and role in ("a", "r", "b"):
+            dns_backend = args.dns_backend
+        dns_actor = dns_backend is not None
         attachment = actor_networks.get(role, network) if address else "none"
         if role == "underlay-negative":
             # This test deliberately captures its *underlay peer* with a sink.
@@ -424,11 +436,11 @@ def main():
             command.extend(mount_namespace_options())
             command.extend(["--tmpfs", "/run:rw,nosuid,nodev,mode=755",
                             "--env", "MESHWAY_DNS_FIXTURE_OWNED=1",
-                            "--env", "MESHWAY_DNS_BACKEND=" + args.dns_backend,
+                            "--env", "MESHWAY_DNS_BACKEND=" + dns_backend,
                             "--env", "MESHWAY_DNS_UPSTREAM=" + addresses["controller"],
                             "--env", "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"])
             capabilities = ["SYS_ADMIN", "CHOWN", "NET_BIND_SERVICE"]
-            if args.dns_backend == "resolved":
+            if dns_backend == "resolved":
                 # resolved's documented privilege drop/bind path and the
                 # production owner's /proc PID-netns verification across UID.
                 capabilities += ["NET_RAW", "SETUID", "SETGID", "SETPCAP", "DAC_OVERRIDE", "SYS_PTRACE", "FOWNER", "KILL"]
@@ -782,6 +794,22 @@ def main():
                 write_json(metadata, manifest)
         if not args.only and any(manifest["underlayPeer"].values()):
             raise RuntimeError("remote underlay peer did not stop cleanly")
+        if args.dns_backend != "off" and not args.only:
+            # Whatever the row's backend: the production resolved backend on
+            # this DNS image's own resolved and the Kernel's anchor.
+            role = "dns-resolved-backend"
+            create(role, ["--include-ignored", "--exact", RESOLVED_BACKEND_TEST, "--nocapture", "--test-threads=1"],
+                   admin=True, executable=KERNEL_BINARY, dns_backend="resolved",
+                   environment={"MESHWAY_UNDERLAY_ISOLATED": "1", "MESHWAY_DNS_ISOLATED": "1",
+                                "MESHWAY_RESOLVED_EXPECT": DNS_OS[args.dns_os][1]})
+            result = execute(role)
+            passed = (not any(result.values())
+                      and "test result: ok. 1 passed; 0 failed; 0 ignored;" in (report / f"{role}.log").read_text())
+            manifest["platformTests"][role] = {"passed": passed, "test": RESOLVED_BACKEND_TEST,
+                                               "expect": DNS_OS[args.dns_os][1], **result}
+            write_json(metadata, manifest)
+            if not passed:
+                raise RuntimeError("resolved backend conformance on the DNS image failed")
         for role in routers:
             start_router(role)
         create("controller", ["controller"], address=addresses["controller"], address6=addresses6["controller"], private=True)

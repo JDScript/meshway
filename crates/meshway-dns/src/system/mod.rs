@@ -3,6 +3,7 @@
 use crate::DnsFuture;
 use meshway_configuration::{DnsConfiguration, DnsTransport, netmap::DnsPlan};
 pub use meshway_model::exit::ExitDnsUnavailableReason;
+use meshway_protocol::ipc::LocalDnsDomain;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -336,14 +337,32 @@ impl SystemDnsPlan {
         }
         Ok(())
     }
-    pub fn conflicts(&self, foreign: &str) -> bool {
+    /// How a routing domain of another link (a search domain or `~domain`)
+    /// meets this plan under resolved's most specific match. The plan's
+    /// explicit domains (MagicDNS, split routes, search domains) and its
+    /// fallback `~.` are judged apart: the fallback yields every specific
+    /// domain to the link that routes it.
+    pub fn foreign_route(&self, foreign: &str) -> ForeignRoute {
         let foreign = foreign.trim_end_matches('.').to_ascii_lowercase();
-        self.domains.keys().any(|own| {
+        if foreign.is_empty() {
+            return if self.root {
+                ForeignRoute::Conflict
+            } else {
+                ForeignRoute::Unrelated
+            };
+        }
+        let explicit = self.domains.keys().any(|own| {
             let own = own.trim_end_matches('.');
-            own.is_empty()
-                || foreign == own
-                || foreign.strip_suffix(own).is_some_and(|s| s.ends_with('.'))
-        })
+            !own.is_empty()
+                && (foreign == own || foreign.strip_suffix(own).is_some_and(|s| s.ends_with('.')))
+        });
+        if explicit {
+            ForeignRoute::Conflict
+        } else if self.root {
+            ForeignRoute::Local
+        } else {
+            ForeignRoute::Unrelated
+        }
     }
     pub fn needs_system_fallback(&self, settings: &DnsConfiguration) -> bool {
         // Search domains also route DNS in resolved. Only suffixes whose entire
@@ -355,6 +374,21 @@ impl SystemDnsPlan {
             })
     }
 }
+/// [`SystemDnsPlan::foreign_route`]: the one judgement of another link's
+/// routing domain against an installed plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForeignRoute {
+    /// It routes no name this plan covers.
+    Unrelated,
+    /// It routes names this plan covers only through its fallback `~.`:
+    /// that link's resolver answers them, every other name still takes the
+    /// fallback. Not a conflict; reported as a local DNS domain.
+    Local,
+    /// Equal to or more specific than one of the plan's explicit domains,
+    /// or a second `~.` beside the plan's own.
+    Conflict,
+}
+
 fn suffix_of(parent: &str, child: &str) -> bool {
     let parent = parent.trim_end_matches('.');
     let child = child.trim_end_matches('.');
@@ -492,6 +526,9 @@ impl SystemDnsOwner {
     }
     pub fn failure(&self) -> Option<&SystemDnsFailure> {
         None
+    }
+    pub fn local_domains(&self) -> &[LocalDnsDomain] {
+        &[]
     }
     pub async fn down(&mut self) -> Result<(), SystemDnsError> {
         Err(SystemDnsError::Unsupported)

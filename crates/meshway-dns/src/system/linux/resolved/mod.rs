@@ -8,8 +8,8 @@
 //! a restarted resolved that kept the settings is adopted, and one that lost
 //! them leaves the link at its original settings for a fresh installation.
 use super::{
-    DnsLinkIdentity, ExitDnsUnavailableReason, Namespace, OwnedDnsLink, SystemDnsError,
-    SystemDnsFailure, SystemDnsPlan, storage,
+    DnsLinkIdentity, ExitDnsUnavailableReason, ForeignRoute, LocalDnsDomain, Namespace,
+    OwnedDnsLink, SystemDnsError, SystemDnsFailure, SystemDnsPlan, storage,
 };
 use crate::system::At;
 use meshway_private_storage::Directory;
@@ -36,6 +36,10 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 const VERSION: u32 = 2;
 const MARKER_SUFFIX: &str = "meshway-installation.invalid";
 const RECORD: &str = "resolved.json";
+/// The systemd-resolved releases that deliver a query to a link's loopback
+/// DNS server (systemd commit 5f9041af, see [`Backend::probe`]).
+const LOOPBACK_SERVER_RELEASES: &str =
+    "systemd-resolved 253 or later, or stable 249.15, 250.10, 251.11, 252.5 or later";
 type DnsServer = (i32, Vec<u8>, u16, String);
 type GlobalDomains = Vec<(i32, String, bool)>;
 /// resolved's manager-wide server lists: (ifindex, family, address, port, name).
@@ -179,6 +183,9 @@ pub(super) struct Backend {
     probed: bool,
     /// The last proxy stub check: resolved's owner, when, and its result.
     stub: Option<(String, std::time::Instant, bool)>,
+    /// Other links' domains that coexist with the installed plan's
+    /// fallback, as the last successful observation read them.
+    local: Vec<LocalDnsDomain>,
 }
 pub(super) fn has_record(directory: &Directory) -> Result<bool, SystemDnsError> {
     storage::read::<Record>(directory, RECORD).map(|record| record.is_some())
@@ -385,6 +392,7 @@ impl Backend {
             writes: storage::Writes::default(),
             probed: false,
             stub: None,
+            local: Vec::new(),
         };
         if lost {
             // The link is at its original settings: record exactly that, so
@@ -446,7 +454,10 @@ impl Backend {
             .at("record_write")
             .map_err(|failure| failure.source(source))
     }
-    async fn conflicts(&self, plan: &SystemDnsPlan) -> Checked<()> {
+    /// Other links' routing domains against `plan`
+    /// ([`SystemDnsPlan::foreign_route`]): a conflict fails; the specific
+    /// domains that coexist with the plan's fallback are returned, sorted.
+    async fn conflicts(&self, plan: &SystemDnsPlan) -> Checked<Vec<(u32, String)>> {
         let source = format!("D-Bus {} {PATH} {IFACE}.Domains", self.service_owner);
         let domains: GlobalDomains = property(
             &self.connection,
@@ -465,13 +476,26 @@ impl Backend {
                     .source(source),
             );
         }
-        if let Some((index, name, route)) = domains.iter().find(|(index, name, _)| {
-            *index != self.record.link.index as i32 && plan.conflicts(name)
-        }) {
-            return Err(
-                SystemDnsFailure::new(SystemDnsError::Conflict, "foreign_domain")
+        let mut local = std::collections::BTreeSet::new();
+        for (index, name, route) in &domains {
+            if *index == self.record.link.index as i32 {
+                continue;
+            }
+            match plan.foreign_route(name) {
+                ForeignRoute::Unrelated => {}
+                ForeignRoute::Local => {
+                    local.insert((
+                        u32::try_from(*index).unwrap_or(0),
+                        name.trim_end_matches('.').to_ascii_lowercase(),
+                    ));
+                }
+                ForeignRoute::Conflict => {
+                    return Err(SystemDnsFailure::new(
+                        SystemDnsError::Conflict,
+                        "foreign_domain",
+                    )
                     .expected(format!(
-                        "no link other than {} routing a name this plan routes",
+                        "no link other than {} routing a domain this plan routes explicitly, nor a second ~.",
                         self.record.link.index
                     ))
                     .actual(format!(
@@ -479,10 +503,52 @@ impl Backend {
                         if *route { "~" } else { "" },
                         shown(name)
                     ))
-                    .source(source),
+                    .source(source));
+                }
+            }
+        }
+        Ok(local.into_iter().collect())
+    }
+    /// The coexisting domains of the last successful observation, with the
+    /// links' names; logged once whenever they change.
+    fn record_local(&mut self, local: Vec<(u32, String)>) {
+        let same = self.local.len() == local.len()
+            && self
+                .local
+                .iter()
+                .zip(&local)
+                .all(|(known, (index, domain))| {
+                    known.link_index == *index && known.domain == *domain
+                });
+        if same {
+            return;
+        }
+        let names = link_names(local.iter().map(|(index, _)| *index));
+        self.local = local
+            .into_iter()
+            .map(|(link_index, domain)| LocalDnsDomain {
+                link_name: names.get(&link_index).cloned(),
+                domain,
+                link_index,
+            })
+            .collect();
+        if !self.local.is_empty() {
+            let shown: Vec<_> = self
+                .local
+                .iter()
+                .map(|local| match &local.link_name {
+                    Some(name) => format!("{} ({name})", local.domain),
+                    None => format!("{} (link {})", local.domain, local.link_index),
+                })
+                .collect();
+            tracing::info!(
+                domains = shown.join(", "),
+                "Other links resolve these domains; every other name takes this Node's DNS fallback"
             );
         }
-        Ok(())
+    }
+    pub fn local_domains(&self) -> &[LocalDnsDomain] {
+        &self.local
     }
     pub async fn observe(&mut self) -> Checked<()> {
         let source = self.record_source();
@@ -527,10 +593,13 @@ impl Backend {
                     .source(self.link_source()),
             );
         }
-        if let Some(plan) = &self.record.plan {
-            self.conflicts(plan).await?;
-        }
-        self.verify().await
+        let local = match &self.record.plan {
+            Some(plan) => self.conflicts(plan).await?,
+            None => Vec::new(),
+        };
+        self.verify().await?;
+        self.record_local(local);
+        Ok(())
     }
     /// The proxy stub's routing while settings are installed, or why it
     /// cannot serve: no installed link or unreadable inventory, no OS
@@ -740,9 +809,10 @@ impl Backend {
         type Records = (Vec<(i32, u16, u16, Vec<u8>)>, u64);
         let arguments = (index, &name, 1u16, 1u16, 1u64);
         let lookup = self.call::<_, Records>("ResolveRecord", &arguments);
+        let reached = std::sync::atomic::AtomicBool::new(false);
         let (lookup, served) = tokio::join!(
             lookup,
-            tokio::time::timeout(TIMEOUT, serve_probe(udp, tcp, &name))
+            tokio::time::timeout(TIMEOUT, serve_probe(udp, tcp, &name, &reached))
         );
         // Restore even after a known probe failure, but only if our exact
         // temporary settings remain. An uncertain mutation retains the journal.
@@ -759,6 +829,20 @@ impl Backend {
         self.settings(&probe, &self.record.original).await?;
         self.record.pending = false;
         self.persist().await?;
+        if !reached.load(std::sync::atomic::Ordering::Relaxed) && !matches!(served, Ok(Ok(()))) {
+            // Without systemd commit 5f9041af (v253, and the stable
+            // releases it was backported to) resolved binds its query socket
+            // to the link (SO_BINDTOIFINDEX) even for a loopback server, so
+            // the query to the bind never arrives: Ubuntu 22.04's 249.11.
+            return Err(SystemDnsFailure::new(SystemDnsError::Unsupported, "probe")
+                .expected(format!(
+                    "resolved sends a nonce query to the owned link's loopback DNS server over UDP then TCP ({LOOPBACK_SERVER_RELEASES})"
+                ))
+                .actual(format!(
+                    "no query reached {address} within 5 s; {}",
+                    self.systemd_version().await
+                )));
+        }
         match (lookup, served) {
             (Ok(_), Ok(Ok(()))) => {}
             (Err(failure), _) => {
@@ -783,6 +867,23 @@ impl Backend {
         self.probed = true;
         Ok(())
     }
+    /// The service manager's version, for a failed probe's report only: it
+    /// proves nothing (resolved is the probe's subject).
+    async fn systemd_version(&self) -> String {
+        let version: Checked<String> = property(
+            &self.connection,
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "Version",
+            "probe",
+        )
+        .await;
+        match version {
+            Ok(version) => format!("systemd {version}"),
+            Err(_) => "systemd version unknown".to_owned(),
+        }
+    }
     pub async fn down(&mut self) -> Checked<()> {
         self.observe().await?;
         if let Some(installed) = self.record.installed.clone() {
@@ -800,6 +901,7 @@ impl Backend {
         self.record.pending = false;
         self.record.installed = None;
         self.record.plan = None;
+        self.local.clear();
         Ok(())
     }
 }
@@ -832,6 +934,22 @@ fn proxy_stub_in(udp: &str, tcp: &str) -> bool {
         })
     };
     has(udp, "07") && has(tcp, "0A")
+}
+/// Interface names by index, as far as the kernel names them now; the
+/// global settings (index 0) have none.
+fn link_names(indexes: impl Iterator<Item = u32>) -> std::collections::BTreeMap<u32, String> {
+    use rustix::net::{AddressFamily, SocketType};
+    let Ok(socket) = rustix::net::socket(AddressFamily::INET, SocketType::DGRAM, None) else {
+        return Default::default();
+    };
+    indexes
+        .filter(|index| *index != 0)
+        .filter_map(|index| {
+            rustix::net::netdevice::index_to_name(&socket, index)
+                .ok()
+                .map(|name| (index, name))
+        })
+        .collect()
 }
 fn marker() -> Result<String, SystemDnsError> {
     let mut nonce = [0u8; 16];

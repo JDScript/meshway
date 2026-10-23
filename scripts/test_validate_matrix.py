@@ -163,9 +163,10 @@ class MatrixTests(unittest.TestCase):
             with support.build_lock():
                 self.assertTrue((Path(temporary) / "build.lock").exists())
 
-    def test_rows_are_twenty_five_and_filter_keeps_order_without_duplicates(self):
-        self.assertEqual(len(matrix.DEFAULT_ROWS), 25)
-        self.assertEqual(len(matrix.ROWS), 25)
+    def test_rows_are_twenty_six_and_filter_keeps_order_without_duplicates(self):
+        self.assertEqual(len(matrix.DEFAULT_ROWS), 26)
+        self.assertEqual(len(matrix.ROWS), 26)
+        self.assertIn("jammy/resolv-conf", matrix.DEFAULT_ROWS)
         self.assertIn("fault/throttle", matrix.DEFAULT_ROWS)
         self.assertEqual(matrix.bridges("fault/throttle"), 1)
         self.assertEqual([name for name in matrix.DEFAULT_ROWS if name.startswith("roam/")],
@@ -185,12 +186,17 @@ class MatrixTests(unittest.TestCase):
 
     def test_packet_nested_daemon_and_all_runtime_rows_reuse_artifacts(self):
         artifacts = {kind: Path("/artifacts") / kind for kind in ("runtime", "packet", "tun")}
-        images = {kind: Path("/images") / kind for kind in ("runtime", "dns", "traversal")}
+        images = {kind: Path("/images") / kind for kind in ("runtime", "dns", "dns-jammy", "traversal")}
         for name in matrix.ROWS:
             command = matrix.row_command(name, Path("/report"), artifacts, images, True)
             self.assertIn("--artifacts", command)
             self.assertNotIn("--build-only", command)
             self.assertEqual("--dns-image-manifest" in command, name.endswith(("/resolved", "/resolv-conf")))
+            if "--dns-image-manifest" in command:
+                # Ubuntu 22.04 rows run on their own locked image.
+                manifest = command[command.index("--dns-image-manifest") + 1]
+                self.assertEqual(manifest, "/images/" + ("dns-jammy" if name.startswith("jammy/") else "dns"))
+                self.assertEqual("--dns-os" in command, name.startswith("jammy/"))
             self.assertEqual("--traversal-image-manifest" in command, name.startswith(("nat", "roam")))
             self.assertEqual("--short" in command, name != "tun")
             if name == "packet":
@@ -228,7 +234,7 @@ class MatrixTests(unittest.TestCase):
                 code = matrix.main(["--parallel", "4", "--short", "--run", "run"])
             report = json.loads((root / ".meshway/validation/matrix/run/matrix.json").read_text())
             self.assertEqual(code, 1)
-            self.assertEqual(len(report["rows"]), 25)
+            self.assertEqual(len(report["rows"]), 26)
             self.assertEqual([row["row"] for row in report["rows"]], list(matrix.DEFAULT_ROWS))
             self.assertEqual(len(builds), 3)
             self.assertTrue(all("--build-only" in command for command in builds))

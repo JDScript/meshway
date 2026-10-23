@@ -435,6 +435,16 @@ impl SystemDnsOwner {
         Ok(())
     }
 
+    /// Other links' specific domains that coexist with the installed
+    /// plan's fallback `~.` ([`SystemDnsPlan::foreign_route`]), as the last
+    /// successful observation read them; none for the file backend.
+    pub fn local_domains(&self) -> &[LocalDnsDomain] {
+        match &self.backend {
+            Backend::File(_) => &[],
+            Backend::Resolved(resolved) => resolved.local_domains(),
+        }
+    }
+
     /// OS upstreams for this Node's own unmanaged names (file backend only;
     /// resolved routes those itself).
     pub fn system_resolvers(&self) -> Option<SystemResolverSnapshot> {

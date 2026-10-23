@@ -150,6 +150,28 @@ pub(crate) fn write(
         ),
     )?;
     line(output, term, "Exit", exit(term, status.exit.as_ref()))?;
+    if let Some(domains) = &status.local_dns_domains {
+        let shown: Vec<_> = domains
+            .iter()
+            .map(|local| match &local.link_name {
+                Some(name) => format!("{} ({name})", local.domain),
+                None if local.link_index == 0 => format!("{} (global)", local.domain),
+                None => format!("{} (link {})", local.domain, local.link_index),
+            })
+            .collect();
+        line(
+            output,
+            term,
+            "Local DNS",
+            term.paint(
+                Role::Dim,
+                format!(
+                    "{} · resolved by the local network, not the DNS fallback",
+                    shown.join(", ")
+                ),
+            ),
+        )?;
+    }
     if let Some(identity) = &status.identity {
         line(
             output,

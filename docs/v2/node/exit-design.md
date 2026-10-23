@@ -217,7 +217,7 @@ conntrack 精确删除由 Underlay 唯一的 conntrack 模块经 ctnetlink（`NF
 优先级沿用现有定义：MagicDNS 本地精确记录／发现 → 保留 `useWithExit=true` 的最长后缀 split／default（该解析器地址在出口区间内时是源分割的 direct 例外，例外不是 Access 授权）→ 普通查询按方案的 DNS 判定。判定唯一实现为 `meshway_policy::compile::dns_resolution`，Server 编译 netmap、保存时校验与节点中继重建 `DnsService` 共用：
 
 - 普通查询在解析前选定 resolver，不先向源端 DNS 泄漏问题再按答案选出口。只有名称规则需要先解析才能判定：IP 规则（含只含 IP 的规则集）与答案无关，不论经几个出口，普通查询都用本机系统 resolver（`noExit`）。
-- 有经出口的名称规则或出口 fallback 时，它们共同的那一个出口（含有序 via）解析全部普通查询（`viaExit`）；名称不先在本机解析，因此不会泄漏。
+- 有经出口的名称规则或出口 fallback 时，它们共同的那一个出口（含有序 via）解析全部普通查询（`viaExit`）；名称不先在本机解析，因此不会泄漏。例外：resolved 后端上源节点其他链路的具体域（如 DHCP 搜索域）与出口兜底 `~.` 共存，其下名称由本地网络解析并列在 Status `localDnsDomains`；它们覆盖显式域名规则或另设 `~.` 时为冲突，见[数据面 · 其他链路的域](/v2/node/dataplane#foreign-domains)。
 - 名称规则／出口 fallback 指向不同出口或 via、或出口集合有主备时，需要“哪个名称交哪个出口”的显式 DNS plan，首版未实现：判定为 `exitPlanRequired`，Server 保存配置时即以 `dns_exit_plan_required` 拒绝，不下发到节点再 fail closed。
 - 出口解析通道对 A 与 AAAA 相同：AAAA 原样返回，不按出口能力过滤、不伪造 NXDOMAIN；IPv6 目的按 [IPv6 出口](#ipv6) 的捕获与准入执行（出口不承载 IPv6 时为 sink 或快速拒绝）。只屏蔽 AAAA 不是防泄漏措施。
 
