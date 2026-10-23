@@ -142,6 +142,18 @@ const RECORDS: [&str; 3] = ["owner.json", "resolv-conf.json", "resolved.json"];
 /// one takes over; the same owner in the same namespace (by cookie, or by
 /// inode for a record written without one) is reused and rewritten with the
 /// cookie; anything else is a conflict.
+/// A private-storage failure keeps its judgement: a held lock (another
+/// owner still running, or one that is ending) and a failed operation prove
+/// nothing and are retried; a path, owner, type or mode that is not private
+/// storage is proven.
+fn storage_error(error: meshway_private_storage::Error) -> SystemDnsError {
+    use meshway_private_storage::Error;
+    match error {
+        Error::InUse | Error::Io => SystemDnsError::Storage,
+        _ => SystemDnsError::Conflict,
+    }
+}
+
 fn take_over(directory: &Directory, reservation: &Reservation) -> Result<(), SystemDnsError> {
     let mut existing: Option<Reservation> = storage::read(directory, "owner.json")?;
     if let Some(old) = &existing
@@ -181,7 +193,7 @@ impl SystemDnsOwner {
         tokio::task::spawn_blocking(move || {
             let namespace = Namespace::current()?;
             let Some(directory) = Directory::open_existing(&namespace.directory(), "dns.lock")
-                .map_err(|_| SystemDnsError::Conflict)?
+                .map_err(storage_error)?
             else {
                 return Ok(false);
             };
@@ -228,10 +240,9 @@ impl SystemDnsOwner {
             let namespace = Namespace::current()?;
             // No configurable lock root: two data dirs cannot split ownership.
             let _root = Directory::open(std::path::Path::new("/run/meshway"), "namespaces.lock")
-                .map_err(|_| SystemDnsError::Conflict)?;
+                .map_err(storage_error)?;
             let path = namespace.directory();
-            let directory =
-                Arc::new(Directory::open(&path, "dns.lock").map_err(|_| SystemDnsError::Conflict)?);
+            let directory = Arc::new(Directory::open(&path, "dns.lock").map_err(storage_error)?);
             let reservation = Reservation {
                 version: 1,
                 namespace,

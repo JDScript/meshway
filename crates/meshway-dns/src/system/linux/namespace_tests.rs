@@ -1,4 +1,4 @@
-use super::{Directory, Namespace, Reservation, SystemDnsError, storage, take_over};
+use super::{Directory, Namespace, Reservation, SystemDnsError, storage, storage_error, take_over};
 
 fn reservation(inode: u64, cookie: Option<u64>) -> Reservation {
     Reservation {
@@ -58,8 +58,8 @@ fn a_destroyed_namespaces_records_are_archived_and_taken_over() {
 }
 
 /// Only the same namespace is the same owner: the same cookie with
-/// another owner is a conflict, and so is a live process holding the
-/// namespace's lock (it never reaches the records).
+/// another owner is a conflict; a live process holding the namespace's
+/// lock keeps the records from being reached at all.
 #[test]
 fn the_same_namespace_with_another_owner_or_a_live_holder_conflicts() {
     let temp = tempfile::tempdir().unwrap();
@@ -127,4 +127,26 @@ fn namespaces_are_compared_by_cookie_when_both_carry_one() {
     let current = Namespace::current().unwrap();
     assert!(current.cookie.is_some(), "Linux 5.7 or later");
     assert!(current.same(&Namespace::current().unwrap()));
+}
+
+/// F8a F5: opening the namespace's private directory keeps the storage
+/// judgement: a held lock or a failed operation is retried (`Storage`), a
+/// directory that is not private storage is proven (`Conflict`).
+#[test]
+fn a_held_lock_is_retried_and_unsafe_storage_is_proven() {
+    use std::os::unix::fs::PermissionsExt;
+    let open = |path: &std::path::Path| Directory::open(path, "dns.lock").map_err(storage_error);
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("dns");
+    let held = open(&path).unwrap();
+    assert!(matches!(open(&path), Err(SystemDnsError::Storage)));
+    drop(held);
+    assert!(open(&path).is_ok());
+    let shared = temp.path().join("shared");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(matches!(open(&shared), Err(SystemDnsError::Conflict)));
+    let file = temp.path().join("file");
+    std::fs::write(&file, b"").unwrap();
+    assert!(matches!(open(&file), Err(SystemDnsError::Conflict)));
 }
