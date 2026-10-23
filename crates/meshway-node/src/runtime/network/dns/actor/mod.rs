@@ -28,6 +28,21 @@ fn recovery() -> Recovery {
     })
 }
 
+/// The first wait before preparing a failed owner again: the worker's
+/// reinstall of the same netmap (it doubles to 60 s).
+const PREPARE_RETRY: Duration = Duration::from_secs(5);
+
+/// Preparing the owner (owner #9 before it runs): its failures are judged
+/// as the running owner's are; the worker prepares again no earlier than
+/// its `recovery_at`, from 5 s doubling to 60 s, proven ones every 60 s.
+fn preparation() -> Recovery {
+    Recovery::new(meshway_model::recovery::Policy {
+        backoff: meshway_model::Backoff::new(PREPARE_RETRY, REREAD_PROVEN),
+        horizon: meshway_model::recovery::Horizon::Unbounded,
+        reread_blocked: Some(REREAD_PROVEN),
+    })
+}
+
 /// The DNS owner's state, as the packet plane and Status read it: one live
 /// fact. It carries no authority (query authority is the published scope).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -136,6 +151,14 @@ struct Faults {
 }
 
 impl Faults {
+    /// No failed preparation yet.
+    fn preparing() -> Self {
+        Self {
+            state: watch::channel(DnsFact::default()).0,
+            recovery: preparation(),
+            recovery_at: tokio::time::Instant::now(),
+        }
+    }
     /// The owner failed `failure` now: query authority is withdrawn and the
     /// owner re-proves itself, every second, or every 60 s once proven.
     fn fail(&mut self, failure: SystemDnsFailure) {
@@ -419,8 +442,9 @@ pub(in crate::runtime::network) struct Attachment {
     /// Association completions of served answers, for Control.
     reports: mpsc::Sender<meshway_protocol::DnsAssociationReport>,
     report_receiver: Option<mpsc::Receiver<meshway_protocol::DnsAssociationReport>>,
-    /// Why preparing the owner failed, while no actor runs.
-    prepare_failure: Option<SystemDnsFailure>,
+    /// Preparing the owner while no actor runs: why it failed, judged and
+    /// published as the running owner's faults are.
+    prepare: Faults,
     /// The fault epoch the plane acknowledged: a fault of a later epoch is
     /// a new failure for it, even when the owner re-proved it before the
     /// plane looked (see `worker::lifecycle`).
@@ -439,7 +463,7 @@ impl Attachment {
             requests: Some(requests),
             dispatcher: None,
             exit_dns: watch::channel(None).0,
-            prepare_failure: None,
+            prepare: Faults::preparing(),
             acknowledged: 0,
         }
     }
@@ -465,7 +489,13 @@ impl Attachment {
                 .detail
                 .as_ref()
                 .map(ToString::to_string),
-            None => self.prepare_failure.as_ref().map(ToString::to_string),
+            None => self
+                .prepare
+                .state
+                .borrow()
+                .detail
+                .as_ref()
+                .map(ToString::to_string),
         }
     }
     /// The exit resolver fact of the installed content; absent unless it
@@ -487,11 +517,26 @@ impl Attachment {
         host: &mut Box<dyn Host>,
     ) -> Result<Box<dyn crate::host::SystemDns>, SystemDnsError> {
         let prepared = host.prepare_dns().await;
-        if let Err(failure) = &prepared {
-            warn_failure("prepare", "DNS owner preparation failed", failure);
+        self.prepared(prepared)
+    }
+    /// One preparation's outcome: a failure is judged (`proven` or not)
+    /// and published as the running owner's are; success ends it.
+    fn prepared(
+        &mut self,
+        prepared: Result<Box<dyn crate::host::SystemDns>, SystemDnsFailure>,
+    ) -> Result<Box<dyn crate::host::SystemDns>, SystemDnsError> {
+        match prepared {
+            Ok(owner) => {
+                self.prepare = Faults::preparing();
+                Ok(owner)
+            }
+            Err(failure) => {
+                warn_failure("prepare", "DNS owner preparation failed", &failure);
+                let error = failure.error;
+                self.prepare.fail(failure);
+                Err(error)
+            }
         }
-        self.prepare_failure = prepared.as_ref().err().cloned();
-        prepared.map_err(|failure| failure.error)
     }
     /// Prepare the owner if needed and hold the netmap's negative capture.
     pub async fn plan(
@@ -535,9 +580,24 @@ impl Attachment {
             actor.suspend();
         }
     }
-    /// The running owner's state, live (Status reads its fault and detail).
+    /// The running owner's state, live (the plane acts on its faults).
     pub fn guard(&self) -> Option<watch::Receiver<DnsFact>> {
         self.actor.as_ref().map(|actor| actor.state.clone())
+    }
+    /// The owner's state as Status reads it, live: the running owner's, or
+    /// while none runs a failed preparation's (its check, detail and
+    /// health: `blocked` when proven, as at run time).
+    pub fn report_guard(&self) -> Option<watch::Receiver<DnsFact>> {
+        self.guard().or_else(|| {
+            self.prepare
+                .faulted()
+                .then(|| self.prepare.state.subscribe())
+        })
+    }
+    /// When the worker prepares the failed owner again (see
+    /// [`preparation`]); `None` while it runs or none failed.
+    pub fn prepare_at(&self) -> Option<tokio::time::Instant> {
+        (self.actor.is_none() && self.prepare.faulted()).then_some(self.prepare.recovery_at)
     }
     /// The Host proved its kernel ownership again in a new term: this owner's
     /// anchor and sockets belonged to the ended one. Stop it and keep the
@@ -559,6 +619,7 @@ impl Attachment {
         if let Some(actor) = self.actor.take() {
             actor.shutdown(false).await?;
         } else {
+            self.prepare = Faults::preparing();
             return host.restore_dns().await;
         }
         host.remove_dns_anchor()

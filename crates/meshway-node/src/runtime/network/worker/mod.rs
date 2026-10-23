@@ -223,8 +223,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             let at = tokio::time::Instant::now() + Duration::from_secs(1);
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
-        let retry_at = apply_retry_at(&retry)
-            .filter(|_| (plane.installed.is_none() || engine_degraded) && overlap.is_none());
+        // A failed DNS preparation waits for the DNS owner's own recovery
+        // too, which judged it (proven: read again every 60 s).
+        let retry_at = match (apply_retry_at(&retry), plane.dns.prepare_at()) {
+            (Some(apply), Some(prepare)) => Some(apply.max(prepare)),
+            (apply, _) => apply,
+        }
+        .filter(|_| (plane.installed.is_none() || engine_degraded) && overlap.is_none());
         let recovery_at = plane.host.recovery_at().map(tokio::time::Instant::from_std);
         healths.follow_dns(plane.dns.guard());
         let repair_at = plane.host.repair_at().map(tokio::time::Instant::from_std);
@@ -797,7 +802,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     .and_then(|desired| desired.capture_summary());
                 let plane = engine.components_mut();
                 let mut report = std::mem::replace(&mut plane.report, Report::stopped());
-                report.dns_guard = plane.dns.guard();
+                report.dns_guard = plane.dns.report_guard();
                 report.exit_dns = exit_dns.borrow_and_update().clone();
                 report.observed_at = chrono::Utc::now();
                 let installed = matches!(result, Ok(()) | Err(meshway_engine::Error::Degraded));

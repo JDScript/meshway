@@ -452,3 +452,38 @@ async fn a_successful_installation_supersedes_an_earlier_fault() {
     assert!(fact.health.is_healthy() && fact.detail.is_none());
     actor.shutdown(true).await.unwrap();
 }
+
+/// F8a F6: a failed preparation (no owner runs yet) is judged on its full
+/// failure as the running owner's are and published for Status: proven is
+/// `blocked`, prepared again in 60 s; anything else `retrying`.
+#[tokio::test]
+async fn a_failed_preparation_is_judged_and_published_as_a_running_owners_fault() {
+    let mut attachment = Attachment::new(Default::default());
+    assert!(attachment.report_guard().is_none() && attachment.prepare_at().is_none());
+    let proven = SystemDnsFailure::new(SystemDnsError::Conflict, "owner_record");
+    assert!(proven.proven());
+    let started = tokio::time::Instant::now();
+    assert!(attachment.prepared(Err(proven.clone())).is_err());
+    let guard = attachment.report_guard().expect("the failure is published");
+    assert!(
+        guard.borrow().health.is_blocked(),
+        "{:?}",
+        guard.borrow().health
+    );
+    assert_eq!(guard.borrow().fault, Some(SystemDnsError::Conflict));
+    assert_eq!(guard.borrow().detail.as_ref(), Some(&proven));
+    assert!(attachment.prepare_at().unwrap() >= started + REREAD_PROVEN);
+    assert!(
+        attachment.guard().is_none(),
+        "the plane acts on a running owner only"
+    );
+
+    let mut attachment = Attachment::new(Default::default());
+    let unknown = SystemDnsFailure::new(SystemDnsError::Storage, "reserve");
+    assert!(attachment.prepared(Err(unknown)).is_err());
+    let guard = attachment.report_guard().unwrap();
+    let health = guard.borrow().health.clone();
+    assert!(matches!(health, Health::Retrying(_)), "{health:?}");
+    let at = attachment.prepare_at().unwrap();
+    assert!(at >= started + PREPARE_RETRY && at < started + REREAD_PROVEN);
+}

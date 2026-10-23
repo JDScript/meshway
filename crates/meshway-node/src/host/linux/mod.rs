@@ -120,9 +120,16 @@ impl Attachment {
         Ok(())
     }
     async fn dns_owner(&mut self) -> std::result::Result<SystemDnsOwner, SystemDnsFailure> {
-        self.reserve()
-            .await
-            .map_err(|error| SystemDnsFailure::new(error, "reserve"))?;
+        // Another owner's reservation (or storage that is not private) is
+        // the proven `owner_record` check; anything else proves nothing.
+        self.reserve().await.map_err(|error| {
+            let check = if error == SystemDnsError::Conflict {
+                "owner_record"
+            } else {
+                "reserve"
+            };
+            SystemDnsFailure::new(error, check)
+        })?;
         let reserved = self.reservation.as_ref().expect("reserved above");
         let anchor = if matches!(self.dns.backend, SystemDnsBackend::Resolved) {
             Some(self.inner.dns_anchor(reserved).await.map_err(|error| {
