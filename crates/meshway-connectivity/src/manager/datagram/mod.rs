@@ -193,7 +193,7 @@ struct Owner {
     /// The same endpoint the Session owns, read only for its route MTU.
     path: Arc<dyn Datagram>,
     lifetime: Scope,
-    sender: Arc<AsyncMutex<Sender>>,
+    sender: Arc<SharedSender>,
     receiver: Option<Receiver>,
     listener: Option<ListenerFact>,
     outbound: Option<Outbound>,
@@ -318,7 +318,7 @@ impl Owner {
             local,
             path,
             lifetime,
-            sender: Arc::new(AsyncMutex::new(sender)),
+            sender: Arc::new(SharedSender::new(sender)),
             receiver: Some(receiver),
             listener: None,
             outbound: None,
@@ -469,12 +469,7 @@ impl Owner {
             outbound.scope.cancellation.cancel();
         }
         self.receiver.take(); // synchronously closes the formal session's raw I/O
-        self.sender
-            .lock()
-            .await
-            .shutdown()
-            .await
-            .map_err(|_| Error::Worker)?;
+        super::close_sender(&self.sender).await?;
         self.channels.clear();
         self.pending.clear();
         self.changed();
@@ -524,7 +519,7 @@ fn probe_route(path: &dyn Datagram, remote: SocketAddr) -> Option<u16> {
 }
 
 async fn send_control(
-    sender: &AsyncMutex<Sender>,
+    sender: &SharedSender,
     scope: &Scope,
     remote: SocketAddr,
     bytes: Vec<u8>,
@@ -542,7 +537,10 @@ async fn send_control(
     };
     let mut frames = VecDeque::from([Frame::new(bytes, Some(remote))]);
     let operation = async {
-        let admission = sender.lock().await.try_send(&mut frames, context);
+        let admission = sender
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .try_send(&mut frames, context);
         if admission.accepted != 1 {
             return Err(Error::Capacity);
         }

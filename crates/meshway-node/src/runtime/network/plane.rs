@@ -182,6 +182,10 @@ impl Plane {
     }
 
     async fn close(&mut self) -> Result<(), Problem> {
+        // The plane's kept outputs end first: dropping them cancels the
+        // transport work they admitted, so the channel owners the Manager's
+        // shutdown below joins have nothing of theirs left to drain (U4).
+        self.packets = Packets::default();
         let mut failed = false;
         if let Some(state) = &mut self.installed {
             if let Some(exit) = state.exit.take() {
@@ -200,7 +204,6 @@ impl Plane {
             state.secure = None;
         }
         self.installed = None;
-        self.packets = Packets::default();
         self.boot = None;
         if failed {
             Err(Problem::Underlay)

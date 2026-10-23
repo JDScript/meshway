@@ -85,7 +85,7 @@ impl SendLifetime for Lifetime {
 }
 
 pub(super) async fn send(
-    sender: &AsyncMutex<Sender>,
+    sender: &SharedSender,
     lifetime: Arc<dyn SendLifetime>,
     deadline: Instant,
     remote: SocketAddr,
@@ -104,7 +104,7 @@ pub(super) async fn send(
         _ = lifetime.clone().ended() => Err(Error::Authority),
         result = tokio::time::timeout_at(deadline, async {
             if !lifetime.is_current() { return Err(Error::Authority); }
-            let admitted = sender.lock().await.try_send(&mut frames, context);
+            let admitted = sender.lock().map_err(|_| Error::Worker)?.try_send(&mut frames, context);
             if admitted.accepted != 1 { return Err(Error::Capacity); }
             let completion = admitted.completion.ok_or(Error::Worker)?.wait().await.map_err(|_| Error::Worker)?;
             if completion.frames.len() != 1 || !matches!(completion.frames[0].outcome, SendOutcome::LocalComplete) { return Err(Error::Unavailable); }

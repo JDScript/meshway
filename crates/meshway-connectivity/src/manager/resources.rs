@@ -24,14 +24,31 @@ impl Owner {
         self.requested.cancel();
         self.stop.cancel();
     }
+    /// Joins the stopped owner within [`JOIN_GRACE`]; one still running then
+    /// is aborted (its sockets and sessions drop with it) and reported as a
+    /// failed join. A retirement or shutdown never waits on an owner forever.
     pub(super) async fn join(mut self) -> Result<(), Error> {
         self.stop();
-        if let Some(task) = self.task.take() {
-            task.await.map_err(|_| Error::Worker)?;
+        let Some(mut task) = self.task.take() else {
+            return Ok(());
+        };
+        match tokio::time::timeout(JOIN_GRACE, &mut task).await {
+            Ok(result) => result.map_err(|_| Error::Worker),
+            Err(_) => {
+                tracing::warn!(
+                    grace_ms = u64::try_from(JOIN_GRACE.as_millis()).unwrap_or(u64::MAX),
+                    "Connectivity owner did not stop within its grace; aborting it"
+                );
+                task.abort();
+                let _ = task.await;
+                Err(Error::Worker)
+            }
         }
-        Ok(())
     }
 }
+
+/// How long a stopped owner has to end on its own before it is aborted.
+pub(super) const JOIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 impl Drop for Owner {
     fn drop(&mut self) {
         self.stop();
@@ -136,5 +153,31 @@ impl Manager {
         // Every caller binds next; a retired owner's unadopted bind must not
         // still hold the port then.
         self.release_retired_binds()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// U4: a stopped owner that does not end (it waits on something its
+    /// joiner holds) is aborted after its grace; the join ends, reported as
+    /// failed, and does not wait forever. Red before: the join never ended.
+    #[tokio::test]
+    async fn an_owner_that_does_not_stop_is_aborted_after_its_grace() {
+        let stop = CancellationToken::new();
+        let owner = Owner {
+            requested: CancellationToken::new(),
+            stop: stop.clone(),
+            task: Some(tokio::spawn(std::future::pending())),
+            socket: None,
+        };
+        let started = tokio::time::Instant::now();
+        let joined = tokio::time::timeout(JOIN_GRACE * 2, owner.join())
+            .await
+            .expect("the join is bounded");
+        assert!(matches!(joined, Err(Error::Worker)));
+        assert!(started.elapsed() >= JOIN_GRACE);
+        assert!(stop.is_cancelled());
     }
 }

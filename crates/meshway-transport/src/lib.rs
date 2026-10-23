@@ -20,6 +20,7 @@ pub use frame::{Frame, Payload, PayloadStorage};
 pub use limits::{LimitError, Limits};
 pub use scope::{CancelReason, ChannelScope, ScopedFrame, SendContext, SendLifetime};
 pub use session::{
-    Admission, AdmissionStop, BatchCompletion, BatchOutcome, BudgetAvailable, CompletedFrame,
-    Completion, CompletionLost, ReceiveError, Receiver, SendFailure, SendOutcome, Sender, Session,
+    Admission, AdmissionStop, BatchCompletion, BatchOutcome, BudgetAvailable, Closing,
+    CompletedFrame, Completion, CompletionLost, ReceiveError, Receiver, SendFailure, SendOutcome,
+    Sender, Session,
 };

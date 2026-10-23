@@ -1,7 +1,7 @@
 use super::*;
 
 struct Group {
-    sender: Arc<AsyncMutex<Sender>>,
+    sender: Arc<SharedSender>,
     scope: Scope,
     batch_scope: meshway_transport::ChannelScope,
     fact: LinkFact,

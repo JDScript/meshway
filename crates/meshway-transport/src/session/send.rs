@@ -772,6 +772,41 @@ impl Sender {
         self.worker.take();
         result
     }
+
+    /// The synchronous part of `shutdown`: stops admission and cancels
+    /// blocked I/O now, and returns the owner's join without borrowing this
+    /// sender. A shared sender's lock is released before the join is
+    /// awaited. Dropping the returned join aborts the owner, as dropping
+    /// this sender does.
+    pub fn close(&mut self) -> Closing {
+        self.io.close();
+        self.queue.take();
+        Closing(self.worker.take())
+    }
+}
+
+/// The join of a closed sender's owner (see [`Sender::close`]).
+pub struct Closing(Option<JoinHandle<()>>);
+
+impl Future for Closing {
+    type Output = Result<(), tokio::task::JoinError>;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let Some(worker) = self.0.as_mut() else {
+            return Poll::Ready(Ok(()));
+        };
+        let result = std::task::ready!(std::pin::Pin::new(worker).poll(cx));
+        self.0 = None;
+        Poll::Ready(result)
+    }
+}
+
+impl Drop for Closing {
+    fn drop(&mut self) {
+        if let Some(worker) = &self.0 {
+            worker.abort();
+        }
+    }
 }
 
 impl Drop for Sender {

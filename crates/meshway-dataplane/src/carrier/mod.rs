@@ -87,10 +87,10 @@ pub async fn send_scoped_with_receipt(
     send_inner(SendOwner::Borrowed(sender), pending, peer, channel).await
 }
 
-/// Shared endpoint admission never holds its mutex while awaiting completion.
-/// One peer's unpolled caller must not retain another peer's physical sender.
+/// Shared endpoint admission holds its mutex only for the synchronous
+/// admission: one peer's unpolled caller retains no physical sender.
 pub async fn send_shared_with_receipt(
-    sender: &tokio::sync::Mutex<Sender>,
+    sender: &SharedSender,
     pending: PendingFrame,
     peer: SocketAddr,
     channel: Arc<dyn meshway_transport::SendLifetime>,
@@ -106,11 +106,11 @@ pub async fn send_shared_with_receipt(
 
 enum SendOwner<'a> {
     Borrowed(&'a mut Sender),
-    Shared(&'a tokio::sync::Mutex<Sender>),
+    Shared(&'a SharedSender),
 }
 
 impl SendOwner<'_> {
-    async fn admit(
+    fn admit(
         &mut self,
         frames: &mut VecDeque<Frame>,
         context: SendContext,
@@ -120,11 +120,13 @@ impl SendOwner<'_> {
                 let admitted_at = std::time::Instant::now();
                 (sender.try_send(frames, context), admitted_at)
             }
-            Self::Shared(sender) => {
-                let mut sender = sender.lock().await;
-                let admitted_at = std::time::Instant::now();
-                (sender.try_send(frames, context), admitted_at)
-            }
+            Self::Shared(sender) => match sender.lock() {
+                Ok(mut sender) => {
+                    let admitted_at = std::time::Instant::now();
+                    (sender.try_send(frames, context), admitted_at)
+                }
+                Err(_) => (closed(), std::time::Instant::now()),
+            },
         }
     }
     async fn capacity(&self, capacity: usize) -> Result<(), Error> {
@@ -140,6 +142,22 @@ impl SendOwner<'_> {
                 Ok(())
             }
         }
+    }
+}
+
+/// The one physical sender a channel's outputs share. Every holder's
+/// section is synchronous (an admission, a close's first step), so no
+/// future ever waits for or keeps the lock: an output kept unpolled across
+/// its owner's turns holds nothing, and a channel owner's close, which that
+/// very owner may join, always takes it (U4).
+pub type SharedSender = std::sync::Mutex<Sender>;
+
+/// A poisoned sender admits nothing.
+fn closed() -> meshway_transport::Admission {
+    meshway_transport::Admission {
+        accepted: 0,
+        stop: Some(AdmissionStop::Closed),
+        completion: None,
     }
 }
 
@@ -183,8 +201,10 @@ async fn send_owned(
     let capacity = bytes.capacity();
     let mut frames = VecDeque::from([Frame::owned(bytes, peer)]);
     let (completion, admitted_at) = loop {
-        let (admitted, admitted_at) =
-            guarded(&lifetime, sender.admit(&mut frames, context.clone())).await?;
+        let (admitted, admitted_at) = guarded(&lifetime, async {
+            sender.admit(&mut frames, context.clone())
+        })
+        .await?;
         if admitted.accepted == 1 {
             break (
                 admitted.completion.ok_or(Error::CompletionLost)?,

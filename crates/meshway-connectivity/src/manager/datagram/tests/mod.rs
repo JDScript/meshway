@@ -1,5 +1,6 @@
 mod receive;
 mod roam;
+mod shutdown;
 
 use super::super::tests::{netmap::support::Netmaps, support::carriers};
 use super::*;

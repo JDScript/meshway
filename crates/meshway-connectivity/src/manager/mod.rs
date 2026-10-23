@@ -4,19 +4,20 @@ use crate::{
     provider,
     scope::{self, Scope},
 };
+use meshway_dataplane::carrier::SharedSender;
 use meshway_dataplane::secure::PendingFrame;
 use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
 use meshway_model::TransportProtocol;
 use meshway_model::{NodeId, observations::LinkAcquisition};
-use meshway_transport::{Frame, Sender, Session};
+use meshway_transport::{Frame, Session};
 use std::{
     collections::BTreeMap,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
 use tokio::{
-    sync::{Mutex as AsyncMutex, Semaphore, mpsc},
+    sync::{Semaphore, mpsc},
     task::JoinSet,
 };
 use tokio_util::sync::CancellationToken;
@@ -248,7 +249,7 @@ pub enum Event {
 
 struct Link {
     fact: LinkFact,
-    sender: Arc<AsyncMutex<Sender>>,
+    sender: Arc<SharedSender>,
     scope: Scope,
     batch_scope: meshway_transport::ChannelScope,
     activity: Arc<interest::Activity>,
@@ -1379,7 +1380,7 @@ fn validate_scale(plan: &Plan, limits: Limits) -> Result<(), Error> {
 /// drivers. Authentication has completed before constructing this value.
 struct ReadyPeer {
     fact: LinkFact,
-    sender: Arc<AsyncMutex<Sender>>,
+    sender: Arc<SharedSender>,
     scope: Scope,
     /// The content whose keys authenticated this channel.
     plan: Arc<Plan>,
@@ -1551,7 +1552,7 @@ async fn connected(
         shared.limits.session,
     )
     .into_split();
-    let sender = Arc::new(AsyncMutex::new(sender));
+    let sender = Arc::new(SharedSender::new(sender));
     shared.register_link_socket(&fact)?;
     struct Registration(Arc<Shared>, [u8; 32]);
     impl Drop for Registration {
@@ -1572,18 +1573,13 @@ async fn connected(
         },
     )?;
     if !selected {
-        sender
-            .lock()
-            .await
-            .shutdown()
-            .await
-            .map_err(|_| Error::Worker)?;
+        close_sender(&sender).await?;
         return Ok(());
     }
     if let Err(error) = opening.release() {
         scope.cancellation.cancel();
         retire(&shared, &fact)?;
-        let _ = sender.lock().await.shutdown().await;
+        let _ = close_sender(&sender).await;
         return Err(error);
     }
     *was_selected = true;
@@ -1616,16 +1612,21 @@ async fn connected(
     scope.cancellation.cancel();
     drop(receiver);
     retire(&shared, &fact)?;
-    sender
-        .lock()
-        .await
-        .shutdown()
-        .await
-        .map_err(|_| Error::Worker)?;
+    close_sender(&sender).await?;
     let _ = shared
         .event(&shared.scope(None, false), Event::Changed)
         .await;
     result
+}
+
+/// Stop a shared sender and join its owner. The lock is held for the
+/// synchronous close only, never across the join (see [`SharedSender`]).
+async fn close_sender(sender: &SharedSender) -> Result<(), Error> {
+    let closing = sender
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .close();
+    closing.await.map_err(|_| Error::Worker)
 }
 
 /// What survives a Manager restart for new own identity or resources.

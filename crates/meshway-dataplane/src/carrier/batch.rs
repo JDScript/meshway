@@ -13,7 +13,7 @@ pub async fn send_batch(
 }
 
 pub async fn send_batch_shared(
-    sender: &tokio::sync::Mutex<Sender>,
+    sender: &SharedSender,
     frames: Vec<PendingFrame>,
     peer: SocketAddr,
     scope: ChannelScope,
@@ -103,11 +103,13 @@ async fn send(
                         let at = std::time::Instant::now();
                         (sender.submit_batch(&mut frames, context.clone()), at)
                     }
-                    SendOwner::Shared(sender) => {
-                        let mut sender = guarded(&lifetime, sender.lock()).await?;
-                        let at = std::time::Instant::now();
-                        (sender.submit_batch(&mut frames, context.clone()), at)
-                    }
+                    SendOwner::Shared(sender) => match sender.lock() {
+                        Ok(mut sender) => {
+                            let at = std::time::Instant::now();
+                            (sender.submit_batch(&mut frames, context.clone()), at)
+                        }
+                        Err(_) => (super::closed(), std::time::Instant::now()),
+                    },
                 };
                 if admitted.accepted != 0 {
                     if first_admission.is_none()

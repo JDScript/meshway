@@ -11,8 +11,8 @@ use crate::{Limits, raw};
 
 pub use receive::{ReceiveError, Receiver};
 pub use send::{
-    Admission, AdmissionStop, BatchCompletion, BatchOutcome, BudgetAvailable, CompletedFrame,
-    Completion, CompletionLost, SendFailure, SendOutcome, Sender,
+    Admission, AdmissionStop, BatchCompletion, BatchOutcome, BudgetAvailable, Closing,
+    CompletedFrame, Completion, CompletionLost, SendFailure, SendOutcome, Sender,
 };
 
 /// A full-duplex carrier and its single send owner. Constructors must run in a

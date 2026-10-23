@@ -418,6 +418,16 @@ impl View {
             && network_error.as_ref().map(|e| e.problem) == Some(Problem::Dns))
         .then(|| dns_retry_at(&network))
         .flatten();
+        // The packet plane's own reinstall of a withdrawn netmap (owner #13),
+        // e.g. once its failed DNS owner re-proved itself.
+        let apply_retry = match (&network_error, &network.apply) {
+            (Some(_), meshway_model::recovery::Health::Retrying(retrying))
+                if report.problem.is_none() =>
+            {
+                Some(meshway_model::recovery::wall(retrying.retry_at).into())
+            }
+            _ => None,
+        };
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
@@ -481,9 +491,9 @@ impl View {
             network_error: network_error.filter(|_| report.problem.is_some()),
             // Control's next attempt; while the packet plane's DNS owner
             // is the cause, its next re-proof (growing for a repeated
-            // probe failure).
+            // probe failure); otherwise the packet plane's next reinstall.
             retry_at: if current && desired.up {
-                report.retry_at.or(dns_retry)
+                report.retry_at.or(dns_retry).or(apply_retry)
             } else {
                 None
             },
@@ -1106,6 +1116,36 @@ mod tests {
         assert!((31_000..=32_000).contains(&ahead), "{ahead}");
         fact.send_modify(|fact| fact.health = meshway_model::recovery::Health::Healthy);
         assert_eq!(view.status().retry_at, None);
+    }
+
+    /// U4 (red before: `retryAt` null for 13 min while B stayed withdrawn):
+    /// the DNS owner re-proved itself but the plane is still withdrawn for
+    /// its fault; `retryAt` is the packet plane's own reinstall.
+    #[test]
+    fn retry_at_is_the_planes_reinstall_once_the_dns_owner_re_proved_itself() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Failed;
+        network.problem = Some(Problem::Dns);
+        network.problem_detail = Some("DNS observe_deadline check failed".into());
+        network.completion = Some(Err(meshway_protocol::execution::ApplyFailure::Dns));
+        let (fact, guard) = watch::channel(super::super::network::DnsFact::default());
+        fact.send_modify(|fact| {
+            fact.fault = Some(meshway_dns::SystemDnsError::Backend);
+            fact.health = meshway_model::recovery::Health::Healthy;
+        });
+        network.dns_guard = Some(guard);
+        let (view, reported, network, _desired) = view(network);
+        reported.send_modify(|report| report.phase = Phase::ControlReady);
+        assert_eq!(view.status().retry_at, None, "nothing scheduled yet");
+        network.send_modify(|report| report.apply = retrying("Dns"));
+        let status = view.status();
+        assert_eq!(
+            (status.phase, status.last_error),
+            (Phase::Retrying, Some(Problem::Dns))
+        );
+        let retry_at = status.retry_at.expect("the plane's next reinstall");
+        let ahead = (retry_at - Utc::now()).num_milliseconds();
+        assert!((4_000..=5_000).contains(&ahead), "{ahead}");
     }
 
     /// D5: the DNS owner's coexisting local domains are Status's, live, and
