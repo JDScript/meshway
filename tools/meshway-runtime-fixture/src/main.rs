@@ -266,6 +266,10 @@ enum Command {
         ipv4: std::net::Ipv4Addr,
         #[arg(long)]
         ipv6: std::net::Ipv6Addr,
+        /// How long the supervisor may take to signal the stop: its whole
+        /// kernel test sequence (the stop follows the last test).
+        #[arg(long)]
+        stop_within_seconds: u64,
     },
 }
 
@@ -346,7 +350,11 @@ async fn main() -> std::process::ExitCode {
             }
             actor::relay::run(&cli, name).await
         }
-        Command::UnderlayPeer { ipv4, ipv6 } => peer::run(&cli, ipv4, ipv6).await,
+        Command::UnderlayPeer {
+            ipv4,
+            ipv6,
+            stop_within_seconds,
+        } => peer::run(&cli, ipv4, ipv6, Duration::from_secs(stop_within_seconds)).await,
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

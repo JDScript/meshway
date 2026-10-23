@@ -6,12 +6,20 @@ use crate::{
 use std::net::{Ipv4Addr, Ipv6Addr};
 use tokio::net::TcpListener;
 
-pub async fn run(cli: &Cli, ipv4: Ipv4Addr, ipv6: Ipv6Addr) -> Result<()> {
+/// Serves until the supervisor's stop signal, at most `stop_within`: the
+/// supervisor signals it after its last kernel test, so the bound covers
+/// that whole sequence; it only ends a peer whose supervisor never signals.
+pub async fn run(
+    cli: &Cli,
+    ipv4: Ipv4Addr,
+    ipv6: Ipv6Addr,
+    stop_within: std::time::Duration,
+) -> Result<()> {
     let v4 = TcpListener::bind((ipv4, 42427)).await?;
     let v6 = TcpListener::bind((ipv6, 42427)).await?;
     let signals = Signals::new(&cli.signals);
     signals.write("underlay-peer-ready", &Signal::Ready).await?;
-    let stopped = signals.wait_for("underlay-peer-stop", std::time::Duration::from_secs(120));
+    let stopped = signals.wait_for("underlay-peer-stop", stop_within);
     tokio::pin!(stopped);
     let mut connections = 0_u16;
     loop {

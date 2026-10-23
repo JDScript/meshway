@@ -68,6 +68,12 @@ KERNEL_TESTS = {
     "underlay-roam-repair-read": "linux::kernel::tests::roaming::a_repair_whose_read_fails_stays_owed_and_completes",
     "underlay-roam-overlap-term": "linux::kernel::tests::roaming::a_new_ownership_term_publishes_the_pool_overlap_it_reads",
 }
+# The underlay peer serves the whole kernel test sequence: the stop signal
+# follows the last test. Its bound only ends a peer whose supervisor never
+# signals; it scales with the sequence (19 tests took 62 s alone and 155 s in
+# the first wave of an 8-row matrix, beyond the earlier fixed 120 s). The
+# fixture's own 1,800 s deadline still caps it.
+UNDERLAY_PEER_SECONDS_PER_TEST = 60
 # Kernel tests that create their own dummy interfaces: no underlay address,
 # so the fixed fixture address plan (routers, relays, replacement) is unchanged.
 NETWORKLESS_TESTS = ("underlay-roam-classify", "underlay-roam-repair", "underlay-roam-overlap", "underlay-roam-family",
@@ -738,7 +744,8 @@ def main():
                     "routers": {role: {"private": router["private"], "wan": router["wan"]} for role, router in routers.items()}})
         manifest["underlay"] = addresses
         manifest["underlay6"] = addresses6
-        create("underlay-peer", ["underlay-peer", "--ipv4", addresses["underlay-peer"], "--ipv6", addresses6["underlay-peer"]],
+        create("underlay-peer", ["underlay-peer", "--ipv4", addresses["underlay-peer"], "--ipv6", addresses6["underlay-peer"],
+                                 "--stop-within-seconds", str(UNDERLAY_PEER_SECONDS_PER_TEST * len(KERNEL_TESTS))],
                address=addresses["underlay-peer"], address6=addresses6["underlay-peer"])
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             peer = executor.submit(execute, "underlay-peer") if not args.only else None
