@@ -336,10 +336,14 @@ async fn run(arguments: Arguments) -> Result<(), Failure> {
             stop_streams();
             let _ = signal_result.send(signal_failed);
         };
-        axum::serve(listener, http::router(&app))
-            .with_graceful_shutdown(shutdown)
-            .await
-            .map_err(|_| "Server serve failed.".to_owned())?;
+        // The direct peer address limits failed logins (`accounts::throttle`).
+        axum::serve(
+            listener,
+            http::router(&app).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await
+        .map_err(|_| "Server serve failed.".to_owned())?;
         if received_signal.await.unwrap_or(true) {
             return Err("Server signal handling failed.".to_owned());
         }

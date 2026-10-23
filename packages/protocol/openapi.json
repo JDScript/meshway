@@ -8369,7 +8369,7 @@
           "auth"
         ],
         "summary": "Authenticate an account and issue a user session.",
-        "description": "The opaque bearer token is delivered in this response; invalid credentials return a uniform 401 error.",
+        "description": "The opaque bearer token is delivered in this response; invalid credentials return a uniform 401 error.\nAfter five failed logins in a row for one email from one client address, further attempts are `busy` for 1 second, doubling up to 5 minutes, until a login succeeds or 15 minutes pass without a failure.",
         "operationId": "login",
         "requestBody": {
           "content": {

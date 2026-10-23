@@ -214,3 +214,86 @@ async fn ttl_limits_are_validated_before_filesystem_startup() {
         assert!(!path.exists());
     }
 }
+
+/// Failed logins of one account from one client address back off: after
+/// five, the next attempt is busy (503, Retry-After) without checking the
+/// password, even the right one; another account from the same address and
+/// the same account after the delay are not refused. The address is the TCP
+/// peer of the real listener.
+#[tokio::test]
+async fn failed_logins_of_one_account_and_address_back_off() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = App::open(Settings::new(
+        directory.path().canonicalize().unwrap().join("data"),
+    ))
+    .await
+    .unwrap();
+    let password = "correct horse battery staple";
+    for email in ["victim@example.test", "other@example.test"] {
+        app.accounts()
+            .register(email.into(), secret(password), request())
+            .await
+            .unwrap();
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/api/v1/auth/login",
+        listener.local_addr().unwrap()
+    );
+    let router = meshway_server::http::router(&app);
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let client = reqwest::Client::builder()
+        .tls_backend_preconfigured(meshway_transport_stream::tls::platform_client_config().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
+    let login = |email: &'static str, password: &'static str| {
+        let client = client.clone();
+        let url = url.clone();
+        async move {
+            client
+                .post(url)
+                .json(&serde_json::json!({ "email": email, "password": password }))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    for _ in 0..5 {
+        let response = login("victim@example.test", "a wrong password!").await;
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    }
+    for attempt in ["a wrong password!", password] {
+        let response = login("victim@example.test", attempt).await;
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["retry-after"], "1");
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["problem"]["code"], "busy");
+    }
+    assert_eq!(
+        login("other@example.test", password).await.status(),
+        reqwest::StatusCode::OK
+    );
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(
+        login("victim@example.test", password).await.status(),
+        reqwest::StatusCode::OK
+    );
+    // The success cleared the backoff: one failure is a plain 401 again.
+    assert_eq!(
+        login("victim@example.test", "a wrong password!")
+            .await
+            .status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    server.abort();
+    let _ = server.await;
+    app.shutdown().await.unwrap();
+}
