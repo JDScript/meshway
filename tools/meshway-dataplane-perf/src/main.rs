@@ -37,13 +37,32 @@ struct Arguments {
     seconds: u64,
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=86400))]
     flow_idle_seconds: u64,
+    /// Tokio scheduler of this node. `multi-thread` is the daemon's: Manager
+    /// owners run beside the packet owner instead of between its turns.
+    #[arg(long, value_enum, default_value_t = Runtime::CurrentThread)]
+    runtime: Runtime,
     #[command(flatten)]
     logging: meshway_logging::Options,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Error> {
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Runtime {
+    CurrentThread,
+    MultiThread,
+}
+
+fn main() -> Result<(), Error> {
     let args = Arguments::parse();
+    match args.runtime {
+        Runtime::CurrentThread => tokio::runtime::Builder::new_current_thread(),
+        Runtime::MultiThread => tokio::runtime::Builder::new_multi_thread(),
+    }
+    .enable_all()
+    .build()?
+    .block_on(run(args))
+}
+
+async fn run(args: Arguments) -> Result<(), Error> {
     args.logging.init()?;
     let options = NodeOptions {
         stage: args.stage,

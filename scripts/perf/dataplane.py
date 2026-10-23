@@ -560,7 +560,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                     "--bind", addresses[role] + ":41000", "--peer", addresses[other] + ":41000",
                     "--mtu", str(args.mtu), "--batch", str(batch), "--seconds", str(2 * (args.seconds + args.omit) + 60),
                     "--flow-idle-seconds", str(args.flow_idle_seconds),
-                    "--log-format", "json"] + (["--workers", str(args.workers), "--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
+                    "--log-format", "json", "--runtime", args.runtime] + (["--workers", str(args.workers), "--fixture", "/tmp/fixture.json", "--material", "/tmp/private/seeds.json"] if secure else ["--io", record["io"]]), cwd=ROOT, stdout=stdout, stderr=stderr))
             deadline = time.monotonic() + 15
             while not all((origin / f"{role}.stdout").read_text().strip() for role in roles):
                 if any(node.poll() is not None for node in nodes) or time.monotonic() > deadline:
@@ -790,7 +790,7 @@ def measure(args, output_root):
                         rustc=command("rustc", "-Vv"), zig=command("zig", "version"),
                         cargoZigbuild=command("cargo-zigbuild", "--version"),
                         cpusPerContainer=args.cpus, memoryPerContainer=args.memory,
-                         runtime="Meshway: Tokio current_thread owner plus bounded crypto pool; WireGuard: kernel workers/softirq", cryptoWorkers=args.workers, mtu=args.mtu, udpPayloadBytes=args.payload,
+                         runtime=f"Meshway: Tokio {args.runtime} owner plus bounded crypto pool; WireGuard: kernel workers/softirq", cryptoWorkers=args.workers, mtu=args.mtu, udpPayloadBytes=args.payload,
                         profileDetail=1,
                         udpRate=args.udp_rate, warmupOmittedSeconds=args.omit,
                         cpuScope="all sample cgroups over full client wall interval including warmup (relay: 3, others: 2)",
@@ -849,6 +849,7 @@ def parse_args(argv=None):
     parser.add_argument("--memory-detail", action="store_true", help="diagnostic: stream cgroup memory.stat and every process status/smaps_rollup at 250ms intervals")
     parser.add_argument("--allocator", choices=["system", "mimalloc"], default="system", help="tool-only global allocator comparison")
     parser.add_argument("--flow-idle-seconds", type=int, default=60, help="explicit fixture flow idle bound; raise for long iperf control connections")
+    parser.add_argument("--runtime", choices=["current-thread", "multi-thread"], default="current-thread", help="node Tokio scheduler; multi-thread is the daemon's (Manager owners beside the packet owner)")
     parser.add_argument("--workers", type=int, help="crypto workers per node (default 0 = inline); explicit 1-256 for handoff comparisons")
     parser.add_argument("--quick", action="store_true", help="diagnostic preset: manager-relay, batch 32, profile 0, one repeat, 4s; explicit single-mode/config overrides allowed")
     parser.add_argument("--udp-buffer", type=int, default=0, help="L3 explicit socket buffer request in bytes (0 = provider default)")

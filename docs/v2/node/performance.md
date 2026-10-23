@@ -122,6 +122,7 @@ mise run perf:dataplane -- --modes secure-relay manager-relay \
 | --- | --- |
 | `--traffic tcp udp` | 默认 TCP 后 UDP；可单选；TCP 单流，`--tcp-streams 1–128` 可并行，UDP 始终一条流 |
 | `--workers 0–256` | 默认 0 inline，与正式 Pool 一致；[策略依据](#有界输出队列实测) |
+| `--runtime current-thread\|multi-thread` | 节点的 Tokio 调度器，默认 `current-thread`（Manager owner 只在包处理 owner 让出时运行）；`multi-thread` 与 `meshwayd` 相同，Manager 的 UDP 接收 owner 与包处理 owner 并行，接收端过载时事件队列才会真正积满 |
 | `--cpus`／`--memory` | 每容器配额，默认 2／512m；不等于独占核 |
 | `--mtu`／`--payload` | harness MTU 1280–1386（外层 veth 1500 − IPv4/UDP 28 − v6 Data 开销 86），默认 1280（与 CI 一致）；UDP payload 默认 1200，IPv4/UDP 另占 28 B；TCP 应用块不等于实际分段 |
 | `--batch` | 每方向一轮立即就绪上限 1–1024，实际 secure／manager 至多 32；不等待凑批 |
