@@ -301,7 +301,7 @@ sudo sh install.sh --component server --version v0.1.1
 | --- | --- |
 | 1. 预检 | 下载并校验产物；新程序 `--version` 报告 `schema: <N> (migrates from <M>)`；从 `controller.sqlite` 的文件头读 `application_id` 与 `user_version`，不是 Server 库、比新程序新或早于 M 即失败；需要迁移时检查磁盘余量。**任何一项失败都在停止服务之前退出，什么也不改** |
 | 2. 停止 | `systemctl stop meshway-server`（服务正在启动或按 `Restart=` 重启中时同样先停止，否则它持有 data-dir 锁），并等到 unit 不再处于 active／activating／deactivating／reloading（至多 60 秒）；停止失败或未停稳即退出，什么也不改。随后读取 data-dir 的 [`served` 记录](#server-rollback)作为回退基准，读不出即重新启动原服务并退出 |
-| 3. 迁移 | `runuser -u meshway-server -- meshway-server.new migrate --data-dir /var/lib/meshway-server`：在发布前证明旧库与主密钥匹配，备份旧库、迁移、完整检查、启动重编译，不监听端口（库已是当前版本时只检查与重编译）。失败时按其 `Migration state:` 行（从 data-dir 读回）并核对库文件头处理，不凭退出状态推断：`unpublished`——删除新程序、重新启动原服务；`published <备份>`——持 data-dir 锁把备份放回、迁移后的库改名为 `controller.sqlite.failed-<秒>`，再启动原服务；其他（含两者不一致）——两个版本都不启动，交给运维 |
+| 3. 迁移 | `runuser -u meshway-server -- meshway-server.new migrate --data-dir /var/lib/meshway-server`：在发布前证明旧库与主密钥匹配，备份旧库、迁移、完整检查、启动重编译，不监听端口（库已是当前版本时只检查与重编译）。失败时按其 `Migration state:` 行（从 data-dir 读回）并核对库文件头处理，不凭退出状态推断：`unpublished`——删除新程序、重新启动原服务；`published <备份>`——持 data-dir 锁把备份放回、迁移后的库改名为 `controller.sqlite.failed-<秒>`，再启动原服务；其他（含两者不一致）——两个版本都不启动，交给运维。成功时脚本只打印迁移结果行，不显示 `Migration state:` |
 | 4. 替换 | 原程序保留为 `meshway-server.previous`（离线命令同样），新程序原子替换，安装新 unit |
 | 5. 启动与健康 | `systemctl start` 等到 `READY=1`，再请求 `GET /api/v1/auth/options`（最多 10 次，每次间隔 1 秒） |
 | 6. 回退 | 第 5 步失败时按[回退边界](#server-rollback)自动回退 |
@@ -372,7 +372,7 @@ sudo cp -a /var/backups/meshway-server/<stamp> /var/lib/meshway-server
 sudo systemctl start meshway-server
 ```
 
-`cp -a` 保留 0700／0600 与属主。恢复的备份与回退受同一 serial 边界约束：备份之后与 Server 同步过的节点持有更高的 serial，拒绝恢复后的 netmap，直到租约到期 fail closed，需要重新接入；备份点之后的接入、配置与签名钥轮换也不在其中。因此备份用于主机丢失后的灾难恢复与离线快照，不用于日常回滚。
+`cp -a` 保留 0700／0600 与属主。恢复的备份与回退受同一 serial 边界约束：备份之后与 Server 同步过的节点持有更高的 serial，拒绝恢复后的 netmap，直到租约到期 fail closed，需要重新接入；备份点之后的接入、配置与签名钥轮换也不在其中。因此备份用于主机丢失后的灾难恢复与离线快照，不用于日常回滚。备份不含回退判据用的 `served` 记录：恢复出的 Server 在第一次应答 Node sync 前重新写入它，之前的状态按“未签发”处理。
 
 ### 卸载 {#server-uninstall}
 
