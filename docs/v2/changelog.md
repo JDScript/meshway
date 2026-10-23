@@ -18,7 +18,7 @@
 - 发布门槛 `scripts/ci/server-upgrade.py`：基线用上一版的 Node，先保留身份升级 Node（`compilerVersion` 变化或未知时期望 `Contract` 窗口并核对身份不变、仍为 up），再升 Server 并要求 Node 自行恢复；所有 Server／Node 在同一 `finally` 停止，只有必需检查全部完成且通过才 `passed`；没有 Server 资产的上一版用其 tag 自己锁定的工具链构建，报告记录 commit、工具链与各程序 SHA-256。
 - 文档：[安装 · 信任模型](/v2/install#trust-model)（HTTPS＋Release 发布权限＋同仓 `SHA256SUMS`，无独立签名，独立签名在 v0.1.0 之后）；[DNS 出口的信任域](/v2/permissions#dns-exit-trust)（指定的 DNS 出口可为所服务的源提交名称规则匹配的公网地址作为可信关联，Server 不独立验证 DNS 真实性）。
 
-验证：`meshway-vm` 上的独立实例（`127.0.0.1:18420`，不接现场节点）演练回退依据、停止失败与错配主密钥，新旧脚本／程序对照（见[安装 · 验收记录](/v2/install#server-validation-f8b)）；回归测试在去掉对应修复后全部失败；证据 `.meshway/validation/f8b/`。
+验证：`meshway-vm` 上的独立实例（`127.0.0.1:18420`，不接现场节点）演练回退依据、停止失败与错配主密钥，新旧脚本／程序对照（见[安装 · 验收记录](/v2/install#server-validation-f8b)）；回归测试在去掉对应修复后全部失败；`server-upgrade.py` 在 Planck 上 alpha.21 → 本分支（同一 `compilerVersion`）与 alpha.18 → 本分支（`meshway-netmap-3` → `-4` 的 `Contract` 窗口、schema 8 → 9）全部检查通过，上一版均以其 tag 锁定的 rustc 1.98.0 构建；`release.yml` 分支 `workflow_dispatch` 演练 run `39887777573`：门槛通过、各 job 的 `GITHUB_TOKEN` 为 `Contents: read`、`publish` 跳过、资产与 `SHA256SUMS` 作为 artifact；Planck 25 行矩阵 `20261023T023648Z-54785b2f`（`456b69cb`，并行 8）全部通过；证据 `.meshway/validation/f8b/`。
 
 R4 `roam/relay` 空窗新流无回复（`r4/handoff-flows`）：产品代码、wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
 
