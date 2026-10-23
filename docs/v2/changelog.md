@@ -14,7 +14,7 @@ F8a 里程碑 D 审阅的 Node 侧修复（REV-D2，`f8a/node-review-fixes`）�
 - F6（不变量：同一失败只有一份分类；owner：DNS Attachment）：尚无 owner 运行时的准备失败按完整 `SystemDnsFailure` 以 owner 的 `Recovery` 判定并发布同一份 `Health`（Status 读它），另一 owner 的预约为已证实的 `owner_record`；worker 不早于该恢复时刻重新准备（已证实每 60 秒）。此前启动显示 `retrying`、运行期 `blocked`。
 - F7（不变量：Status 只投影 owner 的状态；owner：控制中继、Manager listener 重试 owner）：中继发布自己的 `Blocked` 记录；Manager 以 watch 发布重试中的 listener 及其 `Health`，Status 读现值；`since` 为首次证实时刻，`recoverable` 由 owner 的 health 给出。此前每次读取以 now 重建、读采样快照。
 - F8（不变量：读取失败不当作完整结果；owner：`rtnl::read`）：dump 只有收到成功的 `NLMSG_DONE` 才完整；若干对象后或立即结束为一次失败的读取（未知）。
-- F9（不变量：生命周期不被服务管理器阻塞；owner：`meshway-service`）：sd_notify 以非阻塞方式尽力发送，队列满时丢失该条并记录，不再阻塞 `meshwayd`／Server 的 READY／STOPPING。
+- F9（不变量：生命周期不被服务管理器阻塞；owner：`meshway-service`）：sd_notify 的发送至多等待 1 秒（`SO_SNDTIMEO`，`meshway_service::WRITE_TIMEOUT`）：短暂背压时 `READY=1` 照常送达，服务管理器不读时放弃该条并记 debug，不再无限阻塞 `meshwayd`／Server 的 READY／STOPPING。
 - F10（owner：listener 重试 owner）：重试失败只在 `Health` 转换时 WARN，其余为 debug。
 
 每条附带在旧代码上失败的测试（见[已修复问题索引](/v2/node/validation#f8a-review)），旧代码失败记录在 `.meshway/validation/f8a/`。
