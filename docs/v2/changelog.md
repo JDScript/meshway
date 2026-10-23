@@ -19,7 +19,7 @@ F8a 里程碑 D 审阅的 Node 侧修复（REV-D2，`f8a/node-review-fixes`）�
 
 每条附带在旧代码上失败的测试（见[已修复问题索引](/v2/node/validation#f8a-review)），旧代码失败记录在 `.meshway/validation/f8a/`。
 
-VERIFY_PLACEHOLDER
+验证（`0a5137df`）：单行 `fault/throttle` ×2（`20261023T023621Z-b02172fd`、`20261023T023751Z-4397c1b6`）、`exit6/off`（`20261023T023621Z-b02172fd`）、`exit/off`（`20261023T025758Z-91da9296`，含组件 `cleanup6`；同一 run 中的首次 `exit/off` 因与并行矩阵的 Docker 地址池重叠在建网时失败，非产品失败）通过；Planck 25 行矩阵 `20261023T031546Z-d34c2dbb`（并行 8）全部通过；Planck `mise run --jobs 1 check` 通过；证据 `.meshway/validation/f8a/`。
 
 R4 `roam/relay` 空窗新流无回复（`r4/handoff-flows`）：产品代码、wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
 
