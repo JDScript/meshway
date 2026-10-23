@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-23T23:30:58.707023+00:00",
+  "updatedAt": "2026-10-23T23:36:52.126480+00:00",
   "runs": [
     {
       "id": 40038692756,
@@ -412,9 +412,9 @@
       "commit": "7d1bb2593a5927b56c36c133abfe28419f31a49b",
       "message": "docs: alpha.23 release verification (26/26 matrix 20261023T225001Z-701f8fde)",
       "createdAt": "2026-10-23T23:16:07Z",
-      "updatedAt": "2026-10-23T23:16:22Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-23T23:33:07Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/40038691809",
       "jobs": [
         {
@@ -453,12 +453,12 @@
         {
           "id": 120704417304,
           "name": "server-upgrade",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-23T23:16:22Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-23T23:31:10Z",
+          "completedAt": "2026-10-23T23:33:06Z",
+          "seconds": 116.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/40038691809/job/120704417304"
         }
       ],
