@@ -40,7 +40,7 @@ U2 宿主停顿后 Underlay journal 永久拒绝（`u2/journal-recovery`）：wi
 - 修复（不变量：变更结果未读回的 journal 步骤由其 owner 按内核现状补完，与进程启动同一函数，只有不可恢复的 journal 才是持久阻断；owner：Host 内核归属——`Kernel::interrupted` 结束本期，`Host::recover`→`Kernel::open_term`→`Journal::settle_pending` 补完）：`suspend` 删除路由时 netlink 失败（停顿的宿主），base journal 留下 `pending: DeleteRoute`，本期不结束，此后每次安装、`down` 与 DNS 锚点操作都以 `private underlay journal is invalid or requires recovery` 失败（lab 每 10 秒、数小时），同一 namespace 内重启也拒绝。现在留下待定步骤的失败即以 `suspend_unavailable`／`down_unavailable`／`anchor_unavailable`／`install_unavailable` 结束本期（被丢弃的操作在下一次 `ready` 时为 `install_cancelled`），重证或启动按内核现状补完步骤（旧一期的 TUN 不接管、其路由随之消失；规则按精确字节读回；锚点删除按设备是否仍在）后以同一 netmap 重装。设备已在而无指纹可认领的半建 DNS 锚点、指向 journal 未记录对象的步骤仍 fail closed。
 - 修复（H4 规则；owner：网络 plane）：capture 安装或撤回失败时 `lastErrorDetail` 不再为 null：归属已结束时为其原因，否则为 Host 的错误；撤回失败另记 WARN `Node capture suspension failed`。
 
-验证与证据见[已修复问题索引 · U2](/v2/node/validation#u2-journal)与 `.meshway/validation/u2/`。
+验证（`b456023f`）：新的隔离组件测试在旧代码上失败（suspend 失败后归属不结束、install 返回 `Journal`），新代码重证 108–155 ms 后同一内容重装、重启同样补完；常驻 lab 部署修复版后 `--cpus 0.02` 90 秒 ×3、`0.01` 150 秒（`repair_unavailable` 结束与重证）与"重证后紧接限额"各一次，全部自动恢复、无 `blocked`；Planck 25 行矩阵 `20261023T115413Z-bdf958fa`（并行 8，与另一工作包的矩阵同时运行，load 17）23 行通过，`netmap/offline`／`netmap/revoke` 在 underlay-peer 的 120 秒期限内未完成（`container_restart_*` 53–86 秒，空闲时 5–6 秒），单独重跑 `20261023T122339Z-305bd13e` 通过；`20261023T123014Z-c8ee33aa` 21 行通过，4 行在建网时 Docker 地址池耗尽（非产品），单独重跑 `20261023T125845Z-a5507051` 通过；`exit/off` 组件 `pending` 两轮均通过；Planck `mise run --jobs 1 check` 除 `check:deny` 外全部通过（1,386 个测试），`check:deny` 因当日新公布的 RUSTSEC-2026-0385（`ctutils` 0.4.3，与本修复无关）失败。证据 `.meshway/validation/u2/`。
 
 ## v0.1.0-alpha.22
 
