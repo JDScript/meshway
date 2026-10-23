@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-23T00:12:27.069050+00:00",
+  "updatedAt": "2026-10-23T02:22:09.961526+00:00",
   "runs": [
+    {
+      "id": 39887778275,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "f8b/server-review-fixes",
+      "commit": "5a7c7a8ee8df4c606394c3780f8fcb632e70a326",
+      "message": "install.sh: uninstall changes nothing (not even the unit's enablement) until the Server is proven stopped",
+      "createdAt": "2026-10-23T02:06:43Z",
+      "updatedAt": "2026-10-23T02:19:21Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39887778275",
+      "jobs": [
+        {
+          "id": 120199893499,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-23T02:06:46Z",
+          "completedAt": "2026-10-23T02:06:58Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39887778275/job/120199893499"
+        },
+        {
+          "id": 120199966787,
+          "name": "server-upgrade",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-23T02:07:01Z",
+          "completedAt": "2026-10-23T02:10:15Z",
+          "seconds": 194.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39887778275/job/120199966787"
+        },
+        {
+          "id": 120199966854,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-23T02:10:18Z",
+          "completedAt": "2026-10-23T02:12:56Z",
+          "seconds": 158.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39887778275/job/120199966854"
+        },
+        {
+          "id": 120199966866,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-23T02:12:59Z",
+          "completedAt": "2026-10-23T02:19:21Z",
+          "seconds": 382.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39887778275/job/120199966866"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 39874212777,
       "attempt": 1,
