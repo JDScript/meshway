@@ -313,20 +313,34 @@ pub(super) async fn run(
                     control = Some(Arc::new(Mutex::new(value)));
                 }
                 other => {
-                    let cause = match other {
-                        Ok(Err(error)) => failure(error, true).cause(),
-                        _ => Problem::Worker.into(),
+                    // A held lock or a failed read is retried with the
+                    // backoff and opens the same cached netmap once it
+                    // clears; a proven inconsistency waits for a new intent.
+                    let (cause, retry) = match other {
+                        Ok(Err(error)) => {
+                            let failed = failure(error, true);
+                            (failed.cause(), failed.retry)
+                        }
+                        _ => (Problem::Worker.into(), false),
                     };
+                    let delay = retry.then(|| Duration::from_secs(backoff));
                     publish(
                         &reported,
                         &plan,
                         None,
-                        Phase::Blocked,
+                        if retry {
+                            Phase::Retrying
+                        } else {
+                            Phase::Blocked
+                        },
                         None,
                         Some(cause),
-                        None,
+                        delay,
                     );
-                    wait_change(&mut desired, &plan, None).await;
+                    if retry {
+                        backoff = (backoff * 2).min(BACKOFF_MAX);
+                    }
+                    wait_change(&mut desired, &plan, delay).await;
                     plan = desired.borrow_and_update().clone();
                     reset = plan.retry_enrollment;
                     reenroll = plan.reenroll;
@@ -406,7 +420,7 @@ pub(super) async fn run(
                         Some(&driver),
                         Phase::Blocked,
                         None,
-                        Some(failure(error, true).cause()),
+                        Some(failure::at("abandon_leave", error, true).cause()),
                         None,
                     );
                     drop(driver);

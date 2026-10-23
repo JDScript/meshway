@@ -4,6 +4,12 @@
 
 ## 未发布
 
+N8 Control 打开失败的重证（`n8/control-open-retry`）：wire 6、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+
+- Node（不变量：只有已证实的不一致才持久阻断；owner：Node runtime 的 Control 循环，判定 `meshway_control::Error::open_recovery`）：`Control::open` 遇到身份目录锁被另一进程持有或读取失败（I/O、`EACCES`）时为 `retrying`／`storage`（`lastErrorDetail` 为原因，`retryAt` 为下一次），按 1–15 秒有界退避重开，打开后载入同一缓存 netmap，无需再次 `up`。此前一律 `blocked`，等期望状态改变。记录、origin、路径、属主、类型或权限不符仍为 `blocked`；运行期写入结果不确定仍是唯一例外。见[恢复语义](/v2/node/runtime#recovery)。
+
+旧代码失败记录在 `.meshway/validation/n8/`。
+
 N7 节点迁到另一个 Server（`n7/server-move`）：wire 6、IPC 13（字段不变，`lastErrorDetail` 多一类文本）、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
 
 - Node（不变量：Server 已确认注销的身份不再绑定任何 Server；owner：Control 身份存储 `meshway_control::storage`）：没有身份也没有待完成工作的 `control.json` 以任一 Server origin 打开，未接入、可 `up`。此前 `logout` 后改 `MESHWAY_SERVER_URL` 即 `blocked · storage`（PROD-1 it7、planck），只能手工改名身份目录。仍持有身份、注销待确认（`leaving`）、接入或换钥待完成的记录遇到另一个 origin 仍为已证实不一致：`blocked`／`storage`，记录原样保留。见[身份记录与 Server origin](/v2/node/runtime#identity-origin)、[迁到另一个 Server](/v2/install#move-server)。

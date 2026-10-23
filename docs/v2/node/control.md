@@ -8,7 +8,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 | 方法 | 行为 |
 | --- | --- |
-| `Control::open` | 同步打开私有目录并独占锁；读取并验证已有身份／缓存，绑定 Server origin |
+| `Control::open` | 同步打开私有目录并独占锁；读取并验证已有身份／缓存，绑定 Server origin。失败由 `Error::open_recovery` 判定：锁被占用、读取失败可重开，其余为已证实（[恢复语义](/v2/node/runtime#recovery)） |
 | `begin_enrollment` | 在发送请求前持久保存独立的 Ed25519／X25519 密钥及完整签名 intent；重试复用同一请求 |
 | `poll_enrollment` | 用持钥证明查询；批准后的兑换码在兑换前私有持久化 |
 | `redeem_enrollment` | 验证返回网络与公钥绑定，保存身份；丢失响应后可恢复同一兑换结果 |

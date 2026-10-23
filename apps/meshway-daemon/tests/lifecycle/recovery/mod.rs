@@ -260,6 +260,79 @@ async fn wrong_controller_response_is_fatal_not_transient_delivery() {
     fixture.close().await;
 }
 
+/// N8: a Control open that proves nothing (the lock held by another
+/// process, then a failed read) is `retrying · storage` on its backoff timer,
+/// never `blocked`, and opens the same cached netmap once it clears, with
+/// the Server unreachable and without another `up`.
+#[tokio::test]
+async fn control_open_retries_a_held_lock_and_a_failed_read_then_restores_the_cached_netmap() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let mut fixture = Fixture::start().await;
+    let held = support::wait_matching(&fixture.daemon.socket, |s| s.netmap.is_some())
+        .await
+        .netmap
+        .unwrap()
+        .netmap;
+    let node = fixture._temp.path().canonicalize().unwrap().join("node");
+    fixture.daemon.exit("-TERM").await;
+    fixture.proxy.mode(proxy::GATEWAY);
+    let lock =
+        meshway_private_storage::Directory::open(&node.join("identity"), "node-control.lock")
+            .expect("this test process holds the identity lock");
+    fixture.daemon = Process::start(&node, &fixture.proxy.origin);
+    let storage = |part: &'static str| {
+        move |s: &Status| {
+            s.phase == Phase::Retrying
+                && s.last_error == Some(Problem::Storage)
+                && s.last_error_detail
+                    .as_deref()
+                    .is_some_and(|d| d.contains(part))
+        }
+    };
+    // `wait_matching` fails on any `blocked` Status on the way.
+    let first = support::wait_matching(&fixture.daemon.socket, storage("in use")).await;
+    assert!(first.desired_up && first.netmap.is_none());
+    let again = support::wait_matching(&fixture.daemon.socket, |s| {
+        storage("in use")(s) && s.retry_at > first.retry_at
+    })
+    .await;
+    assert_eq!(again.revision, first.revision);
+    // Root bypasses directory permissions: the failed read needs a user.
+    let unreadable = std::fs::metadata(&node).unwrap().uid() != 0;
+    if unreadable {
+        // Search only: IPC and the daemon's own directory keep working, a
+        // fresh open of the identity directory's ancestor fails with EACCES.
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o300)).unwrap();
+    }
+    drop(lock);
+    if unreadable {
+        support::wait_matching(
+            &fixture.daemon.socket,
+            storage("filesystem operation failed"),
+        )
+        .await;
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let restored = support::wait_matching(&fixture.daemon.socket, |s| {
+        s.last_error != Some(Problem::Storage) && s.netmap.is_some()
+    })
+    .await;
+    assert_eq!(restored.netmap.unwrap().netmap, held, "the cached netmap");
+    assert_eq!(restored.revision, first.revision, "no operator `up`");
+    assert!(restored.desired_up);
+    fixture.proxy.mode(proxy::HEALTHY);
+    // The session's own backoff (up to 15 s) paces the first healthy sync.
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while support::status(&fixture.daemon.socket)
+        .await
+        .map_or(true, |s| s.phase != Phase::ControlReady)
+    {
+        assert!(Instant::now() < deadline, "never ready after the open");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    fixture.close().await;
+}
+
 #[tokio::test]
 #[ignore = "real Server session expiry (five minutes); explicit outage conformance"]
 async fn outage_past_real_session_and_instance_expiry_recovers_and_reports_without_up() {

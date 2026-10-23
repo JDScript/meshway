@@ -21,13 +21,26 @@ pub(super) struct Failure {
     pub retry_after: Option<Duration>,
 }
 
+/// A failed `Control::open`, judged by [`Error::open_recovery`]: a held
+/// lock or a failed read is retried, a proven inconsistency blocks.
 pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
-    at("open_control", error, authenticating)
+    let recovery = error.open_recovery();
+    judged("open_control", error, recovery, authenticating)
 }
 
 /// Control's [`Recovery`](meshway_control::Recovery) decides retry and
 /// withdrawal; this adds only the reported problem and pacing.
 pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) -> Failure {
+    let recovery = error.recovery();
+    judged(operation, error, recovery, authenticating)
+}
+
+fn judged(
+    operation: &'static str,
+    error: Error,
+    recovery: meshway_control::Recovery,
+    authenticating: bool,
+) -> Failure {
     use meshway_control::Recovery;
     let (kind, status, code) = details(&error);
     let server_request_id = match &error {
@@ -39,7 +52,6 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         _ => None,
     };
     let retry_after = matches!(&error, Error::ReceiptRejected(_)).then_some(Duration::from_secs(1));
-    let recovery = error.recovery();
     let (retry, reset, withdraw) = match recovery {
         Recovery::Retry { reset } => (true, reset, false),
         Recovery::Withdrawn { identity } => (!identity, true, true),
@@ -233,6 +245,35 @@ mod tests {
         ] {
             let failed = failure(error, true);
             assert!(!failed.retry && !failed.withdraw, "halts control only");
+        }
+    }
+
+    /// N8: opening never writes the identity record, so a held lock or a
+    /// failed read is unknown and retried; a write elsewhere keeps the
+    /// RC-D Q6 exception, and a proven inconsistency blocks.
+    #[test]
+    fn an_open_retries_a_held_lock_or_failed_read_and_blocks_a_proven_one() {
+        use meshway_private_storage::Error as Storage;
+        for storage in [(|| Storage::InUse) as fn() -> Storage, || Storage::Io] {
+            let opened = failure(Error::Storage(storage()), true);
+            assert!(opened.retry && !opened.withdraw);
+            assert_eq!(opened.problem, Problem::Storage);
+            assert!(opened.detail.is_some(), "Status names the cause");
+            let written = at("persist", Error::Storage(storage()), true);
+            assert!(!written.retry && written.withdraw, "RC-D Q6 exception");
+        }
+        for error in [
+            Error::Storage(Storage::UnsafeStorage),
+            Error::Storage(Storage::InvalidPath),
+            Error::Record("control.json is not a valid identity record"),
+            Error::Origin {
+                held: meshway_control::Held::Identity,
+                origin: "https://a.example".into(),
+                configured: "https://b.example".into(),
+            },
+        ] {
+            let opened = failure(error, true);
+            assert!(!opened.retry && opened.detail.is_some());
         }
     }
 

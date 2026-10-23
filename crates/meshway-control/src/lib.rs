@@ -563,6 +563,21 @@ impl Error {
         }
     }
 
+    /// How a failed [`Control::open`] is judged. Opening only creates the
+    /// directory, takes its lock, reads and writes the lock's marker: it
+    /// never writes the identity record, so no outcome of it is unknown. A
+    /// lock held elsewhere (that owner may be exiting) or a failed read
+    /// proves nothing and is retried; a record, origin, path, owner, type or
+    /// mode that differs is proven.
+    pub fn open_recovery(&self) -> Recovery {
+        match self {
+            Self::Storage(
+                meshway_private_storage::Error::InUse | meshway_private_storage::Error::Io,
+            ) => Recovery::Retry { reset: false },
+            _ => self.recovery(),
+        }
+    }
+
     pub fn recovery(&self) -> Recovery {
         match self {
             Self::Storage(_) | Self::Record(_) | Self::Origin { .. } | Self::ReloadRequired => {

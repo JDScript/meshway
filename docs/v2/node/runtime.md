@@ -438,6 +438,7 @@ Node 上每个可能 fail closed 的 owner 用同一个状态机 `meshway_model:
 | 网络 worker 的安装 | 5 秒起翻倍、上限 60 秒，无总期限 | 校验、数据面拒绝：`blocked`，下一份 offer 到达即解除 |
 | Mesh 池重叠 | 只有暂态：地址离开即重装 | — |
 | Host 启动（Control） | 1–15 秒有界退避 | 每 60 秒重查；无效参数为拒绝，等待期望状态改变 |
+| Control 打开（`Control::open`，判定 `meshway_control::Error::open_recovery`） | 身份目录锁被另一进程持有、读取失败（I/O、`EACCES`）：`retrying`／`storage`（`lastErrorDetail` 为原因），与 Host 启动同一 1–15 秒有界退避重开，无总期限；打开后载入同一缓存 netmap，无需再次 `up`。打开不写身份记录，因此不属于下方写入例外 | 记录、origin（[身份记录与 Server origin](#identity-origin)）、路径、属主、类型或权限不符：`blocked`／`storage`，期望状态改变或重启才重读 |
 
 同一失败只在 `Health` 转换（`healthy`→`retrying`、→`blocked`、→`healthy`）时记一次日志。
 
