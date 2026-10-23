@@ -383,7 +383,13 @@ impl View {
                 })
             })
             .unwrap_or_default();
-        let sockets = sockets(content.and(network.facts.as_ref()), network.netmap);
+        let sockets = sockets(
+            content.and(network.facts.as_ref()),
+            &content
+                .map(|_| network.unavailable_listeners())
+                .unwrap_or_default(),
+            network.netmap,
+        );
         // An owner's proven inconsistency, or the cause of a withdrawn
         // plane (kernel ownership first, else the earliest), from the
         // owners' own live facts; otherwise the worker's last outcome. The
@@ -493,9 +499,20 @@ impl View {
                 .map(|state| match state {
                     // Blocked shows as retrying: the owner reads it again
                     // every 60 s; `reason` names the foreign cause.
-                    meshway_underlay::ControlRelayState::Retrying(retry)
-                    | meshway_underlay::ControlRelayState::Blocked(retry) => {
+                    meshway_underlay::ControlRelayState::Retrying(retry) => {
                         meshway_protocol::ipc::ControlRelay::retrying(retry_pending(retry))
+                    }
+                    meshway_underlay::ControlRelayState::Blocked(blocked) => {
+                        meshway_protocol::ipc::ControlRelay::retrying(retry_pending(
+                            meshway_underlay::RetryPending {
+                                retry_at: blocked.reread_at.map_or_else(
+                                    std::time::SystemTime::now,
+                                    meshway_model::recovery::wall,
+                                ),
+                                reason: blocked.reason,
+                                attempts: blocked.attempts,
+                            },
+                        ))
                     }
                     meshway_underlay::ControlRelayState::AtCapacity { limit, refused } => {
                         meshway_protocol::ipc::ControlRelay {
@@ -524,7 +541,7 @@ struct Owned {
 
 /// Every owner that is not healthy now (see [`Owned`]).
 fn owners(network: &super::network::Report) -> Vec<Owned> {
-    use meshway_model::recovery::{Blocked, Health};
+    use meshway_model::recovery::Health;
     let mut owners = Vec::new();
     let reason = |health: &Health| match health {
         Health::Healthy => None,
@@ -561,43 +578,30 @@ fn owners(network: &super::network::Report) -> Vec<Owned> {
             });
         }
     }
-    if let Some(Some(meshway_underlay::ControlRelayState::Blocked(pending))) = network
+    // The owners' own records: when each failure began, not this read.
+    if let Some(Some(meshway_underlay::ControlRelayState::Blocked(blocked))) = network
         .control_relay
         .as_ref()
         .map(|relay| relay.borrow().clone())
     {
         owners.push(Owned {
             problem: Problem::Underlay,
-            health: Health::Blocked(Blocked {
-                check: "relay_permission",
-                reason: pending.reason.clone(),
-                since: std::time::Instant::now(),
-                attempts: pending.attempts,
-                reread_at: None,
-            }),
-            detail: Some(format!("controlRelay: {}", pending.reason)),
+            detail: Some(format!("controlRelay: {}", blocked.reason)),
+            health: Health::Blocked(blocked),
             kernel: false,
         });
     }
-    if let Some(facts) = &network.facts {
-        for listener in facts
-            .unavailable
-            .iter()
-            .filter(|listener| !listener.recoverable)
-        {
-            owners.push(Owned {
-                problem: Problem::Transport,
-                health: Health::Blocked(Blocked {
-                    check: "listener_permission",
-                    reason: listener.detail.clone(),
-                    since: std::time::Instant::now(),
-                    attempts: listener.attempts,
-                    reread_at: Some(listener.retry_at),
-                }),
-                detail: Some(listener.detail.clone()),
-                kernel: false,
-            });
-        }
+    for listener in network
+        .unavailable_listeners()
+        .into_iter()
+        .filter(|listener| listener.health.is_blocked())
+    {
+        owners.push(Owned {
+            problem: Problem::Transport,
+            health: listener.health,
+            detail: Some(listener.detail),
+            kernel: false,
+        });
     }
     if !network.apply.is_healthy() {
         owners.push(Owned {
@@ -635,6 +639,7 @@ fn timestamp(ms: u64) -> Option<DateTime<Utc>> {
 /// then its listeners whose bind is being retried.
 fn sockets(
     facts: Option<&meshway_connectivity::Snapshot>,
+    unavailable: &[meshway_connectivity::ListenerUnavailable],
     netmap: Option<meshway_model::state::NetmapRef>,
 ) -> Vec<meshway_protocol::ipc::SocketStatus> {
     let Some(facts) = facts else {
@@ -665,8 +670,7 @@ fn sockets(
             .bound_address
             .map(|address| (address.get().is_ipv6(), address.to_string()))
     });
-    let mut unavailable: Vec<_> = facts
-        .unavailable
+    let mut unavailable: Vec<_> = unavailable
         .iter()
         .map(|listener| meshway_protocol::ipc::SocketStatus {
             resource: meshway_model::state::ResourceRef::Listener {
@@ -702,12 +706,12 @@ mod tests {
                 address: Some("0.0.0.0:35000".parse().unwrap()),
                 detail: "listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)"
                     .into(),
-                recoverable: true,
                 attempts: 2,
                 retry_at: std::time::Instant::now(),
+                health: retrying("held"),
             }],
         };
-        let rows = sockets(Some(&facts), None);
+        let rows = sockets(Some(&facts), &facts.unavailable, None);
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0].resource,
@@ -723,7 +727,7 @@ mod tests {
                 .unwrap()
                 .contains("Address in use")
         );
-        assert!(sockets(None, None).is_empty());
+        assert!(sockets(None, &[], None).is_empty());
     }
 
     /// F6a B10: a Control problem is `lastError`, yet the packet plane's
@@ -1033,14 +1037,12 @@ mod tests {
             report.apply = meshway_model::recovery::Health::Healthy;
         });
         assert_ne!(view.status().phase, Phase::Blocked);
-        relay.send_replace(Some(meshway_underlay::ControlRelayState::Blocked(
-            meshway_underlay::RetryPending {
-                reason: "cannot listen: a socket on the relay path this owner cannot prove its own"
-                    .into(),
-                attempts: 1,
-                retry_at: std::time::SystemTime::now(),
-            },
-        )));
+        let meshway_model::recovery::Health::Blocked(foreign) =
+            blocked("cannot listen: a socket on the relay path this owner cannot prove its own")
+        else {
+            unreachable!()
+        };
+        relay.send_replace(Some(meshway_underlay::ControlRelayState::Blocked(foreign)));
         let status = view.status();
         assert_eq!(status.phase, Phase::Blocked);
         assert_eq!(
@@ -1056,5 +1058,50 @@ mod tests {
             "{:?}",
             status.last_error_detail
         );
+    }
+
+    /// F8a F7: Status projects the relay's and listeners' own health: when
+    /// each failure began (the earliest is the cause, read after read) and
+    /// a listener's retry owner live, without a new worker report.
+    #[test]
+    fn owners_keep_when_their_failure_began_and_listeners_are_read_live() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Ready;
+        let (relay, relays) = watch::channel(None);
+        network.control_relay = Some(relays);
+        let (listeners, live) = watch::channel(Vec::new());
+        network.listeners = Some(live);
+        let (view, reported, _network, _desired) = view(network);
+        reported.send_modify(|report| report.phase = Phase::ControlReady);
+        let listener = |health| meshway_connectivity::ListenerUnavailable {
+            key: "lab-tcp".into(),
+            address: Some("0.0.0.0:443".parse().unwrap()),
+            detail: "listener lab-tcp cannot bind 0.0.0.0:443: Permission denied".into(),
+            attempts: 1,
+            retry_at: std::time::Instant::now(),
+            health,
+        };
+        // The listener's permission failure began first, the relay's later.
+        listeners.send_replace(vec![listener(blocked("permission"))]);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let meshway_model::recovery::Health::Blocked(foreign) = blocked("foreign socket") else {
+            unreachable!()
+        };
+        relay.send_replace(Some(meshway_underlay::ControlRelayState::Blocked(foreign)));
+        for _ in 0..2 {
+            let status = view.status();
+            assert_eq!(
+                (status.phase, status.last_error),
+                (Phase::Blocked, Some(Problem::Transport)),
+                "the earliest failure is the cause"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // The retry owner bound it: read live.
+        listeners.send_replace(Vec::new());
+        let status = view.status();
+        assert_eq!(status.last_error, Some(Problem::Underlay));
+        relay.send_replace(None);
+        assert_ne!(view.status().phase, Phase::Blocked);
     }
 }

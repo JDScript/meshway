@@ -112,6 +112,9 @@ pub(super) struct Report {
     /// read at each Status, also while an apply waits for that change. Set
     /// once at Host start; every later report keeps it.
     pub kernel_changes: Option<watch::Receiver<Option<meshway_underlay::KernelChangePending>>>,
+    /// The installed Manager's listeners whose bind is being retried,
+    /// live: each retry owner's attempts and health (read at each Status).
+    pub listeners: Option<watch::Receiver<Vec<meshway_connectivity::ListenerUnavailable>>>,
     /// The Control relay's listener state, live; set once at Host start
     /// like `kernel_changes`.
     pub control_relay: Option<watch::Receiver<Option<meshway_underlay::ControlRelayState>>>,
@@ -174,6 +177,7 @@ impl Report {
             exit_capability: None,
             exit_cleanups: None,
             kernel_changes: None,
+            listeners: None,
             control_relay: None,
             ownership: None,
             exit_flows: None,
@@ -210,6 +214,22 @@ impl Report {
             return None;
         }
         Some(guard.borrow().detail.as_ref().map(ToString::to_string))
+    }
+    /// The listeners whose bind is being retried: the live retry owners'
+    /// while their Manager runs, otherwise the last sample's.
+    pub fn unavailable_listeners(&self) -> Vec<meshway_connectivity::ListenerUnavailable> {
+        match self
+            .listeners
+            .as_ref()
+            .filter(|live| live.has_changed().is_ok())
+        {
+            Some(live) => live.borrow().clone(),
+            None => self
+                .facts
+                .as_ref()
+                .map(|facts| facts.unavailable.clone())
+                .unwrap_or_default(),
+        }
     }
     /// The netmap whose every required resource is installed.
     pub fn applied(&self) -> Option<NetmapRef> {

@@ -48,7 +48,7 @@ async fn a_departed_listener_address(stream: bool) {
     assert_eq!(unavailable.len(), 1);
     assert_eq!(unavailable[0].key, key);
     assert_eq!(unavailable[0].address, Some(held));
-    assert!(unavailable[0].recoverable);
+    assert!(unavailable[0].recoverable());
     assert!(b.snapshot().unwrap().listeners.is_empty());
     // Away for 3.5 s: retried at 1 s and 3 s, the next attempt 4 s later.
     let deadline = tokio::time::Instant::now() + Duration::from_millis(3500);

@@ -22,13 +22,55 @@ pub struct ListenerUnavailable {
     /// The failure of the last attempt, e.g. `listener lab-udp cannot bind
     /// 0.0.0.0:35000: Address in use (os error 98)`.
     pub detail: String,
-    /// Whether the cause can end on its own (a held port, an address not yet
-    /// assigned); otherwise it needs an operator. Both are retried.
-    pub recoverable: bool,
     /// Failed attempts so far.
     pub attempts: u32,
     /// When the next attempt runs.
     pub retry_at: std::time::Instant,
+    /// Its retry owner's recovery: retrying a cause that can end on its own
+    /// (a held port, an address not yet assigned), blocked on one that
+    /// needs an operator (read again every 60 s), each since it began.
+    pub health: meshway_model::recovery::Health,
+}
+
+impl ListenerUnavailable {
+    /// Whether the cause can end on its own; both are retried.
+    pub fn recoverable(&self) -> bool {
+        !self.health.is_blocked()
+    }
+}
+
+/// The listeners whose bind is being retried, by key, and their live
+/// publication ([`Manager::unavailable_listener_changes`]).
+#[derive(Default)]
+pub(super) struct Unbounds {
+    entries: Mutex<BTreeMap<String, Unbound>>,
+    published: tokio::sync::watch::Sender<Vec<ListenerUnavailable>>,
+}
+
+impl Unbounds {
+    /// Change the entries; the publication follows in the same call.
+    pub fn with<R>(
+        &self,
+        change: impl FnOnce(&mut BTreeMap<String, Unbound>) -> R,
+    ) -> Result<R, Error> {
+        let mut entries = self.entries.lock().map_err(|_| Error::Worker)?;
+        let result = change(&mut entries);
+        let reports: Vec<_> = entries.values().map(|entry| entry.report.clone()).collect();
+        self.published.send_if_modified(|current| {
+            let changed = *current != reports;
+            if changed {
+                *current = reports;
+            }
+            changed
+        });
+        Ok(result)
+    }
+    pub fn current(&self) -> Vec<ListenerUnavailable> {
+        self.published.borrow().clone()
+    }
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Vec<ListenerUnavailable>> {
+        self.published.subscribe()
+    }
 }
 
 pub(super) struct Unbound {
@@ -186,7 +228,6 @@ impl Shared {
         attempts: u32,
         recovery: &mut meshway_model::recovery::Recovery,
     ) -> Duration {
-        let recoverable = recoverable(error);
         let wait = delay(recovery, error);
         let report = ListenerUnavailable {
             key: key.to_owned(),
@@ -195,21 +236,21 @@ impl Shared {
                 _ => None,
             },
             detail: error.to_string(),
-            recoverable,
             attempts,
             retry_at: std::time::Instant::now() + wait,
+            health: recovery.health().clone(),
         };
         tracing::warn!(
             key,
             error = %report.detail,
-            recoverable,
+            recoverable = report.recoverable(),
             attempts,
             retry_ms = wait.as_millis() as u64,
             "Listener unavailable; retrying its bind"
         );
-        if let Ok(mut unbound) = self.unbound.lock() {
+        let _ = self.unbound.with(|unbound| {
             unbound.insert(key.to_owned(), Unbound { token, report });
-        }
+        });
         wait
     }
 }
@@ -290,12 +331,15 @@ impl Manager {
     /// is first made what a bind now would be ([`Self::current`]).
     pub(super) async fn adopt(&mut self, rebound: Rebound) -> Result<bool, Error> {
         let Rebound { token, key, bound } = rebound;
-        {
-            let mut unbound = self.shared.unbound.lock().map_err(|_| Error::Worker)?;
-            if unbound.get(&key).is_none_or(|entry| entry.token != token) {
-                return Ok(false);
+        let owned = self.shared.unbound.with(|unbound| {
+            let owned = unbound.get(&key).is_some_and(|entry| entry.token == token);
+            if owned {
+                unbound.remove(&key);
             }
-            unbound.remove(&key);
+            owned
+        })?;
+        if !owned {
+            return Ok(false);
         }
         // Its retry owner only waits for this; dropping it is the request.
         self.owners.remove(&resources::Key::Listener(key.clone()));
@@ -365,13 +409,11 @@ impl Manager {
     pub(super) fn release_retired_binds(&mut self) -> Result<(), Error> {
         let mut owned = Vec::new();
         while let Ok(rebound) = self.rebound.try_recv() {
-            let current = self
-                .shared
-                .unbound
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .get(&rebound.key)
-                .is_some_and(|entry| entry.token == rebound.token);
+            let current = self.shared.unbound.with(|unbound| {
+                unbound
+                    .get(&rebound.key)
+                    .is_some_and(|entry| entry.token == rebound.token)
+            })?;
             if current {
                 owned.push(rebound);
             }
@@ -388,11 +430,15 @@ impl Manager {
 
     /// Configured listeners of the current content that are not bound.
     pub fn unavailable_listeners(&self) -> Vec<ListenerUnavailable> {
-        self.shared
-            .unbound
-            .lock()
-            .map(|unbound| unbound.values().map(|entry| entry.report.clone()).collect())
-            .unwrap_or_default()
+        self.shared.unbound.current()
+    }
+
+    /// [`Self::unavailable_listeners`], live: each retry owner's attempt
+    /// and health as it records them. Ends with this Manager.
+    pub fn unavailable_listener_changes(
+        &self,
+    ) -> tokio::sync::watch::Receiver<Vec<ListenerUnavailable>> {
+        self.shared.unbound.subscribe()
     }
 }
 

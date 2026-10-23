@@ -62,6 +62,7 @@ pub(super) fn finish_withdrawal(engine: &mut Engine<Plane>, reports: &Publisher,
     report.content = None;
     report.expires_at = None;
     report.facts = None;
+    report.listeners = None;
     report.exit_flows = None;
     if let Some(capability) = &mut report.exit_capability {
         capability.set_installed(false);
@@ -88,6 +89,7 @@ pub(super) fn withdrawing(
     report.completion = Some(Err(failure(problem)));
     report.observed_at = chrono::Utc::now();
     report.facts = None;
+    report.listeners = None;
     report.exit_flows = None;
     if let Some(capability) = &mut report.exit_capability {
         capability.set_installed(false);

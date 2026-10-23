@@ -325,7 +325,7 @@ struct Shared {
     /// This owner's boot identity, signed into every adjacency nonce.
     boot: crate::Boot,
     /// Listeners of the current content whose bind is being retried.
-    unbound: Arc<Mutex<BTreeMap<String, rebind::Unbound>>>,
+    unbound: Arc<rebind::Unbounds>,
     /// Underlay path changes this Manager reacted to ([`Manager::path_changed`]):
     /// every datagram owner probes its channels at once, and candidate
     /// pacing starts over.
@@ -1315,11 +1315,7 @@ impl Manager {
         while self.rebound.try_recv().is_ok() {}
         self.shared.links.lock().map_err(|_| Error::Worker)?.clear();
         self.listeners.clear();
-        self.shared
-            .unbound
-            .lock()
-            .map_err(|_| Error::Worker)?
-            .clear();
+        self.shared.unbound.with(BTreeMap::clear)?;
         self.shared
             .traversal_endpoints
             .lock()

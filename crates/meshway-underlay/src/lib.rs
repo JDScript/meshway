@@ -109,8 +109,9 @@ pub enum ControlRelayState {
     Retrying(RetryPending),
     /// The relay cannot listen for a cause that needs an operator (a
     /// permission, `EACCES`, or a socket on its path it cannot prove its
-    /// own): proven, read again every 60 s, never removing that socket.
-    Blocked(RetryPending),
+    /// own): proven, read again every 60 s, never removing that socket. The
+    /// owner's own record: its check, since when and its next re-read.
+    Blocked(meshway_model::recovery::Blocked),
     /// A connection or Host task limit (`limit`) is reached: new connections
     /// are refused (`refused` so far), current ones kept; the next admitted
     /// connection ends it.

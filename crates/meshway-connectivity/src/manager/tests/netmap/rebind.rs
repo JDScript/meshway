@@ -27,10 +27,12 @@ async fn bound_after_the_port_is_released(stream: bool) {
     let mut a = manager(&fixture, 0, &factory, Default::default()).await;
     let mut b = manager(&fixture, 1, &factory, Default::default()).await;
     let unavailable = b.unavailable_listeners();
+    let mut changes = b.unavailable_listener_changes();
+    assert_eq!(*changes.borrow_and_update(), unavailable);
     assert_eq!(unavailable.len(), 1);
     assert_eq!(unavailable[0].key, key);
     assert_eq!(unavailable[0].address, Some(held));
-    assert!(unavailable[0].recoverable);
+    assert!(unavailable[0].recoverable());
     assert!(
         unavailable[0]
             .detail
@@ -47,6 +49,10 @@ async fn bound_after_the_port_is_released(stream: bool) {
     let retried = b.unavailable_listeners();
     assert_eq!(retried.len(), 1);
     assert!(retried[0].attempts >= 2, "{retried:?}");
+    // F8a F7: published live, and the retry keeps when the failure began.
+    assert_eq!(*changes.borrow_and_update(), retried);
+    assert_eq!(retried[0].health.since(), unavailable[0].health.since());
+    assert!(retried[0].health.since().is_some());
     drop(holder);
     // The next attempt binds; the Manager serves it and says so.
     tokio::time::timeout(Duration::from_secs(12), async {
@@ -62,6 +68,7 @@ async fn bound_after_the_port_is_released(stream: bool) {
     .expect("rebound listener adopted");
     let snapshot = b.snapshot().unwrap();
     assert!(snapshot.unavailable.is_empty());
+    assert!(changes.borrow_and_update().is_empty());
     assert_eq!(snapshot.listeners.len(), 1);
     assert_eq!(snapshot.listeners[0].local, held);
     // The retried bind reads its granted buffers back like a first bind.

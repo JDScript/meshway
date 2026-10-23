@@ -634,12 +634,15 @@ fn describe(error: &Error) -> String {
 
 /// The relay owner's current retry, as Status shows it.
 fn publish(state: &State, recovery: &meshway_model::recovery::Recovery) {
-    if let Some(pending) = recovery.health().pending() {
-        state.send_replace(Some(if recovery.health().is_blocked() {
-            crate::ControlRelayState::Blocked(pending)
-        } else {
-            crate::ControlRelayState::Retrying(pending)
-        }));
+    match recovery.health() {
+        meshway_model::recovery::Health::Blocked(blocked) => {
+            state.send_replace(Some(crate::ControlRelayState::Blocked(blocked.clone())));
+        }
+        health => {
+            if let Some(pending) = health.pending() {
+                state.send_replace(Some(crate::ControlRelayState::Retrying(pending)));
+            }
+        }
     }
 }
 

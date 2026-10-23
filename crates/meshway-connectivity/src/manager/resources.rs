@@ -108,10 +108,8 @@ impl Manager {
     pub(super) fn retire_keys(&mut self, keys: &[Key]) -> Vec<Owner> {
         keys.iter()
             .filter_map(|key| {
-                if let Key::Listener(listener) = key
-                    && let Ok(mut unbound) = self.shared.unbound.lock()
-                {
-                    unbound.remove(listener);
+                if let Key::Listener(listener) = key {
+                    let _ = self.shared.unbound.with(|unbound| unbound.remove(listener));
                 }
                 let owner = self.owners.remove(key)?;
                 owner.stop();
