@@ -1,0 +1,68 @@
+{
+  "comment": "Production 7-day soak. Copy to ~/meshway-soak/config.json on kr-icn-arm64; every placeholder value comes from the PROD-1 README (addresses, container names, Mesh hostnames, Server upgrade/rotation commands).",
+  "t0": "REPLACE-2026-11-01T00:00:00Z",
+  "days": 7,
+  "retention_days": 30,
+  "min_free_gib": 10,
+  "ssh": {
+    "identity": "~/meshway-soak/keys/collector_ed25519",
+    "known_hosts": "~/meshway-soak/known_hosts"
+  },
+  "hosts": {
+    "kr": {"kind": "local", "sudo": true},
+    "jp": {"kind": "ssh", "target": "REPLACE-ubuntu@jp-tyo-arm64", "sudo": true},
+    "it7": {"kind": "ssh", "target": "root@us-lax-it7.nodes.jdscript.net"},
+    "planck": {"kind": "ssh", "target": "zj2631@ai4ce-planck.dyn.poly.edu"},
+    "hk": {"kind": "ssh", "target": "REPLACE-root@cn-hkg-dmit"}
+  },
+  "nodes": {
+    "it7": {"host": "it7", "unit": "meshwayd", "mesh_name": "REPLACE", "relay_or_exit": true, "fixed_pct": 8},
+    "jp": {"host": "jp", "unit": "meshwayd", "mesh_name": "REPLACE"},
+    "kr": {"host": "kr", "unit": "meshwayd", "mesh_name": "REPLACE"},
+    "planck": {"host": "planck", "container": "REPLACE-meshway-prod-planck", "mesh_name": "REPLACE", "relay_or_exit": true, "fixed_pct": 8},
+    "hk": {"host": "hk", "container": "REPLACE-meshway-prod-hk", "mesh_name": "REPLACE"}
+  },
+  "server": {
+    "health_url": "https://meshway-prod-api.jdscript.dev/api/v1/auth/options",
+    "host": "planck",
+    "container": "REPLACE-meshway-prod-server"
+  },
+  "edges": [
+    ["it7", "jp"], ["it7", "kr"], ["it7", "planck"], ["it7", "hk"],
+    ["jp", "kr"], ["jp", "planck"], ["jp", "hk"],
+    ["kr", "planck"], ["kr", "hk"],
+    ["planck", "hk"]
+  ],
+  "throughput": {"client": "jp", "server": "kr", "target": "REPLACE-kr-mesh-ipv4", "port": 5299, "seconds": 10, "mbit": 50},
+  "thresholds": {
+    "thread_pct": 5.0,
+    "children_pct": 5.0,
+    "fixed_pct": 8.0,
+    "per_packet_us": 29.0,
+    "rss_floor_kib": 8192,
+    "rss_fraction": 0.10,
+    "fds_limit": 8,
+    "sockets_limit": 8,
+    "trend_min_hours": 24
+  },
+  "faults": [
+    {"id": "d2-server-upgrade", "day": 2, "at": "10:00", "action": "command", "host": "planck",
+     "command": "REPLACE: PROD-1 README container upgrade to {version}", "params": {"version": "REPLACE-v0.1.0-alpha.N"},
+     "timeout_s": 900, "affects": ["server", "*"], "grace_min": 15},
+    {"id": "d3-server-stop", "day": 3, "at": "10:00", "action": "server_stop", "duration_s": 1800,
+     "affects": ["server", "*"], "grace_min": 15},
+    {"id": "d4-rotate-netmap-key", "day": 4, "at": "10:00", "action": "command", "host": "planck",
+     "command": "REPLACE: PROD-1 README offline rotate-netmap-key (stop container, run meshway-server rotate-netmap-key --data-dir …, start)",
+     "timeout_s": 600, "affects": ["server", "*"], "grace_min": 15},
+    {"id": "d5-jp-restart", "day": 5, "at": "10:00", "action": "systemd_restart", "node": "jp"},
+    {"id": "d5-kr-kill9", "day": 5, "at": "12:00", "action": "kill9", "node": "kr"},
+    {"id": "d5-hk-docker-restart", "day": 5, "at": "14:00", "action": "docker_restart", "node": "hk"},
+    {"id": "d5-it7-restart", "day": 5, "at": "16:00", "action": "systemd_restart", "node": "it7"},
+    {"id": "d6-planck-udp-drop", "day": 6, "at": "10:00", "action": "nft_drop", "node": "planck", "match": "udp",
+     "duration_s": 300},
+    {"id": "d6-hk-server-tcp-drop", "day": 6, "at": "12:00", "action": "nft_drop", "node": "hk", "match": "tcp-to-server",
+     "resolve": "meshway-prod-api.jdscript.dev", "duration_s": 600},
+    {"id": "d6-jp-us-exit", "day": 6, "at": "14:00", "action": "exit_profile", "node": "jp", "profile": "us-exit",
+     "duration_s": 600, "url": "https://www.example.com/"}
+  ]
+}
