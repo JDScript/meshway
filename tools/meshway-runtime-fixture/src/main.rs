@@ -113,6 +113,13 @@ impl Cli {
         self.reported_endpoints && self.netmap_scenario.is_none()
     }
 
+    /// `udp/off`: A–R also has a Native TCP carrier after Native UDP. A
+    /// blocks its outgoing UDP until A–R is on TCP, then lifts it; A–R must
+    /// return to Native UDP (CM-1b), keeping the circuit.
+    fn carrier_upgrade(&self) -> bool {
+        self.held_listener_port()
+    }
+
     fn traffic_duration(&self) -> Duration {
         Duration::from_secs(if self.short { 30 } else { TRAFFIC_SECONDS })
     }
@@ -122,7 +129,10 @@ impl Cli {
     }
 
     fn traffic_wait(&self) -> Duration {
-        self.traffic_duration() + Duration::from_secs(125)
+        // The carrier return stage runs before the persistent window: its
+        // fallback, hold and return bounds.
+        let upgrade = if self.carrier_upgrade() { 120 } else { 0 };
+        self.traffic_duration() + Duration::from_secs(125 + upgrade)
     }
 }
 

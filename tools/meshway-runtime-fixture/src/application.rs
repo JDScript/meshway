@@ -539,6 +539,17 @@ impl Traffic {
         frame[..8].copy_from_slice(&self.sequence.to_be_bytes());
         frame
     }
+    /// One bounded challenge on the persistent IPv4 UDP socket while the
+    /// carrier may be switching: a lost echo is not an error.
+    pub async fn probe(&mut self) -> Result<bool> {
+        let frame = self.frame();
+        self.udp4.send(&frame).await?;
+        let answered = udp_receive(&self.udp4, &frame, Duration::from_millis(500)).await?;
+        if answered {
+            self.counts.udp4 += 1;
+        }
+        Ok(answered)
+    }
     pub async fn first_udp(&mut self) -> Result<()> {
         let deadline = Instant::now() + STARTUP;
         loop {

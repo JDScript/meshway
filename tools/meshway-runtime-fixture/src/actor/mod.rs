@@ -2,6 +2,7 @@ mod interface_change;
 mod reconnect;
 pub mod relay;
 mod scenario;
+mod upgrade;
 
 use crate::{
     Cli, Error, IO, Result, STARTUP,
@@ -346,6 +347,9 @@ async fn exercise(
         }
         traffic.open_remaining_flows(&addresses[&Role::A]).await?;
         traffic.mtu_conformance().await?;
+        if cli.carrier_upgrade() {
+            upgrade::run(cli, signals, traffic).await?;
+        }
         let sockets = traffic.sockets()?;
         save(cli, "persistent-sockets", &sockets).await?;
         let subscription_netmap = command(cli, "status")
@@ -1106,10 +1110,15 @@ async fn route_proof(
 }
 
 async fn ip(args: &[&str]) -> Result<std::process::Output> {
-    let deadline = crate::remaining(IO)?;
     // Only this actor's namespace; the sole mutation installs the fixture NAT
     // default route before the daemon baseline is taken.
-    let mut child = Command::new("ip")
+    tool("ip", args).await
+}
+
+/// One bounded run of a host tool in this actor's namespace.
+async fn tool(program: &str, args: &[&str]) -> Result<std::process::Output> {
+    let deadline = crate::remaining(IO)?;
+    let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1119,12 +1128,12 @@ async fn ip(args: &[&str]) -> Result<std::process::Output> {
     let mut stdout = child
         .stdout
         .take()
-        .ok_or("ip stdout absent")?
+        .ok_or("tool stdout absent")?
         .take(1024 * 1024);
     let mut stderr = child
         .stderr
         .take()
-        .ok_or("ip stderr absent")?
+        .ok_or("tool stderr absent")?
         .take(64 * 1024);
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let result = tokio::time::timeout(deadline, async {

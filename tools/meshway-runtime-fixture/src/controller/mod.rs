@@ -409,6 +409,22 @@ async fn coordinate(
                 }),
             );
         }
+        if cli.carrier_upgrade() && role == Role::R {
+            // After Native UDP in the platform order; reported like it.
+            node.listeners.insert(
+                "upgrade-tcp".into(),
+                Listener::NativeTcp(NativeTcpListener {
+                    enabled: true,
+                    remark: String::new(),
+                    listen: "0.0.0.0".parse()?,
+                    listen_port: 35001.try_into()?,
+                    endpoints: vec![],
+                    bind_interface: String::new(),
+                    socket: Default::default(),
+                    tcp: Default::default(),
+                }),
+            );
+        }
         if cli.traversal_fallback && role == Role::R {
             node.listeners.insert(
                 "fallback-tcp".into(),
@@ -451,7 +467,7 @@ async fn coordinate(
                 vless: None,
                 trojan: None,
             })
-        } else if cli.traversal_fallback && role == Role::A {
+        } else if (cli.traversal_fallback || cli.carrier_upgrade()) && role == Role::A {
             // Only A-R owns the TCP alternative. A globally inherited TCP
             // dialer would also let B choose R's newly reachable listener after
             // withdrawal/recovery, defeating this fixture's R-B UDP constraint.
@@ -568,8 +584,10 @@ async fn coordinate(
                 return Err("on-demand NAT edge must let R dial A only over Native TCP".into());
             }
         }
-        if cli.reported_endpoints && !node.listeners.values().all(|listener|
-            matches!(listener, Listener::NativeUdp(listener) if listener.endpoints.is_empty())) {
+        if cli.reported_endpoints && !node.listeners.iter().all(|(key, listener)|
+            matches!(listener, Listener::NativeUdp(listener) if listener.endpoints.is_empty())
+            || (cli.carrier_upgrade() && role == Role::R && key == "upgrade-tcp"
+                && matches!(listener, Listener::NativeTcp(listener) if listener.endpoints.is_empty()))) {
             return Err("reported-only fixture must not configure an endpoint".into());
         }
         let extra_tcp =
