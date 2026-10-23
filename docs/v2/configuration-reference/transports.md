@@ -40,8 +40,9 @@ Native TCP、VLESS 与 Trojan 用一条外层 TCP 承载整条邻接。在有丢
 
 - `transports` 的顺序只决定拨号方尝试候选的顺序，而且端点来源优先于它：configured 端点（任何承载）先于 `local` 端点（[候选排序](/v2/configuration-reference/topology#承载交集)）。
 - 两端各自能拨对方时（例如 A 拨 B 的 Native UDP listener、B 拨 A 的 VLESS listener）先完成认证的通道获选；已有不同协议的健康通道时，新通道不替换它（[拨号与接受](/v2/node/carriers#拨号与接受)）。
+- 例外：选定的是流式通道，而 `transports` 中本节点可拨的 Native UDP 候选（configured 或 `local` 端点）排在它之前时，拨号方在流式通道旁边按候选退避（1 秒起、上限 60 秒）重新获取 Native UDP，成功后替换流式通道，已建立的流保持原路径。因此一次暂态（UDP 短暂不通时流式先获选）不会让这条边永久停在流式承载上；UDP 恢复后至多约一分钟回到 Native UDP。流式承载之间不替换，协调穿透得到的 Native UDP 也不重新获取（[候选节奏](/v2/node/connectivity#candidate-pacing)）。
 
-要让某条边确定使用 Native UDP，在通配规则之前为这条边写一条只允许 `native_udp` 的 allow 规则（首条匹配的 allow 决定承载集合）；这样 UDP 不可达时该边没有承载，需要退路时保留流式承载并接受上述竞争。
+需要 UDP 不可达时的退路，把流式承载写在 `native_udp` 之后即可：UDP 可获取时边会回到 Native UDP。只有在宁可没有承载也不要流式承载时，才在通配规则之前为这条边写一条只允许 `native_udp` 的 allow 规则（首条匹配的 allow 决定承载集合）；剩余的竞争只在两端都能拨对方、且各自先获得不同协议的通道时出现。
 
 ## 边界
 

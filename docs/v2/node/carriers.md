@@ -92,7 +92,7 @@ Node 应用执行配置后，Manager 为执行配置 `dialers` 中出现的每�
 - 拨号只使用 Server 执行发布的 `endpoints`，按 [Topology 候选排序规则](/v2/configuration-reference/topology#承载交集) 尝试；每个 listener 最多八个本机地址。Native UDP 另保留协调穿透。候选均为空时流式承载等待后续发布。
 - 本机地址变化经既有 State 上报、Server 发布与 SSE／刷新路径更新 peer 候选；不需要管理员修改配置。State 只补充拨号地址，不创建 listener、不改变 Access／Topology／Routing 或边级承载交集。
 - 已启用的 listener 在执行配置生效时创建，接受获准 peer 拨入。监听方用本节点许可中路径的 `dialCandidates` 校验拨入的 Carrier，不在本机保存对端的拨号参数。
-- 每个 peer 同时只有一条选定通道。已有不同协议的健康通道时，新建立的通道不替换它。
+- 每个 peer 同时只有一条选定通道。已有不同协议的健康通道时，新建立的通道不替换它；唯一例外是边顺序中排在流式选定通道之前的显式 Native UDP 候选，见[候选节奏](/v2/node/connectivity#candidate-pacing)。
 
 ### 反向拨号与发布协调
 

@@ -57,6 +57,13 @@ CM-1 connectivity Manager 现场问题（`cm1/manager-receive`）：wire、IPC 1
 
 验证：`a_full_event_queue_keeps_business_frames_in_the_socket_until_the_consumer_makes_room` 在旧代码上失败（128 帧只送达 63），修复后通过；Planck L3 `manager-direct` 前后对照见[CM-1 接收背压](/v2/node/performance#cm1-receive-backpressure)（2 CPU：重传 289–349 → 0，B 的 `event_full` 638–983 → 0；B 0.5 CPU、30 ms RTT：661 → 773 Mbit/s，重传 495–617 → 0）。Planck 25 行矩阵 `20261023T130428Z-5670a96b`（`776436e6`，并行 4，启动 load 7–33）18 行通过，其余 7 行（`packet`、`udp/off`、`nat/off`、`nat+fallback/off`、`nat/resolved`、`nat/relay`、`exit6/off`）失败在环境：`docker network create` 失败、underlay 内核测试的 `underlay-peer` 120 秒期限、`daemonCleanupTest`；7 行在 `bf9d1d90` 复跑 `20261023T135547Z-57308b5c` 全部通过（此后只改测试）；Planck `mise run --jobs 1 check` 在 `da68eef6` 通过。证据 `.meshway/validation/cm1/`。
 
+CM-1b（`cm1b/udp-upgrade-drops`）：wire、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag；IPC 13 版本不变，Status 新增可省略字段 `sockets[].receiveDrops`。
+
+- C1（不变量：边的承载顺序在可获取时被遵守，一次暂态不能让一条边永久停在更后的承载上，升级尝试有界、有节奏、失败不影响当前通道；owner：Manager 的拨号 owner `manager/workers/mod.rs::beside`）：选定通道是流式承载、而边顺序中本节点可拨的 Native UDP 候选（configured／`local` 端点）排在它之前时，持有通道的拨号 owner 在它旁边按自己的候选退避（1 秒起、上限 60 秒）拨该候选，认证成功即精确替换这条流式通道，已建立的 circuit 保持原路径；监听方接受替换健康流式通道的 Native UDP INIT，由拨号方的 ACK 决定。UDP 一直不可达时每 peer 约每分钟一次尝试，默认日志级别无输出（debug `operation=carrier_upgrade`）。流式承载之间、以及协调穿透获得的 Native UDP 不重新获取（现行限制）。此前选定通道存在时其他候选一概不再尝试，常驻边在一次暂态后永久停在流式承载（现场 planck↔jp，[C1 证据](/v2/node/validation#cm1b-carrier)）。见[候选节奏](/v2/node/connectivity#candidate-pacing)、[承载选择](/v2/configuration-reference/transports#carrier-choice)。
+- 可见性：IPC Status `sockets[]` 每个 UDP socket 增加可省略的 `receiveDrops`（内核为该 socket 计的到达即丢弃数，主要是接收缓冲已满；按 inode 读 `/proc/self/net/udp`／`udp6`，读不到时省略），`meshway status` 的 SOCKET 表增加 `DROPS` 列。CM-1 B1 之后过载时的丢弃在内核，此前在 Status 中不可见。见[运行状态](/v2/node/runtime)。
+- 矩阵：`udp/off` 的 R 另有其后的 Native TCP listener，新增承载回归阶段（A 外发 UDP 被 `tc` 丢弃时退到 TCP，放开后 ≤ 75 秒回到 Native UDP、circuit CID 不变）。
+
+
 U2b 同族的另外两种形态（`u2b/read-failure-not-conflict`）：wire、IPC 13、`compilerVersion`、Server schema 与 HTTP 契约均不变，无新 flag。
 
 - 修复（不变量：一次失败的读取不能证明归属已变，结果未读回的 journal 记录由其 owner 按内核现状重证；owner：Host 内核归属——`Kernel::suspend` 结束本期，`open_term` 重建记录）：`meshway-vm` 在 DNS 撤回中的 suspend 开头读取失败后，Mesh TUN 照常关闭、内核随之删除其路由，base journal 却仍记录 TUN 与路由且本期不结束；此后每次安装把"journal 有、内核无"的路由读成冲突（`kernel ownership or routing protection conflict; resources kept`，每 5–10 秒、数小时，`lastErrorDetail` 为 null）。现在这样的 suspend 失败以 `suspend_unavailable` 结束本期，重证按内核现状重建记录后以同一 netmap 重装。DNS 锚点 dump 失败（`anchor_netlink`）的 `error` 改为 `Backend`（判定本已为未知；此前日志标 `Conflict`，并非持久冲突的来源）。
