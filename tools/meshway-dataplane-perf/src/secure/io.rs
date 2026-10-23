@@ -9,14 +9,14 @@ use meshway_desired_fixture::public_fixture::PublicFixture;
 use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
 use meshway_model::NodeId;
-use meshway_transport::{ChannelScope, Frame, Limits, Receiver, Sender};
+use meshway_transport::{ChannelScope, Frame, Limits, Receiver};
 use std::{collections::BTreeMap, net::SocketAddr, path::Path};
 use std::{future::Future, pin::Pin, sync::Arc};
 type SendFuture = Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
 
 pub(super) enum Io {
     Session {
-        sender: Arc<tokio::sync::Mutex<Sender>>,
+        sender: Arc<carrier::SharedSender>,
         receiver: Receiver,
         incoming: BTreeMap<SocketAddr, Carrier>,
         scopes: BTreeMap<SocketAddr, ChannelScope>,
@@ -77,7 +77,7 @@ impl Io {
             .collect();
         Ok(Self::Session {
             buffers,
-            sender: Arc::new(tokio::sync::Mutex::new(sender)),
+            sender: Arc::new(carrier::SharedSender::new(sender)),
             receiver,
             incoming,
             scopes,
@@ -221,7 +221,13 @@ impl Io {
                         } else {
                             let sender = sender.clone();
                             sends.push(Box::pin(async move {
-                                carrier::send(&mut *sender.lock().await, frame, Some(peer)).await?;
+                                carrier::send_shared_with_receipt(
+                                    &sender,
+                                    frame,
+                                    peer,
+                                    Arc::new(Unscoped),
+                                )
+                                .await?;
                                 Ok(())
                             }));
                         }
@@ -296,7 +302,13 @@ impl Io {
 
     pub async fn shutdown(mut self) -> Result<serde_json::Value, Error> {
         match &mut self {
-            Self::Session { sender, .. } => sender.lock().await.shutdown().await?,
+            Self::Session { sender, .. } => {
+                let closing = sender
+                    .lock()
+                    .map_err(|_| "the shared sender is poisoned")?
+                    .close();
+                closing.await?;
+            }
             #[cfg(target_os = "linux")]
             Self::Manager { manager, .. } => {
                 manager.shutdown().await?;
@@ -317,4 +329,17 @@ impl Io {
 fn buffers_json(buffers: meshway_transport::udp::Buffers) -> serde_json::Value {
     serde_json::json!({"receive": buffers.receive, "receiveRequested": buffers.receive_requested,
         "send": buffers.send, "sendRequested": buffers.send_requested})
+}
+
+/// The measurement's own output lifetime: no channel scope restricts it.
+#[derive(Debug)]
+struct Unscoped;
+
+impl meshway_transport::SendLifetime for Unscoped {
+    fn is_current(&self) -> bool {
+        true
+    }
+    fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(std::future::pending())
+    }
 }
