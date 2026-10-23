@@ -203,6 +203,8 @@ class Labels(unittest.TestCase):
         self.assertEqual(p("hk", 12.2), "s")
         self.assertEqual(p("server", 12.2), "s")
         self.assertIsNone(p("jp", 13))
+        self.assertIsNone(report.planned(windows, "hk", common.parse_time(at(12.2)), wildcard=False))
+        self.assertEqual(report.planned(windows, "server", common.parse_time(at(12.2)), wildcard=False), "s")
         soak.close()
 
     def test_an_open_window_lasts_until_now(self):
@@ -295,6 +297,8 @@ class Report(unittest.TestCase):
             {"t": at(21), "pid": 300, "prio": 6,
              "msg": tracing("WARN", "Node control problem", phase="Blocked", problem="Contract")},
             {"t": at(22), "pid": 300, "prio": 3, "msg": "plain text error"},
+            {"t": at(10.005), "pid": 100, "prio": 6, "msg": tracing("INFO", "Node stopped", failed=False)},
+            {"t": at(23.97), "pid": 300, "prio": 6, "msg": tracing("INFO", "Node stopped", failed=True)},
         ])
         resource_records = []
         for h in range(24):
@@ -330,6 +334,9 @@ class Report(unittest.TestCase):
         self.assertEqual(len(jp["logs"]["withdrawals"]), 1)
         self.assertEqual(len(jp["logs"]["reinstalls"]), 1)
         self.assertEqual(jp["logs"]["systemd"][0]["planned"], "d5-jp-restart")
+        self.assertEqual([x["planned"] for x in jp["logs"]["stops"]], ["d5-jp-restart", None])
+        restart_gate = next(g for g in result["gates"] if g["gate"].startswith("零人工重启"))
+        self.assertIn("计划外 2：jp@2026-11-02T15:00:00, jp@2026-11-02T23:58:12（仅日志 Node stopped）", restart_gate["evidence"])
         self.assertEqual(jp["logs"]["categories"]["WARN Node sync failed; retrying [Network]"], 1)  # duplicate removed
         self.assertEqual(jp["logs"]["categories"]["ERROR plain text error"], 1)
         hk = result["nodes"]["hk"]["resources"]

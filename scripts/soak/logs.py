@@ -98,6 +98,11 @@ def collect_journal(config: common.Config, node: str, state: dict) -> dict:
     return {"lines": len(records), "truncated": truncated, "error": error or None}
 
 
+def to_ns(moment: datetime) -> int:
+    whole = moment.replace(microsecond=0)
+    return int(whole.timestamp()) * 1_000_000_000 + moment.microsecond * 1000
+
+
 def docker_since(ns: int) -> str:
     return f"{ns // 1_000_000_000}.{ns % 1_000_000_000:09d}"
 
@@ -119,12 +124,12 @@ def docker_line(line: str) -> dict | None:
 
 
 def collect_docker(config: common.Config, name: str, host: str, container: str, state: dict) -> dict:
-    until_ns = int((common.now() - LAG).timestamp() * 1e9)
+    until_ns = to_ns(common.now() - LAG)
     if "since_ns" in state:
         since_ns = state["since_ns"]
     else:
         start = config.t0 or (common.now() - timedelta(hours=1))
-        since_ns = int(start.timestamp() * 1e9)
+        since_ns = to_ns(start)
     if since_ns > until_ns:
         return {"lines": 0}
     script = (f"docker logs --timestamps --since {docker_since(since_ns)} --until {docker_since(until_ns)} "

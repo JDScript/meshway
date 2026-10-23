@@ -91,13 +91,13 @@ S=/home/ubuntu/meshway-soak
 
 ## 容量估算
 
-| 数据 | 单位量 | 7 天（6 个来源） |
+| 数据 | 实测单位量（dev 演练 `.meshway/validation/soak1/`，4 节点 1 小时） | 7 天 prod 估算（5 节点＋Server） |
 | --- | --- | --- |
-| Status 样本 | 每条约 8–25 KiB（随 peer 数）× 288／天／节点 | ≈ 5 × 288 × 7 × 25 KiB ≈ 250 MiB 未压缩，zstd 后约 1/15 |
+| Status 样本 | 每条 2.2–4.3 KiB（随 peer／socket 数增长）；zstd 后 1/15–1/17 | 5 × 288 × 7 × ≤ 8 KiB ≈ 80 MiB 未压缩，压缩后 ≈ 5 MiB |
 | 资源样本 | 每条约 1.5 KiB × 24／天／节点 | < 2 MiB |
-| 日志 | 实测（dev 现场，见 `.meshway/validation/soak1/`）：健康时约 50–150 行／时／节点，退化（反复 retrying）时约 700 行／时；每行存储约 250–400 B | 最坏 700 × 24 × 7 × 6 × 400 B ≈ 280 MiB 未压缩，压缩后 < 30 MiB |
+| 日志 | 退化状态（反复 retrying、撤回／重装）每节点 450–880 行／时、140–300 KiB／时，每行约 310 B；zstd 后 1/27 | 最坏 6 × 300 KiB × 24 × 7 ≈ 300 MiB 未压缩（当日一份），压缩后 ≈ 11 MiB |
 
-30 天保留合计在 1 GiB 以内；10 GiB 下限只用于防止宿主被意外填满。每次日志读取每来源最多 200,000 行（其余下一次继续）。
+30 天保留合计约 100 MiB（压缩后）；10 GiB 下限只用于防止宿主被意外填满。每次日志读取每来源最多 200,000 行（其余下一次继续）。
 
 ## 故障日程
 
@@ -124,7 +124,7 @@ T0 所在 UTC 日为 D1。`config.json` 的 `faults[]` 定义（`day`、`at`、`
 
 | 门槛 | 判定 |
 | --- | --- |
-| 零人工重启 | 相邻两次 Status 样本的进程身份（`processId`＋启动时刻）变化即一次进程启动；Server 以容器 `StartedAt` 变化计。计划外启动必须为 0。systemd 的 `Started …`／`Main process exited` 行只作佐证 |
+| 零人工重启 | 相邻两次 Status 样本的进程身份（`processId`＋启动时刻）变化即一次进程启动；Server 以容器 `StartedAt` 变化计。进程启动只有在点名该节点（或 Server）的故障窗口内才算计划内——`*` 不适用，Server 故障期间的 Node 重启算计划外。计划外启动必须为 0。systemd 的 `Started …`／`Main process exited` 行只作佐证 |
 | 每次 `blocked` 有已证实原因 | 采样中连续 `phase: blocked` 为一段，每段所有样本都必须有 `lastError`（`lastErrorDetail` 同列）；日志中 `phase=Blocked` 的 Control 事件另列。计划外的段列为“待人工确认”——工具只能检查原因已给出，是否为真实的已证实不一致由人确认 |
 | 空闲 CPU | 每次资源样本（故障窗口内的排除）：最忙线程 < 5 %；`relay_or_exit` 节点另要求进程合计 ≤ `fixed_pct`（默认 8 %）＋ pps × 29 µs、子进程 ≤ 5 %。缺测计数单列 |
 | RSS／fd／socket 无持续增长 | 自 t0 起按进程段（同一 PID 与启动时刻）分别判定，段长 ≥ 24 h 才判定。**增长**＝最小二乘斜率外推 7 天 > 限值 **且** 末 24 h 中位 − 首 24 h 中位 > 限值 / 4。限值：RSS max(8 MiB, 首 24 h 中位 × 10 %)，fd 与 socket 各 8 |

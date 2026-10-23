@@ -62,11 +62,16 @@ def fault_windows(config: common.Config) -> list[dict]:
     return [w for w in windows.values() if not w.get("dry")]
 
 
-def planned(windows: list[dict], node: str, start, end=None) -> str | None:
-    """The fault whose window (start … end + grace; open → now) overlaps [start, end] for this node."""
+def planned(windows: list[dict], node: str, start, end=None, wildcard: bool = True) -> str | None:
+    """The fault whose window (start … end + grace; open → now) overlaps [start, end] for this node.
+
+    `*` covers every node but not the Server; process starts pass wildcard=False, so only a fault that names
+    the node (a restart of that node) makes its restart planned — a Node restarting during a Server fault is not.
+    """
     end = end or start
     for window in windows:
-        if not window["start"] or not (node in window["affects"] or ("*" in window["affects"] and node != "server")):
+        named = node in window["affects"]
+        if not window["start"] or not (named or (wildcard and "*" in window["affects"] and node != "server")):
             continue
         close = (window["end"] or common.now()) + window["grace"]
         if window["start"] <= end and start <= close:
@@ -104,7 +109,7 @@ def status_analysis(records: list[dict], baseline: dict | None, windows: list[di
         if identity and before and not same_process(identity, before):
             since = common.parse_time(previous["t"])
             out["starts"].append({"t": record["t"], "after": previous["t"], "pid": identity[0],
-                                  "previous_pid": before[0], "planned": planned(windows, node, since, at)})
+                                  "previous_pid": before[0], "planned": planned(windows, node, since, at, wildcard=False)})
         if identity:
             previous = record
         if phase == "blocked":
@@ -208,7 +213,7 @@ def category(level: str, message: str, fields: dict) -> str:
 
 def log_analysis(lines: list[dict], windows: list[dict], node: str) -> dict:
     out = {"lines": 0, "levels": {}, "categories": {}, "withdrawals": [], "reinstalls": [], "sync_failures": [],
-           "blocked": [], "systemd": []}
+           "blocked": [], "systemd": [], "stops": []}
     seen = set()
     for line in lines:
         key = (line.get("t"), line.get("pid"), line.get("msg"))
@@ -232,6 +237,9 @@ def log_analysis(lines: list[dict], windows: list[dict], node: str) -> dict:
             error = str(fields.get("error", "?"))
             out["sync_failures"].append({"t": line["t"], "error": error, "planned": tag,
                                          "reachability": error in REACHABILITY})
+        if message == "Node stopped":  # the daemon's own exit line (then systemd / the container restarts it)
+            out["stops"].append({"t": line["t"], "failed": fields.get("failed"), "pid": line.get("pid"),
+                                 "planned": planned(windows, node, at, wildcard=False)})
         if fields.get("phase") == "Blocked":
             out["blocked"].append({"t": line["t"], "message": message, "fields": brief, "planned": tag})
         if line.get("sys") and (message.startswith("Started ") or "Main process exited" in message
@@ -492,13 +500,21 @@ def gates(config: common.Config, result: dict) -> list[dict]:
     out = []
     unplanned = [(n, s) for n, v in nodes.items() for s in v["status"]["starts"] if not s["planned"]]
     unplanned += [("server", s) for s in server["starts"] if not s["planned"]]
+    # A daemon exit the samples did not (yet) see as a new process — e.g. after the last sample of the range.
+    for name, item in nodes.items():
+        starts = item["status"]["starts"]
+        for stop in item["logs"]["stops"]:
+            seen = any(s["after"] <= stop["t"] <= s["t"] for s in starts)
+            if not stop["planned"] and not seen:
+                unplanned.append((name, {"t": stop["t"], "log_only": True}))
     planned_starts = sum(1 for v in nodes.values() for s in v["status"]["starts"] if s["planned"])
     out.append(gate("零人工重启（计划外进程启动 = 0）", not unplanned,
-                    f"计划外 {len(unplanned)}：{', '.join(n + '@' + s['t'] for n, s in unplanned) or '无'}；"
+                    f"计划外 {len(unplanned)}：{', '.join(n + '@' + s['t'][:19] + ('（仅日志 Node stopped）' if s.get('log_only') else '') for n, s in unplanned) or '无'}；"
                     f"计划内 {planned_starts + sum(1 for s in server['starts'] if s['planned'])}"))
     blocked = [(n, b) for n, v in nodes.items() for b in v["status"]["blocked"]]
     log_blocked = [(n, b) for n, v in nodes.items() for b in v["logs"]["blocked"]]
     uncaused = [(n, b) for n, b in blocked if not b["has_cause"]]
+    uncaused += [(n, b) for n, b in log_blocked if not b["fields"].get("problem")]
     review = [(n, b) for n, b in blocked if not b["planned"]]
     out.append(gate("每次 blocked 都有已证实原因", not uncaused,
                     f"blocked 段 {len(blocked)}（采样）＋日志 Blocked {len(log_blocked)}；无原因 {len(uncaused)}；"
@@ -604,6 +620,8 @@ def render(config: common.Config, result: dict, title: str) -> str:
             events.append((w["t"], name, "撤回：" + w["message"], json.dumps(w["fields"], ensure_ascii=False), w["planned"]))
         for w in item["logs"]["reinstalls"]:
             events.append((w["t"], name, "重装：" + w["message"], json.dumps(w["fields"], ensure_ascii=False), w["planned"]))
+        for x in item["logs"]["stops"]:
+            events.append((x["t"], name, f"daemon 退出（日志 `Node stopped`，failed={x['failed']}）", "", x["planned"]))
         for x in item["status"]["starts"]:
             events.append((x["t"], name, f"进程启动 pid {x['previous_pid']}→{x['pid']}（{x['after'][11:19]} 之后）", "", x["planned"]))
     if events:

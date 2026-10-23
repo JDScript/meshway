@@ -423,4 +423,8 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except TimeoutError as busy:  # another fault (or a manual run) holds the lock
+        print(busy, file=sys.stderr)
+        sys.exit(0 if sys.argv[1:2] == ["due"] or "due" in sys.argv else 75)
