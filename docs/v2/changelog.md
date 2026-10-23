@@ -4,6 +4,23 @@
 
 ## 未发布
 
+F8a 里程碑 D 审阅的 Node 侧修复（REV-D2，`f8a/node-review-fixes`）：wire、IPC 13、`compilerVersion`、Server schema 与 HTTP 契约均不变，无新 flag。
+
+- F1（不变量：清理与启动恢复只移除本 owner 的完整程序；owner：出口 `Backend::close_observed`、`exit::recovery::recover`）：表数与 `Program::tables()` 比较（IPv6 双栈为三张），此前写死两张，双栈出口首次清理失败后的重试与"CREATE 已提交、回执未存"的重启恢复判 Conflict、永久重试并阻断 Host。`exit/off` 组件新增 `cleanup6`。
+- F2（不变量：事件循环无电平分支；owner：Node 协调器 `runtime::run`、Control 会话）：已关闭的 netcheck／ping 请求通道与报告 watch 禁用其分支，IPC 服务退出后协调器到达 listener join 并以其失败停止，此前忙循环；会话的 `netmap_rx` 关闭同样显式禁用。
+- F3（同上；owner：Manager 事实读取 `manager::facts::run`）：已关闭的发布不再被重新克隆读取（此前空转并反复 touch traversal 请求），保留最后事实，等待下一次 attach。
+- F4（同上；owner：包调度 `runtime::network::packets`）：有界扫描只在队首可按其容量类别（MTU／jumbo）立即提交时才"立即到期"；jumbo 两个名额被占而总槽空闲时不再 `wake_at=now` 忙转，由 credit 归还（池或输出完成）唤醒。
+- F5（不变量：读取失败不证明归属已变；owner：DNS 预约 `SystemDnsOwner::reserve`／`has_reservation`）：私有目录打开失败保留分类——锁被占用与 I/O 为 `Storage`（重试），不安全存储为 `Conflict`（已证实）；此前一律 Conflict，启动时 `blocked`。
+- F6（不变量：同一失败只有一份分类；owner：DNS Attachment）：尚无 owner 运行时的准备失败按完整 `SystemDnsFailure` 以 owner 的 `Recovery` 判定并发布同一份 `Health`（Status 读它），另一 owner 的预约为已证实的 `owner_record`；worker 不早于该恢复时刻重新准备（已证实每 60 秒）。此前启动显示 `retrying`、运行期 `blocked`。
+- F7（不变量：Status 只投影 owner 的状态；owner：控制中继、Manager listener 重试 owner）：中继发布自己的 `Blocked` 记录；Manager 以 watch 发布重试中的 listener 及其 `Health`，Status 读现值；`since` 为首次证实时刻，`recoverable` 由 owner 的 health 给出。此前每次读取以 now 重建、读采样快照。
+- F8（不变量：读取失败不当作完整结果；owner：`rtnl::read`）：dump 只有收到成功的 `NLMSG_DONE` 才完整；若干对象后或立即结束为一次失败的读取（未知）。
+- F9（不变量：生命周期不被服务管理器阻塞；owner：`meshway-service`）：sd_notify 以非阻塞方式尽力发送，队列满时丢失该条并记录，不再阻塞 `meshwayd`／Server 的 READY／STOPPING。
+- F10（owner：listener 重试 owner）：重试失败只在 `Health` 转换时 WARN，其余为 debug。
+
+每条附带在旧代码上失败的测试（见[已修复问题索引](/v2/node/validation#f8a-review)），旧代码失败记录在 `.meshway/validation/f8a/`。
+
+VERIFY_PLACEHOLDER
+
 R4 `roam/relay` 空窗新流无回复（`r4/handoff-flows`）：产品代码、wire、IPC、`compilerVersion`、Server schema 与 HTTP 契约均不变。
 
 - 定位：失败的“新流”不是新流。fixture 每个单报文流由内核选临时源端口、收到回显即关闭，Linux 随机复用这些端口（此前 43 轮的 9,751 个流中 38 次在 60 秒内复用）；A 流表 60 秒空闲内的同一 5 元组就是原流，按 D7 留在直连 circuit 上等重新获取，它的包与 100 pps 旧直连流共用 B 的首包队列（每目标 32 个），空窗内队列已满而被丢弃。与通道认证时机和 G14 无关：失败格中 A 在新通道认证（`authenticated_ready`）前没有 B 的承载，真正的新 5 元组都经 R 得到回复；h4/matrix10 与 x16 两次失败的流 B 都没有收到，同一时刻 B 收到的恰是队列释放的 32 个旧流包。

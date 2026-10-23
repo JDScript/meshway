@@ -424,7 +424,7 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 
 Node 上每个可能 fail closed 的 owner 用同一个状态机 `meshway_model::recovery::Recovery` 把自己的判定变成一个 `Health`（`healthy`／`retrying`／`blocked`）；判定本身（什么算已证实的不一致）只归该 owner，`Health` 不携带、不延长任何权限或租约——授权仍只有 Engine 的 `Desired`。
 
-**分类**。owner 的每次回读或变更判为三类之一：一致（`healthy`）；读取失败、超时、变更结果未知或 owner 自身的内部失败（未知，`retrying`）；读成功而与所属记录不同（已证实，`blocked`）。确定性的拒绝（执行已失效、目标不符、容量、无效参数）不涉及内核结果，不重试。内核 owner 共用一份分类 `meshway_underlay::Error::judgement`（外来对象、socket mark 回读不符、journal 不符为已证实；netlink／I/O／drain／内部／存储／TUN 失败为未知）；DNS 由 `SystemDnsFailure::proven` 按[健康检查](/v2/node/dataplane#dns-health)两栏判定；一次未完成的读取（`NLM_F_DUMP_INTR`、`EBUSY`，rtnetlink 与 ctnetlink 同一规则 `rtnl::unfinished`）至多重读 4 次，仍未完成才算未知。
+**分类**。owner 的每次回读或变更判为三类之一：一致（`healthy`）；读取失败、超时、变更结果未知或 owner 自身的内部失败（未知，`retrying`）；读成功而与所属记录不同（已证实，`blocked`）。确定性的拒绝（执行已失效、目标不符、容量、无效参数）不涉及内核结果，不重试。内核 owner 共用一份分类 `meshway_underlay::Error::judgement`（外来对象、socket mark 回读不符、journal 不符为已证实；netlink／I/O／drain／内部／存储／TUN 失败为未知）；DNS 由 `SystemDnsFailure::proven` 按[健康检查](/v2/node/dataplane#dns-health)两栏判定；一次未完成的读取（`NLM_F_DUMP_INTR`、`EBUSY`，rtnetlink 与 ctnetlink 同一规则 `rtnl::unfinished`）至多重读 4 次，仍未完成才算未知；dump 只以成功的 `NLMSG_DONE` 结束为完整，回答在它之前结束（若干对象后或立即）是一次失败的读取（未知），从不当作整张表。私有存储打开失败保留其分类：锁被占用与 I/O 失败为未知，路径、属主、类型或权限不符为已证实。
 
 **节奏**。
 
@@ -434,6 +434,7 @@ Node 上每个可能 fail closed 的 owner 用同一个状态机 `meshway_model:
 | egress capture、出口审计与变更、自有对象重装的读取（有上级 owner） | 1 秒起翻倍、上限 60 秒；自首次失败满 30 秒交给宿主内核归属，作为暂态结束（从不直接 `blocked`） | egress：结束宿主内核归属为冲突；出口：读到外来对象（不只是自有对象缺失）时角色保持撤回，能力报 `ownershipConflict`，每 60 秒只读重读，停止角色的清理已移除其全部对象（外来改动已不在）后才重装（[Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)） |
 | 出口清理、MSS clamp 替换、控制中继、listener（U1） | 1 秒起翻倍、上限 60 秒，无总期限 | 中继外来 socket／`EACCES`、listener `EACCES`：`blocked`，每 60 秒重试 |
 | DNS owner | 每秒重证（固定，守住 resolved 重启 5 秒内恢复），无总期限；系统一侧的 hold／install 失败同样是故障，由 owner 重证 | `blocked`，每 60 秒重证（重证拒绝而不覆盖外来设置） |
+| DNS owner 的准备（尚无 owner 运行时） | 与运行中同一判定（`SystemDnsFailure::proven`），发布同一份 `Health`；网络 worker 按其节奏重新准备，5 秒起翻倍、上限 60 秒 | `blocked`（如另一 owner 的预约 `owner_record`），每 60 秒重新准备 |
 | 网络 worker 的安装 | 5 秒起翻倍、上限 60 秒，无总期限 | 校验、数据面拒绝：`blocked`，下一份 offer 到达即解除 |
 | Mesh 池重叠 | 只有暂态：地址离开即重装 | — |
 | Host 启动（Control） | 1–15 秒有界退避 | 每 60 秒重查；无效参数为拒绝，等待期望状态改变 |
@@ -442,7 +443,7 @@ Node 上每个可能 fail closed 的 owner 用同一个状态机 `meshway_model:
 
 **汇合**。网络 worker 只以边沿消费各 owner 的 `Health`（宿主内核归属的 watch、DNS owner 的事实，及 worker 自己排队的同一 netmap 重装请求）：每个变化恰好取一次，到期的重证最先；然后由纯函数 `lifecycle::decide` 按**当前快照**（不是边沿本身）决定一个动作——重证、为 DNS 撤回、DNS 重证后重装、为宿主归属撤回，或什么也不做。同一快照总得到同一动作。DNS owner 的故障带 epoch：worker 尚未确认的故障即使已被重证也先撤回再重装（查询许可要到下一次 hold 才恢复）；成功的 hold 或 install（install 以一次自己的观察结束）清除故障。
 
-**Status 投影**（IPC 13 形状不变）。按序：Control `Blocked` → `blocked`，`lastError` 为 Control 的问题、包平面的另见 `networkError`；某 owner `blocked` → `blocked`；包平面撤回且有 owner `retrying` → `retrying`；其余按上表。`lastError`／`lastErrorDetail` 在多个原因时取宿主内核归属（其他 owner 因它失败），否则最早的一个；都读 owner 的现值，不读 worker 的快照。`changePending`、`exit.cleanupPending`、`controlRelay`、`sockets[].unavailable` 是对应 owner 的投影。
+**Status 投影**（IPC 13 形状不变）。按序：Control `Blocked` → `blocked`，`lastError` 为 Control 的问题、包平面的另见 `networkError`；某 owner `blocked` → `blocked`；包平面撤回且有 owner `retrying` → `retrying`；其余按上表。`lastError`／`lastErrorDetail` 在多个原因时取宿主内核归属（其他 owner 因它失败），否则最早的一个；都读 owner 的现值，不读 worker 的快照。`changePending`、`exit.cleanupPending`、`controlRelay`、`sockets[].unavailable` 是对应 owner 的投影；控制中继与 listener 的 `blocked` 是 owner 自己的记录（`since` 为首次证实时刻，不随读取改变），listener 读 Manager 重试 owner 的现值 watch。
 
 **唯一显式例外（v0.1.0）**：本机 Control 记录写入结果不确定（`Recovery::Storage`）时保持 `blocked`＋撤回数据面，不重读判定。
 
