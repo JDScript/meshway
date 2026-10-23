@@ -109,12 +109,17 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("notify");
         let receiver = UnixDatagram::bind(&path).unwrap();
-        let filler = UnixDatagram::unbound().unwrap();
-        filler.set_nonblocking(true).unwrap();
-        let mut queued = 0;
-        while filler.send_to(b"WATCHDOG=1", &path).is_ok() {
-            queued += 1;
-            assert!(queued < 100_000, "the receiver queue never filled");
+        // Each from a sender of its own, as a new notification is: the
+        // receiver's queue fills, not one sender's buffer.
+        let mut fillers = Vec::new();
+        loop {
+            let filler = UnixDatagram::unbound().unwrap();
+            filler.set_nonblocking(true).unwrap();
+            if filler.send_to(b"WATCHDOG=1", &path).is_err() {
+                break;
+            }
+            fillers.push(filler);
+            assert!(fillers.len() < 10_000, "the receiver queue never filled");
         }
         let (done, finished) = std::sync::mpsc::channel();
         let target = path.clone();
@@ -125,6 +130,6 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("the notification blocked on a full queue");
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
-        drop(receiver);
+        drop((receiver, fillers));
     }
 }
