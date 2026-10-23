@@ -32,6 +32,17 @@ getTransportCatalog 返回 protocol、outerSocket、requiredCapability 和 schem
 
 listener／dialer 的 `socket.receiveBuffer`／`sendBuffer` 默认 0，表示由 provider 决定。Linux Native UDP 默认请求接收 4 MiB、发送 2 MiB，按承载速率设计而非内核缺省（约 208 KB）；请求先以特权方式绕过 `net.core.rmem_max`／`wmem_max`，没有 `CAP_NET_ADMIN` 时才受其截断。显式值覆盖默认值。完整规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口)，宿主建议见[高吞吐宿主](/v2/install#high-throughput)。
 
+## 承载选择 {#carrier-choice}
+
+Native TCP、VLESS 与 Trojan 用一条外层 TCP 承载整条邻接。在有丢包或会短暂中断的长路径上，内层 TCP 经它运行会出现数百毫秒到数秒的排队延迟和一到数秒的 0 吞吐（TCP 套 TCP），Native UDP 没有这一问题；实测与原因见[流式承载在有损路径上](/v2/node/performance#stream-carriers-lossy)。UDP 可达的边应由 Native UDP 承载，流式承载用于 UDP 被阻断或只能经 TCP／HTTPS 代理到达的边。
+
+一条边的协议由以下规则决定，`transports` 的顺序本身不保证 Native UDP 获选：
+
+- `transports` 的顺序只决定拨号方尝试候选的顺序，而且端点来源优先于它：configured 端点（任何承载）先于 `local` 端点（[候选排序](/v2/configuration-reference/topology#承载交集)）。
+- 两端各自能拨对方时（例如 A 拨 B 的 Native UDP listener、B 拨 A 的 VLESS listener）先完成认证的通道获选；已有不同协议的健康通道时，新通道不替换它（[拨号与接受](/v2/node/carriers#拨号与接受)）。
+
+要让某条边确定使用 Native UDP，在通配规则之前为这条边写一条只允许 `native_udp` 的 allow 规则（首条匹配的 allow 决定承载集合）；这样 UDP 不可达时该边没有承载，需要退路时保留流式承载并接受上述竞争。
+
 ## 边界
 
 协议账户字段不创建 Meshway User。目标 endpoint 来自目标 listener，拨号端不维护另一份服务端凭据。underlay 的 mark／namespace 由资源 owner 管理，不通过协议参数任意覆盖。

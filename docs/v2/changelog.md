@@ -43,6 +43,13 @@ U2 宿主停顿后 Underlay journal 永久拒绝（`u2/journal-recovery`）：wi
 
 验证（`b456023f`）：新的隔离组件测试在旧代码上失败（suspend 失败后归属不结束、install 返回 `Journal`），新代码重证 108–155 ms 后同一内容重装、重启同样补完；常驻 lab 部署修复版后 `--cpus 0.02` 90 秒 ×3、`0.01` 150 秒（`repair_unavailable` 结束与重证）与"重证后紧接限额"各一次，全部自动恢复、无 `blocked`；Planck 25 行矩阵 `20261023T115413Z-bdf958fa`（并行 8，与另一工作包的矩阵同时运行，load 17）23 行通过，`netmap/offline`／`netmap/revoke` 在 underlay-peer 的 120 秒期限内未完成（`container_restart_*` 53–86 秒，空闲时 5–6 秒），单独重跑 `20261023T122339Z-305bd13e` 通过；`20261023T123014Z-c8ee33aa` 21 行通过，4 行在建网时 Docker 地址池耗尽（非产品），单独重跑 `20261023T125845Z-a5507051` 通过；`exit/off` 组件 `pending` 两轮均通过；Planck `mise run --jobs 1 check` 除 `check:deny` 外全部通过（1,386 个测试），`check:deny` 因当日新公布的 RUSTSEC-2026-0385（`ctutils` 0.4.3，与本修复无关）失败。证据 `.meshway/validation/u2/`。
 
+V1 流式承载（VLESS）吞吐 1–4 秒断流（`v1/stream-stalls`）：只改文档；代码、wire、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+
+- 结论：承载固有现象（TCP 套 TCP），不是实现缺陷。隔离复现（`exit/off` fixture 的真实 daemon，70 ms RTT，`tc netem` 随机丢包或每 5 秒断 400 ms）中，Native TCP 与 VLESS WS/TLS 表现一致：cubic 下丢包 ≥0.05 % 时内层 RTT 中位数 0.36–2.7 秒（最大 8.9 秒）、内层零重传，出现 1 秒 0 吞吐（VLESS 自 0.05 %、Native TCP 自 0.1 % 起）；BBR 下随机丢包不触发，断链时触发（24 次 400 ms 断链共 13 个 0 吞吐秒，Native TCP 15 次共 8 个），与现场 it7→planck 的形态（窗口降到 1 个报文后一次几千个重传）相同。Native UDP 在全部条件下没有 0 吞吐秒、内层 RTT 保持约 71 ms。外层发送缓冲（最多 3.8 MB 未发出）是主要排队；`TCP_NOTSENT_LOWAT` 128 KiB 的试验只把积压移到包处理与 TUN 队列、未改善断流，未采用。
+- 文档：[流式承载在有损路径上](/v2/node/performance#stream-carriers-lossy)（机制、数据表、现场对照）；[Transport · 承载选择](/v2/configuration-reference/transports#carrier-choice)：UDP 可达的边应由 Native UDP 承载；`transports` 顺序只决定拨号顺序，configured 端点先于 `local`、已有的另一协议通道不被替换，需要确定使用 Native UDP 时为该边写只允许 `native_udp` 的规则。
+
+证据 `.meshway/validation/v1/`（复现脚本、汇总与被否决的补丁；fixture 修改在分支 `v1/repro`，只作证据）。
+
 ## v0.1.0-alpha.22
 
 范围：v0.1.0 soak 候选。RC-1 Node 恢复状态机收敛为共享的 `Recovery` 框架（含 G16 锚点证明只解码命中的 link）；X17 包调度入向与本机两方向各有配额；F7 默认矩阵新增 `fault/throttle` 行；R4 `roam/relay` fixture 的新流使用独立源端口；MIG-2 Server 部署形态（systemd unit `meshway-server.service`、`install.sh --component server`、Release 首次附 Server tar 与 Console 静态文件、离线 `backup`）；F8a／F8b 审阅修复（回退判据为 data-dir 的 `served` 记录、迁移在发布前验证主密钥、artifact 下载预算、登录失败退避、Actions 钉到完整 SHA）；`cargo-deny` 供应链检查。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 9 与 HTTP 契约均不变（F8b 只改两处说明文字），按先 Node 后 Server 普通升级（无断网窗口、无迁移）。

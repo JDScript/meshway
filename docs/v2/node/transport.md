@@ -112,7 +112,7 @@ Linux `UdpTransport::adopt_batch` 的 socket buffer：
 
 Session 的一次 datagram `recv_batch` 可重复消费立即就绪的 provider 前缀，直至 32 帧／64 KiB 或更小的批量配置，不等待凑批。小 scratch 不强制产生额外任务交接；每次 provider poll 仍独立经过原 socket scope 检查，scratch 容量上限不变。已交付前缀之后遇到错误时，先返回有效前缀，再由下次单包或批量接收返回该错误，之后才允许新 I/O。
 
-Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。当前重放窗口见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)，性能与更大乱序范围仍须验证。
+Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。流式承载上内层 TCP 只看到外层的延迟、看不到丢包，有损路径上的表现见[流式承载在有损路径上](/v2/node/performance#stream-carriers-lossy)。当前重放窗口见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)，性能与更大乱序范围仍须验证。
 
 ## 本机接纳与完成
 

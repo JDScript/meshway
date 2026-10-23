@@ -481,6 +481,38 @@ fixture 前后对照，口径与上节相同（`exit/off` 第 16 阶段，Planck
 
 报告：`.meshway/validation/x11/`（`rows/` 每次运行的第 16 阶段 JSON，`extract.py`／`summary.txt` 汇总，`watch/` 每次 iperf 的线程 CPU）。
 
+### 流式承载在有损路径上 {#stream-carriers-lossy}
+
+Native TCP、VLESS（TCP/TLS、WS/TLS）与 Trojan 用**一条外层 TCP 连接**承载一条邻接上的全部 Mesh 包（[两类 I/O](/v2/node/transport#两类-i-o)）。内层 TCP 经它运行时有三个与实现无关的性质：
+
+1. 外层是可靠有序的，内层看不到丢包，只看到延迟。外层的瓶颈处，未发出的内层包排在外层发送缓冲（Linux 按 `tcp_wmem` 自动增长，默认上限 4 MiB）、包处理队列与 TUN 队列中；内层 TCP 的拥塞窗口没有丢包信号，会一直涨到这些队列都满。外层每秒只能送几 Mbit 时，这几 MB 就是几秒的排队。
+2. 一个外层报文丢失，其后已到达的全部字节都要等它重传（队头阻塞）；外层自己超时重传时还按指数退避。
+3. 外层停顿超过内层 RTO 时内层超时：窗口降到 1 个报文、整窗回退重传（内层的重传排在外层积压之后，自身又要等），表现为 iperf3 一到数秒 0 吞吐，随后一次几千个重传。外层连接长期存在、带着全部业务，它的拥塞窗口反映此前所有丢包，而不是每条新内层流从慢启动重新开始。
+
+Native UDP 没有这些性质：丢包直接到达内层 TCP，由它自己恢复。
+
+V1 复现（2026-10-23，Planck，`exit/off` fixture 的真实 Server／三个 release `meshwayd`，A→R→E，每容器 2 CPU；只有 A–R 链路加 `tc netem` 每方向 35 ms 与所列随机丢包，两方向都丢；内层 iperf3 TCP 单流 20 秒，A→E Mesh 地址。每格依次为：全部重复合计的 1 秒 0 吞吐区间数 · 平均接收 Mbit/s · 内层 RTT（A 的 iperf3 socket 每 0.25 秒 `ss` 采样）的中位数，括号内为最大值）：
+
+| 拥塞控制（全部节点） | 丢包 | Native UDP | Native TCP | VLESS WS/TLS |
+| --- | ---: | --- | --- | --- |
+| cubic | 0 | 0 · 315 · 74 ms | 0 · 318 · 74 ms | 0 · 317 · 75 ms |
+| cubic | 0.01 % | 0 · 312 · 74 ms | 0 · 308 · 75 ms（最大 143） | 0 · 258 · 75 ms（最大 152） |
+| cubic | 0.05 % | 0 · 194 · 71 ms | 0 · 38 · **804 ms（最大 2.3 s）** | 3 · 59 · 357 ms（最大 2.5 s） |
+| cubic | 0.1 % | 0 · 117 · 71 ms | 0 · 94 · 356 ms（最大 1.3 s） | 5 · 12 · 1.3 s（最大 3.5 s） |
+| cubic | 0.5 % | 0 · 38 · 71 ms | 7 · 4.4 · 1.5 s（最大 6.5 s） | 6 · 4.0 · 1.7 s（最大 5.1 s） |
+| cubic | 1 % | 0 · 9.1 · 71 ms | 8 · 2.3 · 2.5 s（最大 6.1 s） | 8 · 2.0 · 2.7 s（最大 6.3 s） |
+| bbr | 0–0.5 % | 0 · 236–297 · 70 ms | 0 · 189–291 · 70 ms（最大 323） | 0 · 188–293 · 70 ms（最大 339） |
+| bbr，每次在第 5／10／15 秒断 400 ms | 0 | 0 · 242 · 70 ms（最大 207） | **8** · 227 · 70 ms（最大 1.6 s） | **13** · 224 · 70 ms（最大 1.7 s） |
+
+- 重复数：cubic 0.01／0.05 % 三次，bbr 两次，断链 Native UDP／VLESS 八次（24 次断链）、Native TCP 五次（15 次），其余一次；cubic 的出口方向（A→外部服务经 E 的 NAT）与 Mesh 方向结论相同。Native TCP 与 VLESS WS/TLS 一致：现象来自外层 TCP，不来自 TLS 或 WebSocket。
+- 流式承载在 cubic 下内层重传为 0（看不到丢包），外层发送端未发出字节最多 3.8 MB；Native UDP 的内层重传随丢包增加、RTT 不变。同一链路上不经 Meshway 的单条 TCP（R→E，cubic）在 0.5 % 时同样有 10 个 0 吞吐秒：此时外层自身就是这样一条流。
+- BBR 不把随机丢包当作拥塞，外层速率在 0.5 % 时仍有约 190 Mbit/s，流式承载不出现 0 吞吐；断链（外层超时重传＋退避）时流式承载约每两次断链出现一个 0 吞吐秒，Native UDP 只降到约 46 Mbit/s。2026-10-23 现场 it7→planck（VLESS WS/TLS，发送端 BBR、接收端 cubic，约 63 ms RTT）是同一现象：0 吞吐秒中内层窗口降到 1 个报文（超时），随后一秒数百到 2,614 个重传（整窗回退）；复现中这种回退在流式承载上也出现（bbr 0.05 % 一次 2,545 个、cubic 0.1 % 一次 904 个），Native UDP 没有；同时段 it7 的 `meshwayd` 进程 CPU 60–109 %（2 核未饱和），两端无日志。OPS17／19／20 同一对节点经 Native UDP 时没有 0 吞吐区间。
+- 把外层未发出字节限制在 128 KiB（`TCP_NOTSENT_LOWAT`）的试验（`.meshway/validation/v1/rejected-notsent-lowat.patch`）只把积压移到包处理与 TUN 队列：cubic 0.05 % 时内层 RTT 中位数仍为 1.05 s／633 ms（Native TCP／VLESS），断链时八次合计仍有 11 个 0 吞吐秒（未改 13 个），cubic 0.01 % 时 VLESS 平均吞吐反而从 258 降至 203 Mbit/s，因此未采用。
+
+在 UDP 可达的边上应让 Native UDP 承载，流式承载留给 UDP 不可达的边。拓扑的承载顺序只决定拨号顺序，已建立的另一协议通道不会被替换，做法见 [Transport · 承载选择](/v2/configuration-reference/transports#carrier-choice)。
+
+脚本、逐次 JSON 与采样：`.meshway/validation/v1/`（`repro.sh`、`analyze.py`、`aggregate.md`；fixture 修改在分支 `v1/repro`，只作证据，不进入矩阵）。
+
 ### 匿名驻留与分配器对照
 
 musl system工具的Manager／Secure OOM复现，节点RSS约495／501 MiB，其中匿名约487／495 MiB；另一个R为519.33 MiB RSS、511.19 MiB匿名并有换出页。iperf匿名不足0.4 MiB，不能解释节点RSS。OrbStack启动参数`cgroup.memory=nokmem,nosocket`关闭部分内核记账，kernel/sock/slab零值不代表实际无占用；记账边界见[内存](/v2/node/dataplane#进程与容器内存记账)。
@@ -539,6 +571,7 @@ host／Linux 的 `.text` 分别为 **8,485,968 → 4,888,396 B**、**17,477,828 
 - quota不是绑核或独占；历史宿主load曾达8–17，VM uptime epoch变化也未隔离，不能把跨轮差值全部归于实现。当前表保留当时版本，最新x86／L5及全部承载／DNS组合需独立重验。
 - UDP namespace计数含iperf与warmup，不等于外层socket丢包；GRO counter也不一一对应内层包。P relay/plain外层socket drops为0时应用socket仍可溢出。CPU／吞吐／采样区间不同，不能直接相除作精确单包成本。
 - 动态ABI、连接池与全局相同排队预算、多流干扰、延迟／丢包／乱序／断连、排队取消／承载切换尚无完整L1性能对照。新增协议仍需原生同栈参照。
+- `perf:dataplane`（L2–L4）只有 Native UDP 承载；流式承载在延迟／丢包／断链下的 L5 数据只有[流式承载在有损路径上](#stream-carriers-lossy)的 V1 复现（单流、20 秒、一种拓扑），TCP 套 TCP 的排队与 0 吞吐是承载固有性质，不由实现消除。
 - 精确syscall/包、分配/复制计数、连续内存峰值、物理频率／steal与内核全局CPU未测；缺项保留null。D3内核到内核全链路零复制未完成，剩余位置见[单缓冲所有权](/v2/node/dataplane#单缓冲所有权与就地加密)。
 
 ## 历史对照
