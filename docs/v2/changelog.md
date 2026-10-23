@@ -55,7 +55,7 @@ CM-1 connectivity Manager 现场问题（`cm1/manager-receive`）：wire、IPC 1
 - B1（不变量：有界缓冲满时压力留在有计数的那一层；owner：Manager datagram 接收 `manager/datagram/receive.rs::Backlog`）：Manager 业务事件队列没有余量时，UDP 接收 owner 保留已读的一批（至多 32 帧）并停止读取 socket，后续数据报留在内核接收缓冲（溢出计入 `Udp RcvbufErrors`／`ss d`）；恢复由消费者出队腾出的槽位驱动（等待并持有该组额度，不轮询），其余分支照常。消费者 250 ms（`RECEIVE_STALL`）内没有腾出槽位时恢复读取并按原规则丢弃，停滞结束记一条 warn，因此同一 socket 上的 health／握手／探测控制数据报至多等待该上限加排空内核缓冲的时间。此前队列满即在用户态丢弃业务帧，只有 profile 计数（P3 现场的接收端缺口）。见[控制消息预算](/v2/node/connectivity#udp-控制消息预算)。
 - 测量：`perf:dataplane` 新增 `--runtime multi-thread`（`meshwayd` 的调度器；默认 current-thread 不变），默认调度下 Manager 接收 owner 不与包处理 owner 并行，复现不了队列满。
 
-验证：`a_full_event_queue_keeps_business_frames_in_the_socket_until_the_consumer_makes_room` 在旧代码上失败（192 帧只送达 63），修复后通过；Planck L3 `manager-direct` 前后对照见[CM-1 接收背压](/v2/node/performance#cm1-receive-backpressure)（2 CPU：重传 289–349 → 0，B 的 `event_full` 638–983 → 0；B 0.5 CPU、30 ms RTT：661 → 773 Mbit/s，重传 495–617 → 0）。证据 `.meshway/validation/cm1/`。
+验证：`a_full_event_queue_keeps_business_frames_in_the_socket_until_the_consumer_makes_room` 在旧代码上失败（128 帧只送达 63），修复后通过；Planck L3 `manager-direct` 前后对照见[CM-1 接收背压](/v2/node/performance#cm1-receive-backpressure)（2 CPU：重传 289–349 → 0，B 的 `event_full` 638–983 → 0；B 0.5 CPU、30 ms RTT：661 → 773 Mbit/s，重传 495–617 → 0）。证据 `.meshway/validation/cm1/`。
 
 ## v0.1.0-alpha.22
 

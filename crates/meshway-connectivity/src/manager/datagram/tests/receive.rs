@@ -43,6 +43,10 @@ async fn established(
 /// Business frames at most this many slots ahead are what the idle
 /// consumer's queue holds; the rest have to wait somewhere.
 const QUEUE_SLOTS: usize = 64;
+/// Beyond the queue: one read batch waits in the owner and the rest in the
+/// kernel buffer, few enough for an unprivileged default `rmem_max`, where
+/// further datagrams would be the kernel's (counted) drop.
+const BEYOND_QUEUE: usize = 64;
 
 async fn business(client: &UdpSocket, local: SocketAddr, count: usize) {
     for _ in 0..count {
@@ -63,7 +67,7 @@ async fn a_full_event_queue_keeps_business_frames_in_the_socket_until_the_consum
         let result = owner.run().await;
         (owner, result)
     });
-    let sent = QUEUE_SLOTS * 3;
+    let sent = QUEUE_SLOTS + BEYOND_QUEUE;
     business(&client, local, sent).await;
     tokio::time::timeout(CONTROL_WAIT, async {
         while shared.events.capacity() >= 32 {
@@ -113,7 +117,7 @@ async fn control_behind_a_stalled_consumer_is_answered_within_the_stall_bound() 
     });
     // Past the owner's Ping answer pacing.
     tokio::time::sleep(RETRY * 2).await;
-    business(&client, local, QUEUE_SLOTS * 3).await;
+    business(&client, local, QUEUE_SLOTS + BEYOND_QUEUE).await;
     let nonce = adjacency::nonce().unwrap();
     let dialer = Plan::new(&fixture.desired[0]).unwrap();
     let ping = adjacency::encode(
