@@ -83,7 +83,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | 响应 | `200 application/vnd.meshway.rules.v1` 原始字节；`ETag: "sha256:<hex>"`；`Cache-Control: private, max-age=31536000, immutable` |
 | 节点校验 | 长度等于 `bytes`、SHA-256 等于 digest、`MWRS` 结构完整且成员数等于 `entries`；任一失败丢弃并退避重试（5 秒起，上限 5 分钟） |
 | 缓存 | Control 私有目录 `identity/artifacts/sha256-<hex>.mwrs`，0400、原子 rename 写入、此后不改写，进程每 digest 读入并校验一次；只保留当前 netmap 引用的文件；重启时与 `netmap.json` 一起离线加载并校验 |
-| 并发与预算 | 每节点同时最多 2 个下载；当前 netmap 引用合计超过 64 MiB 时不下载 |
+| 并发与预算 | 节点：同时最多 2 个下载；当前 netmap 引用合计超过 64 MiB 时不下载。Server：在途下载全局最多 16 个、每节点 2 个、artifact 字节合计 64 MiB，按存储长度在读出字节之前接纳，许可持有到响应体发送完毕或连接断开；放不下即 503 `busy`（`Retry-After: 1`），节点按上面的退避重试 |
 
 新 netmap 立即生效，不等待 artifact。Engine 的 `Desired` 由 netmap 与已加载 artifact 共同算出：全部引用都已加载时即签名内容本身；有缺失时，同一 `LocalCompiler` 在投影上重算本节点出口方案——命名缺失集合的规则是 `UnavailableDependency`，first-match 在该规则停止，结果为全范围 IPv4 捕获、IPv6 sink、无 direct／unmanaged 例外；resolver socket 随之一律拒绝，绑定签名方案的 Mesh DNS 服务不可用。artifact 到达后 Control 以同一 netmap、更多 artifact 再发布，Engine 视为新的期望状态重新 apply（组件以 `Desired::same` 比较）；中继、出口在自己的投影上重算源端 selection 时同样需要该 artifact，缺失即拒绝。
 

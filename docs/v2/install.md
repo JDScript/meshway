@@ -84,6 +84,10 @@ sudo meshway status
 
 脚本幂等：内容相同则不替换、不重启，重复运行只确认服务处于运行状态。
 
+### 信任模型 {#trust-model}
+
+安装信任的是三样东西：HTTPS 传输（`curl --proto '=https'`）、GitHub Release 的发布权限（只有仓库 `release.yml` 中唯一有写权限的 `publish` job 在推送 tag 时创建 Release，其余 job 与所有 workflow 默认只读，第三方 Action 钉到完整 commit），以及同一 Release 中的 `SHA256SUMS`。校验和与产物来自同一来源，所以它防的是传输损坏与本机文件被替换，不防 Release 本身被篡改；产物**没有独立签名**，独立签名（与发布权限分离的签名钥）在 v0.1.0 之后提供。`--artifact` 的本地 tarball 先复制到脚本的私有工作目录（0700），校验与解包都只用这一份副本，校验后不再读取原路径；旁边没有 `SHA256SUMS` 时只告警、不校验。
+
 ## systemd unit
 
 unit 原文为仓库 `dist/systemd/meshwayd.service`，随每个 Release tarball 发布。
@@ -211,7 +215,7 @@ Server（`meshway-server`）作为 systemd 系统服务运行在一台 Linux 主
 | init | systemd，unit 使用 `Type=notify` |
 | 用户 | 安装脚本创建静态系统用户 `meshway-server`；不用 `DynamicUser`：它的 `StateDirectory` 经 `/var/lib/private` 符号链接暴露，与 data-dir 不接受符号链接的检查冲突，离线命令也需要以同一 UID 运行 |
 | 前置代理 | Server 只监听明文 HTTP；TLS 与 Console 静态文件由同源的前置反向代理提供，见 [Console 与 TLS](#server-proxy) |
-| 工具 | `curl`、`sha256sum`、`tar`、`od`、`runuser`、`useradd`（Debian／Ubuntu 默认具备） |
+| 工具 | `curl`、`sha256sum`、`tar`、`od`、`runuser`、`useradd`、`flock`（util-linux；Debian／Ubuntu 默认具备） |
 | 磁盘 | 迁移需要 data-dir 所在文件系统有不少于库大小 110% 的余量 |
 
 ### 安装 {#server-install}
@@ -252,12 +256,12 @@ MESHWAY_SERVER_OPTIONS=
 | 项 | 取值与理由 |
 | --- | --- |
 | 就绪 | `Type=notify`、`NotifyAccess=main`：存储已打开（含迁移与启动重编译）且监听已绑定后发 `READY=1` 与 `STATUS=Serving on <地址>`，开始停止时发 `STOPPING=1`；发送实现与 `meshwayd` 共用 `meshway-service` |
-| 启动超时 | `TimeoutStartSec=120s`；迁移的每一步（检查旧库、每张表、检查结果）发 `EXTEND_TIMEOUT_USEC`（120 秒）与 `STATUS=Migrating the database from schema <N> to <M>: …`，大库迁移只要持续推进就不会被启动超时杀掉 |
+| 启动超时 | `TimeoutStartSec=120s`；存储打开期间（迁移与启动重编译）由一个续期任务每 30 秒发 `EXTEND_TIMEOUT_USEC`（120 秒），步骤只更新 `STATUS=`（如 `Migrating the database from schema <N> to <M>: …`、`Compiling stored netmaps with this build: network <i> of <n>`），打开完成或失败即停止续期。单步耗时不受启动超时限制 |
 | 重启 | `Restart=on-failure`、`RestartSec=5s`；`RestartPreventExitStatus=78`：存储持久阻断（[退出状态](/v2/server#运行参数)）不重启，`systemctl status` 显示 `status=78`，需要人工处理；其他失败为暂态，按 5 秒重启并重新执行同一检查与迁移 |
 | 用户与权限 | `User=`／`Group=meshway-server`；`CapabilityBoundingSet=` 与 `AmbientCapabilities=` 为空（零 capability：默认端口 8420 与 STUN 3478 都在 1024 以上）；`NoNewPrivileges=yes` |
 | 文件系统 | `ProtectSystem=strict`：程序与 `/etc` 只读，进程只可写 `StateDirectory=meshway-server`（`StateDirectoryMode=0700`）；`UMask=0077`；`ProtectHome`、`PrivateTmp`、`PrivateDevices` |
 | 其余沙箱 | `ProtectHostname`、`ProtectClock`、`ProtectKernelModules`／`Logs`／`Tunables`、`ProtectControlGroups`、`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`、`RestrictNamespaces`、`RestrictRealtime`、`RestrictSUIDSGID`、`LockPersonality`、`MemoryDenyWriteExecute`、`SystemCallArchitectures=native`、`SystemCallFilter=@system-service` |
-| 日志 | `MESHWAY_LOG_FORMAT=json`、`RUST_LOG=info`，stderr 进入 journald；迁移（`Database migration started`／`Database migrated`）、持久阻断原因与首次应答 sync（`First Node sync answered by this Server process`）各有固定消息，字段见[运行日志](/v2/logging) |
+| 日志 | `MESHWAY_LOG_FORMAT=json`、`RUST_LOG=info`，stderr 进入 journald；迁移（`Database migration started`／`Database migrated`）、持久阻断原因与首次应答 sync（`First Node sync answered by this Server process`，仅诊断，回退依据是 [`served` 记录](#server-rollback)）各有固定消息，字段见[运行日志](/v2/logging) |
 
 本机定制用 `sudo systemctl edit meshway-server` 写 drop-in，不编辑安装的 unit。
 
@@ -283,6 +287,8 @@ meshway.example.com {
 
 Console 静态文件来自 Release 的 `meshway-console.tar.gz`（解包到 `root` 目录）。`MESHWAY_CONSOLE_ORIGIN` 设为该站点的 origin（`https://meshway.example.com`），Node 的 `--server` 用同一 origin。用户事件流（SSE）需要代理不缓冲响应（Caddy 对 `text/event-stream` 自动立即转发）。
 
+**登录限速**：Server 对同一邮箱、同一来源连续 5 次登录失败后按 1 秒起倍增、最长 5 分钟退避（[认证 · 登录失败退避](/v2/api/authentication#login-backoff)），来源只取 TCP 直接对端，不读 `X-Forwarded-For`。经反向代理时所有客户端的来源都是代理地址，退避因此按账户生效（攻击者可让某个账户的登录最长 5 分钟内返回 `busy`，但不会永久锁定）。按客户端限速应在代理上做，例如 nginx `limit_req zone=$binary_remote_addr` 作用于 `/api/v1/auth/login`，或 Caddy 的 rate-limit 插件；代理同时应限制请求体大小与并发连接。
+
 ### 升级 {#server-upgrade}
 
 先升级全部 Node（CLI 与 daemon 一起），再升级 Server。Server 停机期间节点按已持有的租约继续运行（默认 24 h），升级窗口远小于它。
@@ -294,8 +300,8 @@ sudo sh install.sh --component server --version v0.1.1
 | 步骤 | 行为 |
 | --- | --- |
 | 1. 预检 | 下载并校验产物；新程序 `--version` 报告 `schema: <N> (migrates from <M>)`；从 `controller.sqlite` 的文件头读 `application_id` 与 `user_version`，不是 Server 库、比新程序新或早于 M 即失败；需要迁移时检查磁盘余量。**任何一项失败都在停止服务之前退出，什么也不改** |
-| 2. 停止 | `systemctl stop meshway-server`（服务正在启动或按 `Restart=` 重启中时同样先停止，否则它持有 data-dir 锁） |
-| 3. 迁移 | `runuser -u meshway-server -- meshway-server.new migrate --data-dir /var/lib/meshway-server`：备份旧库、迁移、完整检查、启动重编译，不监听端口（库已是当前版本时只检查与重编译）。失败时库保持原样：删除新程序、重新启动原服务、报告原因并退出 |
+| 2. 停止 | `systemctl stop meshway-server`（服务正在启动或按 `Restart=` 重启中时同样先停止，否则它持有 data-dir 锁），并等到 unit 不再处于 active／activating／deactivating／reloading（至多 60 秒）；停止失败或未停稳即退出，什么也不改。随后读取 data-dir 的 [`served` 记录](#server-rollback)作为回退基准，读不出即重新启动原服务并退出 |
+| 3. 迁移 | `runuser -u meshway-server -- meshway-server.new migrate --data-dir /var/lib/meshway-server`：在发布前证明旧库与主密钥匹配，备份旧库、迁移、完整检查、启动重编译，不监听端口（库已是当前版本时只检查与重编译）。失败时按其 `Migration state:` 行（从 data-dir 读回）并核对库文件头处理，不凭退出状态推断：`unpublished`——删除新程序、重新启动原服务；`published <备份>`——持 data-dir 锁把备份放回、迁移后的库改名为 `controller.sqlite.failed-<秒>`，再启动原服务；其他（含两者不一致）——两个版本都不启动，交给运维 |
 | 4. 替换 | 原程序保留为 `meshway-server.previous`（离线命令同样），新程序原子替换，安装新 unit |
 | 5. 启动与健康 | `systemctl start` 等到 `READY=1`，再请求 `GET /api/v1/auth/options`（最多 10 次，每次间隔 1 秒） |
 | 6. 回退 | 第 5 步失败时按[回退边界](#server-rollback)自动回退 |
@@ -306,24 +312,40 @@ Server schema 变化的版本（changelog 范围句写明）由新 Server 在打
 
 ### 回退边界 {#server-rollback}
 
-**只有在新 Server 从未应答过任何 Node `sync` 时才能回退。** 新 Server 一旦签发过 netmap，节点就持有更高的 serial；回退后旧库签发的 serial 更低，节点拒绝（serial 回退），升级之后的接入、签名钥轮换与配置也随旧库丢失。此后只能前进修复（发布修正版本）。新 Server 进程第一次应答 `sync` 时记 info `First Node sync answered by this Server process`（`network_id`、`node_id`），回退以它为依据。
+**只有在新 Server 从未应答过任何 Node `sync` 时才能回退。** 新 Server 一旦签发过 netmap，节点就持有更高的 serial；回退后旧库签发的 serial 更低，节点拒绝（serial 回退），升级之后的接入、签名钥轮换与配置也随旧库丢失。此后只能前进修复（发布修正版本）。
 
-自动回退（第 5 步失败）：脚本在本次升级开始以来的 journal 中查找该消息，有则不回退并报告“fix forward”；没有则停止服务（停止后再查一次），把 `.previous` 程序与原 unit 放回；本次升级迁移过时，把新库及其 `-wal`／`-shm` 改名为 `controller.sqlite.failed-<Unix 秒>*` 留作诊断，把迁移备份改回 `controller.sqlite`，然后启动原服务并做同样的健康检查。脚本以失败退出（`rolled back to <原版本>; <新版本> was not installed`）。
+依据是 data-dir 中的 `served` 记录（0600，属主 `meshway-server`）：每个 Server 进程在发出**第一个** sync 回答之前，把它原子替换为本进程的记录并 fsync，写不成功则这次 sync 失败（503）、下次重写，所以没有记录就没有回答：
 
-手动回退（例如升级完成后才发现问题）遵守同一边界：
+```text
+meshway-server served
+boot=<本进程的随机 UUID>
+build=<构建身份>
+at_ms=<写入时刻，Unix 毫秒>
+```
+
+journal 中的 `First Node sync answered by this Server process` 只用于诊断：日志可能丢失、被轮转或查询失败，不作为依据。
+
+自动回退（第 5 步失败）：
+
+1. 读 `served`，与第 2 步旧服务停稳后读到的基准（文件不存在或其 SHA-256）比较；不同或读不出即不回退，报告 fix forward（journal 中若有上述日志一并提示）。
+2. 停止服务并等它停稳；停止失败即退出、不回退。停稳后再比较一次 `served`。
+3. 以 `flock` 取得 data-dir 的存储锁（每个 Server 进程与离线命令都持有它）；取不到即不回退。
+4. 持锁放回 `.previous` 程序与原 unit；本次升级迁移过时，把新库及其 `-wal`／`-shm` 改名为 `controller.sqlite.failed-<Unix 秒>*` 留作诊断，把迁移备份改回 `controller.sqlite`；释放锁，启动原服务并做同样的健康检查。脚本以失败退出（`rolled back to <原版本>; <新版本> was not installed`）。
+
+手动回退（例如升级完成后才发现问题）遵守同一边界：`served` 的 `build=` 若是新版本，新 Server 已应答过 sync，不得回退。
 
 ```sh
 sudo systemctl stop meshway-server
-journalctl -u meshway-server --since "<升级开始时刻>" -o cat | grep 'First Node sync answered'   # 有输出就不得回退
+systemctl is-active meshway-server                     # 须为 inactive 或 failed
+sudo cat /var/lib/meshway-server/served                # build= 为新版本就不得回退
 sudo mv /usr/local/bin/meshway-server.previous /usr/local/bin/meshway-server
 # 仅当这次升级迁移了库（脚本输出过备份路径）：
 cd /var/lib/meshway-server
-sudo -u meshway-server sh -c 'for f in controller.sqlite controller.sqlite-wal controller.sqlite-shm; do [ ! -e $f ] || mv $f $f.failed; done'
-sudo -u meshway-server mv controller.sqlite.v<旧版本>-<ms> controller.sqlite
+sudo -u meshway-server flock -n controller.lock sh -c 'for f in controller.sqlite controller.sqlite-wal controller.sqlite-shm; do [ ! -e $f ] || mv $f $f.failed; done; mv controller.sqlite.v<旧版本>-<ms> controller.sqlite'
 sudo systemctl start meshway-server
 ```
 
-新库的 `-wal`／`-shm` 必须随新库移开：留在原名下会被旧版本当作旧库的日志重放。
+新库的 `-wal`／`-shm` 必须随新库移开：留在原名下会被旧版本当作旧库的日志重放。`flock -n` 失败说明仍有进程持有 data-dir，先查明并停止它。
 
 ### 备份与恢复 {#server-backup}
 
@@ -359,7 +381,7 @@ sudo sh install.sh --component server --uninstall           # 保留库、主密
 sudo sh install.sh --component server --uninstall --purge   # 同时删除 /var/lib/meshway-server、/etc/meshway-server 与用户
 ```
 
-卸载停止并禁用服务，删除 unit、程序及其 `.previous`。不带 `--purge` 时 data-dir、设置文件、drop-in 与系统用户保留，重新安装后是同一个 Server；`--purge` 删除库与主密钥（全部秘密，不可恢复，先做[备份](#server-backup)）。
+卸载先禁用并停止服务，等到 unit 不再处于 active／activating／deactivating／reloading；停止失败或 60 秒内未停稳即退出、什么也不删。随后删除 unit、程序及其 `.previous`。不带 `--purge` 时 data-dir、设置文件、drop-in 与系统用户保留，重新安装后是同一个 Server；`--purge` 只在以 `flock` 取得 data-dir 的存储锁后删除库与主密钥（全部秘密，不可恢复，先做[备份](#server-backup)），锁被占用（例如有离线命令在运行）即不删除。
 
 ## 发布产物
 

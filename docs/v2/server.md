@@ -73,10 +73,10 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 | 退出状态 | 含义 |
 | --- | --- |
 | 0 | 正常结束 |
-| 78（`EX_CONFIG`） | 存储持久阻断，服务、`meshway-server` 的子命令与 `reset-password`／`ip-datasets` 相同：数据目录路径／归属／权限不合法，schema 版本不受支持（非 Meshway 库、比本构建新、早于最低可迁移版本），库与其版本的规范 schema 不符或完整性检查失败，主密钥与库不匹配，或离线命令遇到需要迁移的旧库。重启不会改变结果，需人工处理；unit 以 `RestartPreventExitStatus=78` 不重启 |
-| 1 | 其他失败（I/O、磁盘空间不足、监听失败、`backup` 的输出目录已存在等）：暂态，再次启动重新执行同一检查与迁移 |
+| 78（`EX_CONFIG`） | 存储持久阻断，服务、`meshway-server` 的子命令与 `reset-password`／`ip-datasets` 相同：数据目录路径／归属／权限不合法，schema 版本不受支持（非 Meshway 库、比本构建新、早于最低可迁移版本），库与其版本的规范 schema 不符或完整性检查失败，SQLite 报告库文件损坏或不是数据库（`SQLITE_CORRUPT`／`SQLITE_NOTADB`），主密钥与库不匹配（迁移在发布之前即证明），或离线命令遇到需要迁移的旧库。重启不会改变结果，需人工处理；unit 以 `RestartPreventExitStatus=78` 不重启 |
+| 1 | 其他失败（I/O、库被占用（busy）、磁盘空间不足、监听失败、`backup` 的输出目录已存在等）：暂态，再次启动重新执行同一检查与迁移 |
 
-**就绪通知**：设置了 `NOTIFY_SOCKET`（systemd `Type=notify`）时，服务在存储已打开（含迁移与启动重编译）且监听已绑定后发送 `READY=1` 与 `STATUS=Serving on <地址>`，开始停止时发送 `STOPPING=1`；迁移每一步发送 `EXTEND_TIMEOUT_USEC=120000000` 与 `STATUS=Migrating the database …`。没有 `NOTIFY_SOCKET` 时不发送；发送失败只记 warn，不改变行为。
+**就绪通知**：设置了 `NOTIFY_SOCKET`（systemd `Type=notify`）时，服务在存储已打开（含迁移与启动重编译）且监听已绑定后发送 `READY=1` 与 `STATUS=Serving on <地址>`，开始停止时发送 `STOPPING=1`。存储打开期间由一个续期任务每 30 秒发送 `EXTEND_TIMEOUT_USEC=120000000`，步骤变化时随之更新 `STATUS=`（`Migrating the database from schema <N> to <M>: …`、`Compiling stored netmaps with this build: network <i> of <n>` 等）；打开完成或失败时续期任务停止并结束。单个步骤（例如复制一张大表）耗时多久都不会被启动超时杀掉。没有 `NOTIFY_SOCKET` 时不发送；发送失败只记 warn，不改变行为。
 
 **版本**：`meshway-server --version` 输出构建身份、本构建写入的 schema 版本与最低可迁移版本，以及 target；`-V` 只输出第一行的版本号。升级脚本据第二行在停止服务之前检查 data-dir：
 
@@ -86,7 +86,7 @@ schema: 9 (migrates from 8)
 target: x86_64-unknown-linux-musl
 ```
 
-新进程第一次应答 Node `sync` 时记 info `First Node sync answered by this Server process`（`network_id`、`node_id`），只记一次：从此节点可能持有它签发的租约，升级不再能回退（[回退边界](/v2/install#server-rollback)）。
+**served 记录**：进程在发出第一个 Node `sync` 回答**之前**，把 data-dir 的 `served` 原子替换（0600、fsync）为本进程的记录（`boot`：每个进程新生成的 UUID；`build`；`at_ms`），每个进程只写一次；写入失败或结果未知时该 sync 以 503 失败、不发出租约，下一次 sync 重写。从此节点可能持有它签发的租约，升级不再能回退；`served` 是[回退边界](/v2/install#server-rollback)的唯一依据。同时记 info `First Node sync answered by this Server process`（`network_id`、`node_id`，只记一次），仅作诊断。
 
 每次打开存储（服务启动及下列离线命令）在受理请求之前按本构建重编译全部存活网络的已存 netmap：同一构建不写任何行，换了构建只有内容变化的节点得到新 serial，升级后无需手动触发重编译。规则与耗时见 [Netmap 设计 · Server 侧](/v2/node/netmap-design#server-侧)，升级顺序见 [Server 升级](/v2/install#server-upgrade)。
 
@@ -115,12 +115,19 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
   migrate --data-dir /absolute/private/data-dir
 ```
 
-成功时 stdout 为 `Database migrated from schema 8 to 9 in <ms> ms; the previous database is kept as <path>.`，库已是当前版本时为 `Database is already at this build's schema; nothing migrated.`；失败时数据库保持原样，退出状态见[运行参数](#运行参数)。其他离线命令（`rotate-netmap-key`、`backup`、`reset-password`、`ip-datasets`）遇到需要迁移的旧库时拒绝并提示先运行本命令，不隐式迁移，均以 78 退出。
+stdout 先是一行 `Migration state: <状态>`，供脚本判断，然后成功时为 `Database migrated from schema 8 to 9 in <ms> ms; the previous database is kept as <path>.`，库已是当前版本时为 `Database is already at this build's schema; nothing migrated.`。失败时状态行由命令在失败后从 data-dir 读回（库文件头与 `schema_migrations` 中本次开始以后的记录），不由失败的方式推断；退出状态见[运行参数](#运行参数)。
+
+| 状态行 | 含义 |
+| --- | --- |
+| `current` | 库已是当前版本，没有迁移 |
+| `published <备份路径>` | 本次迁移已发布：`controller.sqlite` 是新版本库，旧库保存在该路径（成功时，或发布之后才失败时） |
+| `unpublished` | 失败，什么也没有发布：`controller.sqlite` 仍是原来的库 |
+| `unknown` | 失败，且 data-dir 无法读回（被占用、库不可读或两者都不是）：由运维检查 |其他离线命令（`rotate-netmap-key`、`backup`、`reset-password`、`ip-datasets`）遇到需要迁移的旧库时拒绝并提示先运行本命令，不隐式迁移，均以 78 退出。
 
 | 项 | 行为 |
 | --- | --- |
 | 支持范围 | 每个发布版本保证可从上一发布版本迁移；代码保留从最低可迁移版本（当前为 schema 8）起的整条链，跨多个版本时逐级执行 |
-| 过程 | 先以旧版本的规范 schema 完整检查旧库，再在 data-dir 内的 staging 文件中按目标版本规范 schema 新建库、逐表复制全部行、同一事务内完整检查，最后原子替换 `controller.sqlite`；规则见[持久数据库字段 · 迁移](/v2/storage/database#migration) |
+| 过程 | 先以旧版本的规范 schema 完整检查旧库并证明 `master-key` 与旧库的主密钥绑定匹配（不匹配即以 78 退出，什么也不发布），再在 data-dir 内的 staging 文件中按目标版本规范 schema 新建库、逐表复制全部行、同一事务内完整检查，最后原子替换 `controller.sqlite`；规则见[持久数据库字段 · 迁移](/v2/storage/database#migration) |
 | 备份 | 旧库文件原样保留为 `controller.sqlite.v<旧版本>-<Unix 毫秒>`（0600，与主密钥同在 data-dir），保留最新 3 份；它只能由对应旧版本的 Server 打开 |
 | 中断 | 任一时刻 `controller.sqlite` 都是完整的旧库或完整的新库；中断后下一次启动丢弃 staging 并重新迁移 |
 | 空间 | 开始前要求 data-dir 所在文件系统可用空间不少于库大小的 110%（跨多个版本时为 2 倍），不足即暂态失败 |
@@ -139,10 +146,10 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 
 | 项 | 行为 |
 | --- | --- |
-| 输出 | `--output` 必须是尚不存在的绝对路径；与 data-dir 相同，每一级上级目录的属主须为 root 或运行用户、且不可被其他用户写入（粘滞位目录除外），父目录须可由运行用户写入；创建为 0700，内含 `controller.lock`、`controller.sqlite`、`master-key`，文件均 0600。输出目录本身就是一个 data-dir，Server 可直接以它启动 |
+| 输出 | `--output` 必须是尚不存在的绝对路径，由命令以“仅新建”方式创建（同名已存在即拒绝，从不接管已有目录）；与 data-dir 相同，每一级上级目录的属主须为 root 或运行用户、且不可被其他用户写入（粘滞位目录除外），父目录须可由运行用户写入；创建为 0700，内含 `controller.lock`、`controller.sqlite`、`master-key`，文件均 0600。输出目录本身就是一个 data-dir，Server 可直接以它启动 |
 | 一致性 | 持有源 data-dir 的独占锁，不写源库；先以当前 schema 完整检查源库并证明主密钥与库匹配，再以 SQLite `VACUUM INTO` 复制，复制主密钥，最后对副本做同样的完整检查与主密钥绑定检查并 `fsync` |
 | 拒绝 | 需要迁移的旧库、不受支持或损坏的库、主密钥不匹配：以 78 退出（同其他离线命令）；data-dir 中没有数据库也拒绝。输出已存在、上级目录不满足上述条件或空间不足（需库大小 110%）：以 1 退出 |
-| 失败 | 中途失败时删除已写出的全部文件与输出目录，不留下部分复制的秘密 |
+| 失败 | 中途失败时删除本次写出的文件（库及其日志、主密钥、锁）与本次创建的输出目录，不留下部分复制的秘密；目录中出现了别的文件时只删自己的、保留目录并报告 |
 | 输出行 | `Backed up the database (schema 9, <bytes> bytes) and the master key to <path>.` |
 
 库加主密钥是这台 Server 的全部秘密，含 netmap 签名钥；只有库没有主密钥的备份无法解密。保管与恢复的约束见[安装 · 备份与恢复](/v2/install#server-backup)。
