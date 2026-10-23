@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.22
+
+范围：v0.1.0 soak 候选。RC-1 Node 恢复状态机收敛为共享的 `Recovery` 框架（含 G16 锚点证明只解码命中的 link）；X17 包调度入向与本机两方向各有配额；F7 默认矩阵新增 `fault/throttle` 行；R4 `roam/relay` fixture 的新流使用独立源端口；MIG-2 Server 部署形态（systemd unit `meshway-server.service`、`install.sh --component server`、Release 首次附 Server tar 与 Console 静态文件、离线 `backup`）；F8a／F8b 审阅修复（回退判据为 data-dir 的 `served` 记录、迁移在发布前验证主密钥、artifact 下载预算、登录失败退避、Actions 钉到完整 SHA）；`cargo-deny` 供应链检查。`compilerVersion` `meshway-netmap-4`、IPC 13、wire 6、Server schema 9 与 HTTP 契约均不变（F8b 只改两处说明文字），按先 Node 后 Server 普通升级（无断网窗口、无迁移）。
 
 F8a 里程碑 D 审阅的 Node 侧修复（REV-D2，`f8a/node-review-fixes`）：wire、IPC 13、`compilerVersion`、Server schema 与 HTTP 契约均不变，无新 flag。
 
