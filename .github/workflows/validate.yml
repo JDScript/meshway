@@ -74,6 +74,10 @@ concurrency:
   group: validate-${{ github.ref }}
   cancel-in-progress: false
 
+# Every job reads; only the job that creates a Release writes (release.yml).
+permissions:
+  contents: read
+
 jobs:
   matrix:
     runs-on: [self-hosted, linux, x64, docker, cgroup2, planck]
@@ -91,8 +95,8 @@ jobs:
               --security-opt no-new-privileges -v "$GITHUB_WORKSPACE/.meshway:/m" \
               alpine:3.20 chown -hR "$(id -u):$(id -g)" /m
           fi
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.8.14
           install_args: --locked
@@ -120,7 +124,7 @@ jobs:
           echo "Evidence: $(hostname):$keep" >> "$GITHUB_STEP_SUMMARY"
           # A full matrix with pcap is ~4 GiB; keep the eight most recent runs.
           find "$(dirname "$keep")" -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +9 | xargs -r rm -rf
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: validate-matrix-${{ github.run_id }}

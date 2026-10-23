@@ -11,6 +11,7 @@ mod email;
 mod management;
 mod password;
 mod secret;
+mod throttle;
 pub use management::{
     AccountSession, AccountSessionPage, IssuedReset, ResetInspection, RevokeSessions,
 };
@@ -96,6 +97,8 @@ pub struct Accounts {
     handle: Handle,
     options: Options,
     delegation: std::sync::Arc<delegation::DelegationClients>,
+    /// Failed-login backoff, shared by every handle of one App.
+    throttle: throttle::Throttle,
 }
 
 /// A one-time authorization code for a delegation client; the Console appends
@@ -121,6 +124,7 @@ impl Accounts {
             handle,
             options,
             delegation,
+            throttle: throttle::Throttle::default(),
         }
     }
 
@@ -219,11 +223,35 @@ impl Accounts {
         password: Secret,
         request_id: RequestId,
     ) -> Result<IssuedSession, Error> {
-        self.login_from_client(email, password, request_id, None)
+        self.login_from_client(email, password, request_id, None, None)
             .await
     }
 
+    /// `source` is the direct peer address (no forwarded header); failed
+    /// logins of one account from one source back off (`throttle`), and an
+    /// attempt while closed is `Busy` without computing the password hash.
     pub(crate) async fn login_from_client(
+        &self,
+        email: String,
+        password: Secret,
+        request_id: RequestId,
+        client_label: Option<String>,
+        source: Option<std::net::IpAddr>,
+    ) -> Result<IssuedSession, Error> {
+        let attempt = self.throttle.admit(throttle::Key::new(&email, source))?;
+        let result = self
+            .login_attempt(email, password, request_id, client_label)
+            .await;
+        match &result {
+            Ok(_) => attempt.finish(false),
+            Err(Error::InvalidCredentials) => attempt.finish(true),
+            // Busy, storage and the rest say nothing about the credentials.
+            Err(_) => drop(attempt),
+        }
+        result
+    }
+
+    async fn login_attempt(
         &self,
         email: String,
         password: Secret,

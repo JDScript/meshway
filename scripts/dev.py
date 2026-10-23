@@ -407,7 +407,8 @@ class LocalServices:
             handle.write(result.stderr)
         if result.returncode:
             kind = "persistent storage block" if result.returncode == 78 else "transient failure"
-            raise DevError(f"server: migration failed ({kind}, exit {result.returncode}); the database is unchanged; inspect private service log")
+            state = next((line for line in result.stdout.splitlines() if line.startswith("Migration state: ")), "Migration state: unknown")
+            raise DevError(f"server: migration failed ({kind}, exit {result.returncode}; {state}); inspect private service log")
         print(result.stdout.strip(), flush=True)
 
     def start(self, service, log_filter=None):

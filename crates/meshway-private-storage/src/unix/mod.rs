@@ -19,15 +19,30 @@ const FILE_FLAGS: OFlags = OFlags::RDWR
     .union(OFlags::CLOEXEC)
     .union(OFlags::NONBLOCK);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Create {
+    /// Open an existing directory only.
+    No,
+    /// Create the directory when absent, or open it.
+    Missing,
+    /// Create the directory; an existing name is `None`.
+    New,
+}
+
 pub(super) fn open(path: &Path, lock_name: &str) -> Result<Directory, Error> {
-    open_owned(path, lock_name, true)?.ok_or(Error::Io)
+    open_owned(path, lock_name, Create::Missing)?.ok_or(Error::Io)
 }
 
 pub(super) fn open_existing(path: &Path, lock_name: &str) -> Result<Option<Directory>, Error> {
-    open_owned(path, lock_name, false)
+    open_owned(path, lock_name, Create::No)
 }
 
-fn open_owned(path: &Path, lock_name: &str, create: bool) -> Result<Option<Directory>, Error> {
+pub(super) fn create_new(path: &Path, lock_name: &str) -> Result<Option<Directory>, Error> {
+    open_owned(path, lock_name, Create::New)
+}
+
+fn open_owned(path: &Path, lock_name: &str, mode: Create) -> Result<Option<Directory>, Error> {
+    let create = mode != Create::No;
     if !path.is_absolute() {
         return Err(Error::InvalidPath);
     }
@@ -58,6 +73,7 @@ fn open_owned(path: &Path, lock_name: &str, create: bool) -> Result<Option<Direc
     if create {
         match mkdirat(&parent, *name, Mode::from_raw_mode(0o700)) {
             Ok(()) => parent.sync_all().map_err(|_| Error::Io)?,
+            Err(Errno::EXIST) if mode == Create::New => return Ok(None),
             Err(Errno::EXIST) => {}
             Err(error) => return Err(io_error(error)),
         }

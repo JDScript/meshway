@@ -33,6 +33,19 @@ pub(crate) fn exists(tx: &Transaction<'_>, digest: &Digest) -> Result<bool, Erro
         .is_some())
 }
 
+/// The stored length of `digest`'s bytes; `NotFound` when absent.
+pub(crate) fn len(tx: &Transaction<'_>, digest: &Digest) -> Result<usize, Error> {
+    let len: i64 = tx
+        .query_row(
+            "SELECT length(data) FROM rule_set_artifacts WHERE digest=?1",
+            [digest.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(Error::NotFound)?;
+    usize::try_from(len).map_err(|_| Error::decode("rule_set_artifacts.data"))
+}
+
 /// The stored bytes, checked against their digest.
 pub(crate) fn load(tx: &Transaction<'_>, digest: &Digest) -> Result<Vec<u8>, Error> {
     let bytes: Vec<u8> = tx

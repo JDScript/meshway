@@ -56,10 +56,26 @@ pub(crate) enum SchemaError {
     Sqlite,
 }
 
+/// SQLite proving the file is not a database or is damaged is a proven
+/// inconsistency (persistent); I/O, busy, a full disk and the rest are
+/// transient.
 impl From<rusqlite::Error> for SchemaError {
-    fn from(_: rusqlite::Error) -> Self {
-        Self::Sqlite
+    fn from(error: rusqlite::Error) -> Self {
+        if damaged(error.sqlite_error_code()) {
+            Self::Integrity
+        } else {
+            Self::Sqlite
+        }
     }
+}
+
+/// `SQLITE_CORRUPT` or `SQLITE_NOTADB`: the database file itself is damaged
+/// or not a database, which no restart changes.
+pub(crate) fn damaged(code: Option<rusqlite::ErrorCode>) -> bool {
+    matches!(
+        code,
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    )
 }
 
 pub(crate) fn initialize<T, E: From<SchemaError>>(

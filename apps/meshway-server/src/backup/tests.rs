@@ -4,6 +4,19 @@ use crate::{App, Settings};
 use meshway_model::RequestId;
 use std::os::unix::fs::PermissionsExt;
 
+thread_local! {
+    /// A file another writer leaves in the output, then a failed copy.
+    static INTRUDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn after_copy(output: &Path) -> Result<(), AppError> {
+    if INTRUDE.get() {
+        std::fs::write(output.join("foreign"), b"not the backup's").unwrap();
+        return Err(AppError::BackupOutput);
+    }
+    Ok(())
+}
+
 fn request() -> RequestId {
     RequestId::new(random_uuid().unwrap()).unwrap()
 }
@@ -86,6 +99,17 @@ async fn an_existing_output_or_a_running_server_writes_nothing() {
         Err(AppError::BackupOutput)
     );
     assert_eq!(std::fs::read_dir(&existing).unwrap().count(), 0);
+    // A private directory of the same user with its own files is not adopted.
+    let private = root.join("private");
+    std::fs::create_dir(&private).unwrap();
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(private.join("keep"), b"kept").unwrap();
+    assert_eq!(
+        backup(data.clone(), private.clone()).await,
+        Err(AppError::BackupOutput)
+    );
+    assert_eq!(std::fs::read(private.join("keep")).unwrap(), b"kept");
+    assert_eq!(std::fs::read_dir(&private).unwrap().count(), 1);
 
     let running = App::open(Settings::new(data.clone())).await.unwrap();
     let output = root.join("while-running");
@@ -121,4 +145,36 @@ async fn a_mismatched_master_key_is_refused_before_anything_is_copied() {
     let output = root.join("backup");
     assert_eq!(backup(data, output.clone()).await, Err(AppError::MasterKey));
     assert!(!output.exists());
+}
+
+/// A failed backup removes what it wrote and the directory it created; a
+/// file someone else put there meanwhile stays, and so does the directory.
+#[tokio::test]
+async fn a_failed_backup_removes_only_what_it_wrote() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let data = installation(&root).await;
+    let output = root.join("backup");
+    let data_dir = data.clone();
+    let target = output.clone();
+    let failed = tokio::task::spawn_blocking(move || {
+        INTRUDE.set(true);
+        let result = run(&data_dir, &target);
+        INTRUDE.set(false);
+        result
+    })
+    .await
+    .unwrap();
+    assert_eq!(failed, Err(AppError::BackupOutput));
+    let mut names: Vec<_> = std::fs::read_dir(&output)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["foreign"]);
+    std::fs::remove_file(output.join("foreign")).unwrap();
+    std::fs::remove_dir(&output).unwrap();
+    // Without the intruder the same backup succeeds.
+    backup(data, output.clone()).await.unwrap();
 }

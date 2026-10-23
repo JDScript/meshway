@@ -163,3 +163,28 @@ fn read_only_files_are_published_once_checked_and_listed() {
     directory.remove_read_only("a.bin").unwrap();
     assert_eq!(directory.names().unwrap(), ["w.bin"]);
 }
+
+#[test]
+fn a_new_directory_is_created_once_and_an_existing_name_is_never_adopted() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("owner");
+    let created = Directory::create_new(&path, "lock").unwrap().unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+    created.replace("state", b"mine").unwrap();
+    drop(created);
+    // Existing: a private directory of the same owner, an empty one, a file.
+    assert!(Directory::create_new(&path, "lock").unwrap().is_none());
+    let empty = temp.path().canonicalize().unwrap().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    std::fs::set_permissions(&empty, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(Directory::create_new(&empty, "lock").unwrap().is_none());
+    assert!(!empty.join("lock").exists());
+    let file = temp.path().canonicalize().unwrap().join("file");
+    std::fs::write(&file, b"x").unwrap();
+    assert!(Directory::create_new(&file, "lock").unwrap().is_none());
+    // `open` keeps adopting an existing directory.
+    assert!(Directory::open(&path, "lock").is_ok());
+}

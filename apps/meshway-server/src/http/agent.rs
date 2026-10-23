@@ -73,6 +73,7 @@ impl utoipa::ToSchema for ArtifactBytes {}
 ///
 /// Requires a Node session. `digest` (`sha256:<64 lowercase hex>`) must be referenced by a netmap the Server stored for the calling Node that can still be under a lease (the current one, or one replaced less than a lease validity ago); otherwise, including an unknown digest, the answer is 404.
 /// The body is the immutable artifact; the Node checks its length and digest against the netmap reference before use.
+/// Downloads in flight are bounded (16 at once, 2 per Node, 64 MiB of artifact bytes together, each held until its body is sent); one that does not fit is `busy`.
 #[utoipa::path(get,path="/agent-api/v1/artifacts/{digest}",operation_id="getRuleSetArtifact",tag="execution",security(("nodeSession"=[])),params(("digest"=String,Path,description="`sha256:` and the lowercase hex SHA-256 of the artifact.")),responses((status=200,content_type="application/vnd.meshway.rules.v1",body=inline(ArtifactBytes),description="The artifact bytes; `ETag` is the digest and `Cache-Control` is `private, max-age=31536000, immutable`."),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="node_identity_rejected"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 pub(super) async fn artifact(
     State(service): State<crate::netmap::Netmaps>,
@@ -82,20 +83,31 @@ pub(super) async fn artifact(
 ) -> Result<axum::response::Response, HttpError> {
     use axum::{http::header, response::IntoResponse};
     let token = node_bearer(&headers, id)?;
-    let bytes = service
+    let crate::netmap::downloads::Download { bytes, permit } = service
         .artifact(token, digest.clone())
         .await
         .map_err(|e| HttpError::domain(id, e))?;
+    let length = bytes.len();
+    // The body owns the download permit: it is returned when the body has
+    // been sent in full or the response is dropped.
+    let body = axum::body::Body::from_stream(futures_util::stream::unfold(
+        (Some(axum::body::Bytes::from(bytes)), Some(permit)),
+        |(bytes, permit)| async move {
+            let bytes = bytes?;
+            Some((Ok::<_, std::convert::Infallible>(bytes), (None, permit)))
+        },
+    ));
     Ok((
         [
             (header::CONTENT_TYPE, meshway_rules::MEDIA_TYPE.to_owned()),
+            (header::CONTENT_LENGTH, length.to_string()),
             (header::ETAG, format!("\"{digest}\"")),
             (
                 header::CACHE_CONTROL,
                 "private, max-age=31536000, immutable".to_owned(),
             ),
         ],
-        bytes,
+        body,
     )
         .into_response())
 }

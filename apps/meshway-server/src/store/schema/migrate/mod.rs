@@ -23,26 +23,22 @@
 use std::path::Path;
 use std::time::Instant;
 
-use rusqlite::{Connection, OpenFlags, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use super::{APPLICATION_ID, MIN_MIGRATABLE, SchemaError, VERSION, history, identity, validate_as};
+use crate::app::startup::Progress;
 use crate::app::{AppError, Migrated};
 use crate::directory::{Directory, backup_name};
 use crate::settings::Migration;
 
 mod v9;
 
-/// How long one migration step may take before the service manager's start
-/// timeout applies again; every step renews it.
-const STEP_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// Startup is progressing: a service manager waiting for readiness extends
-/// its start timeout by [`STEP_BUDGET`] (nothing outside a service).
-fn progress(from: i64, to: i64, step: &str) {
-    meshway_service::extend_startup(
-        STEP_BUDGET,
-        &format!("Migrating the database from schema {from} to {to}: {step}"),
-    );
+/// The step shown as the service status; the start timeout itself is renewed
+/// by the opening's [`Progress`] owner however long a step takes.
+fn progress(progress: &Progress, from: i64, to: i64, step: &str) {
+    progress.status(&format!(
+        "Migrating the database from schema {from} to {to}: {step}"
+    ));
 }
 
 /// What a level does besides copying every table its input and output
@@ -83,14 +79,16 @@ const CURRENT: Schema = Schema {
 pub(crate) fn prepare(
     directory: &mut Directory,
     migration: Migration,
+    status: &Progress,
 ) -> Result<Option<Migrated>, AppError> {
-    prepare_as(directory, migration, &CURRENT)
+    prepare_as(directory, migration, &CURRENT, status)
 }
 
 pub(super) fn prepare_as(
     directory: &mut Directory,
     migration: Migration,
     schema: &Schema,
+    status: &Progress,
 ) -> Result<Option<Migrated>, AppError> {
     let target = schema.version;
     directory.discard_staging()?;
@@ -122,7 +120,7 @@ pub(super) fn prepare_as(
     if migration == Migration::Refuse {
         return Err(AppError::MigrationRequired);
     }
-    migrate(directory, old, version, schema).map(Some)
+    migrate(directory, old, version, schema, status).map(Some)
 }
 
 fn migrate(
@@ -130,16 +128,20 @@ fn migrate(
     mut old: Connection,
     from: i64,
     schema: &Schema,
+    status: &Progress,
 ) -> Result<Migrated, AppError> {
     let target = schema.version;
     let started = Instant::now();
     let started_at = crate::store::execution::now().map_err(|_| AppError::Database)?;
     tracing::info!(from, to = target, "Database migration started");
-    progress(from, target, "checking the database");
+    progress(status, from, target, "checking the database");
 
     // Only a database that is exactly what version `from` writes is migrated.
     old.pragma_update(None, "query_only", true)
         .map_err(sqlite)?;
+    // The master key is part of the proof: a database migrated and published
+    // for a key that does not open it would leave neither the old build nor
+    // this one able to start (the old file is only a backup by then).
     let proof = (|| {
         let transaction = old.transaction_with_behavior(TransactionBehavior::Deferred)?;
         validate_as(
@@ -147,12 +149,21 @@ fn migrate(
             from,
             (schema.history)(from).ok_or(SchemaError::Unsupported)?,
         )?;
+        let key = crate::secrets::check(&transaction, directory);
         transaction.rollback()?;
-        Ok::<_, SchemaError>(())
+        Ok::<_, SchemaError>(key)
     })();
-    if let Err(error) = proof {
-        tracing::error!(from, %error, "Database to migrate is not a valid database of its version");
-        return Err(error.into());
+    match proof {
+        Err(error) => {
+            tracing::error!(from, %error, "Database to migrate is not a valid database of its version");
+            return Err(error.into());
+        }
+        Ok(Err(error)) => {
+            let error = AppError::from(error);
+            tracing::error!(from, %error, "Database to migrate does not match the master key; nothing was changed");
+            return Err(error);
+        }
+        Ok(Ok(())) => {}
     }
     #[cfg(test)]
     tests::fault(tests::Point::Proved);
@@ -210,7 +221,7 @@ fn migrate(
             backup: &backup,
         });
         let sql = (schema.history)(to).ok_or(AppError::UnsupportedSchema)?;
-        let step = |detail: &str| progress(from, target, &format!("schema {to}: {detail}"));
+        let step = |detail: &str| progress(status, from, target, &format!("schema {to}: {detail}"));
         match build(level, sql, &staging_path, &source_path, record, &step) {
             Ok(copied) => (tables, rows) = copied,
             Err(error) => {
@@ -245,6 +256,62 @@ fn migrate(
         to: target,
         backup: directory.path().join(backup),
         elapsed,
+    })
+}
+
+/// What a failed `migrate` left, read back from the data directory alone
+/// (the database identity and its `schema_migrations` record), never from
+/// how the attempt ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationOutcome {
+    /// The database name holds the database as it was: nothing was published.
+    Unpublished { schema: i64 },
+    /// A migration started at or after the given time was published: the
+    /// database is of this build's schema and the replaced one is `backup`.
+    Published {
+        from: i64,
+        backup: std::path::PathBuf,
+    },
+    /// The directory could not be read or holds neither.
+    Unknown,
+}
+
+/// The outcome of a migration attempted since `since_ms` (Unix ms) on
+/// `data_dir`; it takes the storage lock, so the attempt must have ended.
+pub fn outcome(data_dir: &Path, since_ms: i64) -> MigrationOutcome {
+    let read = || -> Result<MigrationOutcome, AppError> {
+        let directory = Directory::open(data_dir)?;
+        let db = Connection::open_with_flags(
+            directory.database_path(),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .map_err(sqlite)?;
+        let (application, version) = identity(&db)?;
+        if application != APPLICATION_ID || version > VERSION {
+            return Ok(MigrationOutcome::Unknown);
+        }
+        if version < VERSION {
+            return Ok(MigrationOutcome::Unpublished { schema: version });
+        }
+        let published: Option<(i64, String)> = db
+            .query_row(
+                "SELECT from_version, backup FROM schema_migrations WHERE started_at >= ?1 ORDER BY sequence DESC LIMIT 1",
+                [since_ms],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(sqlite)?;
+        Ok(match published {
+            Some((from, backup)) => MigrationOutcome::Published {
+                from,
+                backup: directory.path().join(backup),
+            },
+            None => MigrationOutcome::Unpublished { schema: version },
+        })
+    };
+    read().unwrap_or_else(|error| {
+        tracing::warn!(%error, "Migration outcome not readable");
+        MigrationOutcome::Unknown
     })
 }
 
@@ -607,6 +674,7 @@ fn undeclared(detail: String) -> AppError {
 fn sqlite(error: rusqlite::Error) -> AppError {
     match error.sqlite_error_code() {
         Some(rusqlite::ErrorCode::DiskFull) => AppError::InsufficientSpace,
+        code if super::damaged(code) => AppError::StorageIntegrity,
         _ => AppError::Database,
     }
 }

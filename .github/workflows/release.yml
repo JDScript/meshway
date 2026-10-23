@@ -15,6 +15,10 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Every job reads; only the job that creates a Release writes (release.yml).
+permissions:
+  contents: read
+
 jobs:
   version:
     # The tag must name the workspace version exactly, and the changelog must
@@ -25,7 +29,7 @@ jobs:
       prerelease: ${{ steps.check.outputs.prerelease }}
       tag: ${{ steps.check.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: check
         env:
           TAG: ${{ github.ref_name }}
@@ -54,14 +58,14 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.8.14
           install_args: --locked
       - run: mise run setup
       - run: mise run build:console
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: console-${{ github.sha }}
           path: apps/meshway-web-console/dist/
@@ -79,14 +83,14 @@ jobs:
       CARGO_INCREMENTAL: "0"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.8.14
           install_args: --locked
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: "*-x86_64-unknown-linux-musl-${{ github.sha }}"
           path: artifacts
@@ -99,24 +103,24 @@ jobs:
           mise exec -- python3 scripts/ci/server-upgrade.py --current-server "$server/meshway-server" \
             --node-bin "$node" --report server-upgrade.json
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: server-upgrade-${{ github.sha }}
           path: server-upgrade.json
           if-no-files-found: ignore
           retention-days: 14
 
-  publish:
+  package:
+    # Read-only like every job but `publish`: on workflow_dispatch nothing
+    # here can write to the repository.
     needs: [version, build, console, server-upgrade]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
-    permissions:
-      contents: write
     env:
       TAG: ${{ needs.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: "*-${{ github.sha }}"
           path: artifacts
@@ -166,14 +170,30 @@ jobs:
             cat release/SHA256SUMS
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets-${{ github.sha }}
           path: release/
           retention-days: 14
+
+  publish:
+    # The only job with write access, and only for a pushed tag: it creates
+    # the GitHub Release from the packaged assets.
+    if: github.event_name == 'push'
+    needs: [version, package]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets-${{ github.sha }}
+          path: release
       - name: Release notes from the changelog
-        if: github.event_name == 'push'
         run: |
           set -eu
           awk -v heading="## $TAG" '$0 == heading { keep = 1; next } keep && /^## / { exit } keep' docs/v2/changelog.md > release-notes.md
@@ -181,8 +201,7 @@ jobs:
           # Site-relative doc links point at the tagged sources on GitHub.
           sed -i -E "s|\]\(/v2/([^)#]*)(#[^)]*)?\)|](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/v2/\1.md\2)|g" release-notes.md
           printf '\nInstall: see `docs/v2/install.md`. Verify assets with `sha256sum -c SHA256SUMS`.\n' >> release-notes.md
-      - if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
@@ -212,8 +231,8 @@ jobs:
       TAG: ${{ github.ref_name }}
       RULES_REPO: meshway-org/meshway-rules
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: node-x86_64-unknown-linux-musl-${{ github.sha }}
           path: artifacts

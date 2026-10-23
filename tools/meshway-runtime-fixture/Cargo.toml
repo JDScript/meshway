@@ -1,6 +1,7 @@
 [package]
 name = "meshway-runtime-fixture"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Isolated real daemon and CLI networking conformance actors"

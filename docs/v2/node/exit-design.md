@@ -225,6 +225,8 @@ conntrack 精确删除由 Underlay 唯一的 conntrack 模块经 ctnetlink（`NF
 
 **已交付（X6）。**Noise 证明回答来自出口，不证明出口上报的域名／地址自然有权扩大准入；普通 State 或源端自报 hostname 都不能创建关联。关联只由下面的受控解析任务产生，配置语义见 [Routing · Rule match](/v2/configuration-reference/routing#rule-match) 与 [Access · 域名授权](/v2/configuration-reference/access#domains)。
 
+**信任域**：指定的 DNS 出口属于它所服务的源的域名策略信任域——它可以为该源提交匹配名称规则的公网地址作为可信关联，Server 只校验任务、权限与形式（下表），**不独立验证 DNS 回答的真实性**。不诚实的出口能把任意公网地址关联到它所服务的名称上（不能关联私网、Mesh 或链路本地地址），所以出口必须是可信节点；权限侧的说明见[操作权限 · DNS 出口的信任域](/v2/permissions#dns-exit-trust)。
+
 **任务**由 Server 预先签发且常驻：出口 E 的已签 netmap 中 `ServeExitResolver { services }` 的每个 `DnsService` 就是一份任务，绑定 origin（`service.source`）、DNS plan（整份 service，含完整路径、源 selection `generation` 与出口 role）、出口 resolver（E）、revision 与内容（E 与源各自的 `NetmapRef`）以及期限（netmap 租约）。名称与 nonce 由每次完成填入：
 
 | 步骤 | owner | 内容 |

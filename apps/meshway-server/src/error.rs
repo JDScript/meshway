@@ -145,6 +145,10 @@ pub enum Unavailability {
     Entropy,
     #[error("the Node's netmap is unavailable")]
     Netmap,
+    /// The data directory record that this process serves Nodes could not
+    /// be made durable (see `netmap::served`).
+    #[error("the served record could not be written")]
+    ServedRecord,
 }
 
 /// Why a storage operation failed. Labels name a table/column or operation,

@@ -119,11 +119,13 @@ pub(super) async fn register(
 /// Authenticate an account and issue a user session.
 ///
 /// The opaque bearer token is delivered in this response; invalid credentials return a uniform 401 error.
+/// After five failed logins in a row for one email from one client address, further attempts are `busy` for 1 second, doubling up to 5 minutes, until a login succeeds or 15 minutes pass without a failure.
 #[utoipa::path(post, path = "/api/v1/auth/login", operation_id = "login", tag = "auth", request_body = LoginRequest,
     responses((status = 200, body = SessionIssuedResponse), (status = 400, body = ErrorResponse, description = "invalid_request"), (status = 401, body = ErrorResponse, description = "invalid_credentials"), (status = 413, body = ErrorResponse, description = "request_too_large"), (status = 415, body = ErrorResponse, description = "unsupported_media_type"), (status = 503, body = ErrorResponse, description = "service_unavailable, busy")))]
 pub(super) async fn login(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
+    peer: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     body: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Json<SessionIssuedResponse>, HttpError> {
@@ -134,6 +136,7 @@ pub(super) async fn login(
             Secret::new(body.password.expose().to_owned()),
             id,
             client_label(&headers),
+            peer.map(|Extension(axum::extract::ConnectInfo(peer))| peer.ip()),
         )
         .await
         .map_err(|error| HttpError::domain(id, error))?;

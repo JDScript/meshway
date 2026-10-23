@@ -486,7 +486,7 @@ async fn migrate_and_persistent_storage_blocks_have_their_own_exit_status() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Database is already at this build's schema; nothing migrated.\n"
+        "Migration state: current\nDatabase is already at this build's schema; nothing migrated.\n"
     );
     let backup = temp.path().canonicalize().unwrap().join("backup");
     let output = maintenance(&["backup", "--output", backup.to_str().unwrap()]);
@@ -603,8 +603,8 @@ fn version_names_the_build_and_its_schema_range() {
     );
 }
 
-/// `Type=notify`: readiness once the storage is open and the listener bound,
-/// and the stop as it begins.
+/// `Type=notify`: the start timeout renewed while the storage opens,
+/// readiness once it is open and the listener bound, and the stop as it begins.
 #[cfg(target_os = "linux")]
 #[test]
 fn the_service_manager_hears_readiness_and_the_stop() {
@@ -632,11 +632,22 @@ fn the_service_manager_hears_readiness_and_the_stop() {
         .unwrap()
         .to_owned();
     let mut buffer = [0; 256];
-    let length = receiver.recv(&mut buffer).unwrap();
-    assert_eq!(
-        std::str::from_utf8(&buffer[..length]).unwrap(),
-        format!("READY=1\nSTATUS=Serving on {address}")
-    );
+    let mut renewals = 0;
+    loop {
+        let length = receiver.recv(&mut buffer).unwrap();
+        let message = std::str::from_utf8(&buffer[..length]).unwrap().to_owned();
+        if message.starts_with("READY=1") {
+            assert_eq!(message, format!("READY=1\nSTATUS=Serving on {address}"));
+            break;
+        }
+        assert!(
+            message.starts_with("EXTEND_TIMEOUT_USEC=120000000\nSTATUS="),
+            "{message}"
+        );
+        renewals += 1;
+    }
+    // At least the renewal when the opening starts.
+    assert!(renewals >= 1);
     assert!(
         Command::new("kill")
             .args(["-TERM", &process.0.id().to_string()])

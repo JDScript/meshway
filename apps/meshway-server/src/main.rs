@@ -206,23 +206,54 @@ async fn maintain(command: Command) -> Result<(), Failure> {
     .map_err(|_| "Status output failed.".to_owned().into())
 }
 
+/// Besides its sentence, `migrate` prints one `Migration state:` line that a
+/// caller such as `install.sh` acts on, read back from the data directory
+/// after a failure: `current`, `published <backup>`, `unpublished` or
+/// `unknown`.
 async fn migrate(data_dir: PathBuf) -> Result<(), Failure> {
-    let mut settings = Settings::new(data_dir);
+    let since = chrono::Utc::now().timestamp_millis();
+    let mut settings = Settings::new(data_dir.clone());
     settings.migration = Migration::Automatic;
-    let app = App::open(settings).await.map_err(Failure::open)?;
-    let report = match app.migrated() {
-        Some(migrated) => format!(
-            "Database migrated from schema {} to {} in {} ms; the previous database is kept as {}.",
-            migrated.from,
-            migrated.to,
-            migrated.elapsed.as_millis(),
-            migrated.backup.display(),
-        ),
-        None => "Database is already at this build's schema; nothing migrated.".to_owned(),
+    let state = |line: String| {
+        let _ = writeln!(std::io::stdout().lock(), "Migration state: {line}");
     };
-    app.shutdown()
-        .await
-        .map_err(|_| "Server storage shutdown failed.".to_owned())?;
+    let app = match App::open(settings).await {
+        Ok(app) => app,
+        Err(error) => {
+            let outcome = tokio::task::spawn_blocking(move || {
+                meshway_server::migration_outcome(&data_dir, since)
+            })
+            .await
+            .unwrap_or(meshway_server::MigrationOutcome::Unknown);
+            state(match outcome {
+                meshway_server::MigrationOutcome::Unpublished { .. } => "unpublished".into(),
+                meshway_server::MigrationOutcome::Published { backup, .. } => {
+                    format!("published {}", backup.display())
+                }
+                meshway_server::MigrationOutcome::Unknown => "unknown".into(),
+            });
+            return Err(Failure::open(error));
+        }
+    };
+    let (report, line) = match app.migrated() {
+        Some(migrated) => (
+            format!(
+                "Database migrated from schema {} to {} in {} ms; the previous database is kept as {}.",
+                migrated.from,
+                migrated.to,
+                migrated.elapsed.as_millis(),
+                migrated.backup.display(),
+            ),
+            format!("published {}", migrated.backup.display()),
+        ),
+        None => (
+            "Database is already at this build's schema; nothing migrated.".to_owned(),
+            "current".to_owned(),
+        ),
+    };
+    let shutdown = app.shutdown().await;
+    state(line);
+    shutdown.map_err(|_| "Server storage shutdown failed.".to_owned())?;
     writeln!(std::io::stdout().lock(), "{report}")
         .map_err(|_| "Status output failed.".to_owned().into())
 }
@@ -305,10 +336,14 @@ async fn run(arguments: Arguments) -> Result<(), Failure> {
             stop_streams();
             let _ = signal_result.send(signal_failed);
         };
-        axum::serve(listener, http::router(&app))
-            .with_graceful_shutdown(shutdown)
-            .await
-            .map_err(|_| "Server serve failed.".to_owned())?;
+        // The direct peer address limits failed logins (`accounts::throttle`).
+        axum::serve(
+            listener,
+            http::router(&app).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await
+        .map_err(|_| "Server serve failed.".to_owned())?;
         if received_signal.await.unwrap_or(true) {
             return Err("Server signal handling failed.".to_owned());
         }

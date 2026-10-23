@@ -14,6 +14,9 @@ pub(crate) struct Directory {
 
 const DATABASE: &str = "controller.sqlite";
 pub(crate) const LOCK: &str = "controller.lock";
+/// Names the Server process that last answered a Node sync (see
+/// `netmap::served`).
+const SERVED: &str = "served";
 /// Prefix of a migration's unpublished staging files (with their SQLite
 /// journals); they are never read, only removed.
 const STAGING: &str = "controller.sqlite.migrating.";
@@ -56,11 +59,46 @@ impl Directory {
         ] {
             private.file(name, false)?;
         }
+        // An interrupted served-record replacement left its unpublished file.
+        for name in private.names()? {
+            if meshway_private_storage::is_staging(&name) {
+                private.remove_staging(&name)?;
+            }
+        }
         let database = private.file(DATABASE, true)?.ok_or(DirectoryError::Io)?;
         Ok(Self {
             private,
             _database: database,
         })
+    }
+
+    /// A new data directory at `path`; `None` when the name exists already
+    /// (an existing directory is never adopted).
+    pub(crate) fn create_new(path: &Path) -> Result<Option<Self>, DirectoryError> {
+        let Some(private) = meshway_private_storage::Directory::create_new(path, LOCK)? else {
+            return Ok(None);
+        };
+        let database = private.file(DATABASE, true)?.ok_or(DirectoryError::Io)?;
+        Ok(Some(Self {
+            private,
+            _database: database,
+        }))
+    }
+
+    /// Removes the files a new data directory gets from a backup (database,
+    /// its journals and the master key), and nothing else.
+    pub(crate) fn remove_written(&self) -> Result<(), DirectoryError> {
+        for name in [
+            DATABASE,
+            "controller.sqlite-journal",
+            "controller.sqlite-wal",
+            "controller.sqlite-shm",
+            "master-key",
+            "master-key.pending",
+        ] {
+            self.private.remove(name)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn database_path(&self) -> PathBuf {
@@ -79,16 +117,6 @@ impl Directory {
     pub(crate) fn sync_database(&self) -> Result<(), DirectoryError> {
         self._database.sync_all().map_err(|_| DirectoryError::Io)?;
         self.private.sync()
-    }
-
-    /// Removes every file but the lock.
-    pub(crate) fn remove_all(&self) -> Result<(), DirectoryError> {
-        for name in self.private.names()? {
-            if name != LOCK {
-                self.private.remove(&name)?;
-            }
-        }
-        Ok(())
     }
 
     pub(crate) fn available_bytes(&self) -> Result<u64, DirectoryError> {
@@ -162,6 +190,11 @@ impl Directory {
             }
         }
         Ok(())
+    }
+
+    /// Durably replaces the served record (owner-only, atomic rename).
+    pub(crate) fn record_served(&self, record: &[u8]) -> Result<(), DirectoryError> {
+        self.private.replace(SERVED, record)
     }
 
     pub(crate) fn path(&self) -> &Path {

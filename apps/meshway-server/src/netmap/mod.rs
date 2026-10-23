@@ -11,8 +11,10 @@
 //! [`FACTS_RENEWAL_MARGIN`]. Every answer carries a fresh lease for the current netmap. Content is
 //! stored by `store::netmap` and only changes in stable-input transactions.
 pub(crate) mod associations;
+pub mod downloads;
 mod hub;
 pub(crate) mod records;
+pub(crate) mod served;
 pub mod signing;
 mod sync;
 
@@ -331,6 +333,8 @@ pub struct Netmaps {
     signer: Arc<signing::NetmapSigningKeys>,
     timing: SyncTiming,
     associations: associations::Shared,
+    served: Arc<served::Served>,
+    downloads: Arc<downloads::Downloads>,
 }
 
 impl Netmaps {
@@ -344,6 +348,8 @@ impl Netmaps {
         signer: Arc<signing::NetmapSigningKeys>,
         timing: SyncTiming,
         associations: associations::Shared,
+        served: Arc<served::Served>,
+        downloads: Arc<downloads::Downloads>,
     ) -> Self {
         Self {
             handle,
@@ -354,6 +360,8 @@ impl Netmaps {
             signer,
             timing,
             associations,
+            served,
+            downloads,
         }
     }
 
@@ -432,6 +440,7 @@ impl Netmaps {
         let answered = |response: SyncResponse, reason: &'static str| {
             // From here a Node may hold a lease of this process: an upgrade
             // can no longer be rolled back (docs/v2/install.md#server-rollback).
+            // The durable record is `served`; this line is diagnostics.
             FIRST_ANSWER.call_once(|| {
                 tracing::info!(
                     network_id = %principal.network,
@@ -492,6 +501,7 @@ impl Netmaps {
                     None
                 };
             if let Some(lacking) = lacking {
+                self.served.ensure().await?;
                 return Ok(answered(response, lacking));
             }
             let facts_changed = async move {
@@ -515,19 +525,27 @@ impl Netmaps {
         }
         // Woken, replaced, closing or timed out: one final answer with a fresh lease.
         let response = self.read(token, &request).await?.0;
+        self.served.ensure().await?;
         Ok(answered(response, reason))
     }
 
     /// Bytes of a rule-set artifact some netmap of the calling Node
     /// references while it can still be under a lease. Anything else, and an
-    /// unknown digest, is `NotFound`.
-    pub async fn artifact(&self, token: &str, digest: String) -> Result<Vec<u8>, Error> {
+    /// unknown digest, is `NotFound`. Admitted by the in-flight budget
+    /// (`downloads`) before the bytes are loaded; the returned permit is
+    /// held until the response is finished or dropped.
+    pub async fn artifact(
+        &self,
+        token: &str,
+        digest: String,
+    ) -> Result<downloads::Download, Error> {
         let token = proof::token_hash(token)?;
         let digest: meshway_rules::Digest = digest.parse().map_err(|_| Error::NotFound)?;
         let (sealer, boot) = (self.sealer.clone(), self.boot);
         let validity = i64::try_from(self.timing.validity.as_millis())
             .map_err(|_| Error::Internal("netmap validity"))?;
-        self.handle
+        let (node, len) = self
+            .handle
             .read(move |tx| {
                 let now = crate::store::execution::now()?;
                 let principal =
@@ -542,9 +560,19 @@ impl Netmaps {
                 )? {
                     return Err(Error::NotFound);
                 }
-                crate::store::resources::artifacts::load(tx, &digest)
+                Ok((
+                    principal.node,
+                    crate::store::resources::artifacts::len(tx, &digest)?,
+                ))
             })
-            .await
+            .await?;
+        let permit = self.downloads.admit(node, len)?;
+        // Content-addressed and immutable: the bytes are the ones authorized.
+        let bytes = self
+            .handle
+            .read(move |tx| crate::store::resources::artifacts::load(tx, &digest))
+            .await?;
+        Ok(downloads::Download { bytes, permit })
     }
 
     async fn read(

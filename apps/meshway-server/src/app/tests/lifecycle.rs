@@ -387,12 +387,43 @@ async fn rejected_database_is_not_replaced_or_reset() {
         }
         drop(directory);
         let before = fs::read(&database_path).unwrap();
-        assert!(App::open(Settings::new(&path)).await.is_err());
+        let error = App::open(Settings::new(&path)).await.err().unwrap();
+        if corrupt {
+            // Not a database: proven, so a service manager does not restart into it.
+            assert_eq!(error, AppError::StorageIntegrity);
+            assert!(error.is_persistent());
+        }
         assert_eq!(fs::read(&database_path).unwrap(), before);
         assert!(!path.join("master-key").exists());
         // Rejection did not leave a lock owner alive.
         drop(Directory::open(&path).unwrap());
     }
+}
+
+/// A database whose pages are damaged is a persistent block (exit 78), not a
+/// transient failure that a service manager restarts into forever.
+#[tokio::test]
+async fn damaged_database_pages_are_a_persistent_block() {
+    let (_parent, path) = location();
+    App::open(Settings::new(&path))
+        .await
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+    let database_path = path.join("controller.sqlite");
+    let mut bytes = fs::read(&database_path).unwrap();
+    let page = u16::from_be_bytes([bytes[16], bytes[17]]) as usize;
+    assert!(bytes.len() >= page * 4);
+    // Every page after the first (the schema's tables and indexes) is garbage.
+    for byte in &mut bytes[page..] {
+        *byte = 0xa5;
+    }
+    fs::write(&database_path, &bytes).unwrap();
+    let error = App::open(Settings::new(&path)).await.err().unwrap();
+    assert_eq!(error, AppError::StorageIntegrity, "{error}");
+    assert!(error.is_persistent());
+    assert_eq!(fs::read(&database_path).unwrap(), bytes);
 }
 
 #[tokio::test]
@@ -489,6 +520,7 @@ async fn cancelling_app_open_keeps_lock_while_sqlite_open_is_blocked() {
         crate::resources::downloads::Downloads::new(),
         None,
         Default::default(),
+        startup::Progress::none(),
     ));
     assert_pending(opening.as_mut());
     drop(opening);

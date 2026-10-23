@@ -38,7 +38,11 @@ pub async fn backup(data_dir: PathBuf, output: PathBuf) -> Result<Backup, AppErr
 
 fn run(data_dir: &Path, output: &Path) -> Result<Backup, AppError> {
     let mut source = Directory::open(data_dir)?;
-    schema::migrate::prepare(&mut source, Migration::Refuse)?;
+    schema::migrate::prepare(
+        &mut source,
+        Migration::Refuse,
+        &crate::app::startup::Progress::none(),
+    )?;
     let mut database = open(&source.database_path()).map_err(|_| AppError::Database)?;
     database
         .pragma_update(None, "query_only", true)
@@ -52,14 +56,19 @@ fn run(data_dir: &Path, output: &Path) -> Result<Backup, AppError> {
     })?;
     let key = source.read_key(false)?.ok_or(AppError::MasterKey)?;
 
-    if std::fs::symlink_metadata(output).is_ok() {
-        tracing::error!("Backup output already exists");
-        return Err(AppError::BackupOutput);
-    }
-    let target = Directory::open(output).map_err(|error| {
-        tracing::error!(%error, "Backup output directory not created");
-        AppError::BackupOutput
-    })?;
+    // Created here or refused: a directory that appears under the name in
+    // the meantime is never adopted, so a failure removes only this run's files.
+    let target = match Directory::create_new(output) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            tracing::error!("Backup output already exists");
+            return Err(AppError::BackupOutput);
+        }
+        Err(error) => {
+            tracing::error!(%error, "Backup output directory not created");
+            return Err(AppError::BackupOutput);
+        }
+    };
     let result = (|| {
         let needed = source.database_len()?.saturating_mul(11) / 10;
         let available = target
@@ -84,6 +93,8 @@ fn run(data_dir: &Path, output: &Path) -> Result<Backup, AppError> {
         target
             .publish_key(Some(&key))
             .map_err(|_| AppError::BackupOutput)?;
+        #[cfg(test)]
+        tests::after_copy(output)?;
         let mut copy = open(&target.database_path()).map_err(|_| AppError::Database)?;
         copy.pragma_update(None, "query_only", true)
             .map_err(|_| AppError::Database)?;
@@ -107,9 +118,10 @@ fn run(data_dir: &Path, output: &Path) -> Result<Backup, AppError> {
 }
 
 /// Removes a backup that did not complete: a partial copy of secrets is not
-/// left behind.
+/// left behind. Only the files this run writes and the directory it created
+/// go; anything else found there keeps the directory (and is reported).
 fn remove(target: Directory, output: &Path) {
-    let removed = target.remove_all();
+    let removed = target.remove_written();
     drop(target);
     let removed = removed.and_then(|()| {
         std::fs::remove_file(output.join(crate::directory::LOCK))

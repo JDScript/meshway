@@ -32,6 +32,8 @@ mod stun;
 pub use app::{App, AppError, Migrated, PERSISTENT_STORAGE_BLOCK};
 pub use settings::{InvalidConsoleOrigin, Migration, Settings, console_origin};
 
+pub use store::schema::migrate::{MigrationOutcome, outcome as migration_outcome};
+
 /// Schema version of the databases this build writes.
 pub const SCHEMA_VERSION: i64 = store::schema::VERSION;
 /// The oldest schema version this build migrates from.

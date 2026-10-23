@@ -66,7 +66,9 @@ Node only:
 Server upgrades check the data directory's schema before stopping the running
 Server, migrate it with the new build, keep the replaced program as
 <name>.previous and roll back automatically while no Node has synced with the
-new Server. Settings live in /etc/meshway-server/server.env (created once).
+new Server (the data directory's `served` record is unchanged). Nothing in the
+data directory is changed unless the Server is proven stopped and its storage
+lock is held. Settings live in /etc/meshway-server/server.env (created once).
 
 Remove:
   --uninstall         Node: run `meshway down`, then stop and remove the service, unit and
@@ -124,6 +126,13 @@ aarch64 | arm64) target=aarch64-unknown-linux-musl ;;
 esac
 
 daemon_active() { systemctl is-active --quiet meshwayd.service; }
+# Running, or starting, stopping or restarting: it may still use its state.
+daemon_running() {
+	case $(systemctl is-active meshwayd.service 2>/dev/null) in
+	active | activating | deactivating | reloading | refreshing) return 0 ;;
+	*) return 1 ;;
+	esac
+}
 server_active() { systemctl is-active --quiet $SERVER_UNIT; }
 # Holds or may take the storage lock: also while starting or restarting.
 server_running() {
@@ -148,10 +157,11 @@ uninstall() {
 				"capture rules) were not removed. Start it and rerun --uninstall for a clean removal"
 		fi
 	fi
+	if daemon_running; then die "meshwayd is still running; nothing was removed"; fi
 	rm -f "$UNIT_PATH" "$BIN_DIR/meshwayd" "$BIN_DIR/meshway"
 	systemctl daemon-reload
 	systemctl reset-failed meshwayd.service 2>/dev/null || true
-	if daemon_active; then die "meshwayd is still active"; fi
+	if daemon_running; then die "meshwayd is still running"; fi
 	rm -rf "$RUNTIME_DIR"
 	if [ $purge = 1 ]; then
 		rm -rf "$DATA_DIR" "$CONFIG_DIR" "$UNIT_PATH.d"
@@ -212,15 +222,18 @@ stage() { # asset unit program... -> $work/payload with the programs and the uni
 			[ ! -f "$artifact/$stage_unit" ] || cp "$artifact/$stage_unit" "$payload/"
 		else
 			[ -f "$artifact" ] || die "no such artifact: $artifact"
+			# One read of each given file into the private work directory; the
+			# checksum and the extraction both use that copy, never the path.
+			copy=$work/$(basename "$artifact")
+			cp "$artifact" "$copy" || die "cannot read $artifact"
 			sums=$(dirname "$artifact")/SHA256SUMS
 			if [ -f "$sums" ]; then
-				cp "$sums" "$work/SHA256SUMS"
-				cp "$artifact" "$work/$(basename "$artifact")"
+				cp "$sums" "$work/SHA256SUMS" || die "cannot read $sums"
 				verify "$work" "$(basename "$artifact")"
 			else
 				log "warning: no SHA256SUMS next to $artifact; local artifact not verified"
 			fi
-			tar -xzf "$artifact" -C "$payload" "$@" "$stage_unit" ||
+			tar -xzf "$copy" -C "$payload" "$@" "$stage_unit" ||
 				die "$artifact is not a Meshway release tarball"
 		fi
 	else
@@ -302,16 +315,48 @@ install_node() {
 
 server_programs() { printf '%s %s\n' "$BIN_DIR/meshway-server" "$(for t in $SERVER_TOOLS; do printf '%s/%s ' "$SERVER_TOOLS_DIR" "$t"; done)"; }
 
+# Stops the unit and waits until no Server process can hold the data
+# directory: the unit is neither running nor starting, stopping or
+# restarting. Nonzero when the stop fails or it does not settle in 60 s.
+server_quiesce() {
+	if server_running; then systemctl stop $SERVER_UNIT || return 1; fi
+	attempt=0
+	while server_running; do
+		attempt=$((attempt + 1))
+		[ $attempt -lt 60 ] || return 1
+		sleep 1
+	done
+}
+
+# Takes the data directory's storage lock (the one every Server process and
+# offline command holds) on descriptor 9, without waiting: proof that nothing
+# uses the data directory while the caller changes it. A missing lock file is
+# a data directory no Server opened. `unlock_data_dir` releases it before any
+# Server starts again.
+lock_data_dir() {
+	[ -e "$SERVER_DATA_DIR/controller.lock" ] || return 0
+	exec 9<"$SERVER_DATA_DIR/controller.lock" || return 1
+	flock -n -x 9
+}
+unlock_data_dir() { exec 9<&-; }
+
 uninstall_server() {
-	systemctl disable --now $SERVER_UNIT 2>/dev/null || true
+	# Nothing is changed unless the Server is proven stopped.
+	server_quiesce || die "meshway-server did not stop; nothing was changed (see systemctl status meshway-server)"
+	if [ -f "$SERVER_UNIT_PATH" ]; then systemctl disable $SERVER_UNIT 2>/dev/null || true; fi
 	rm -f "$SERVER_UNIT_PATH"
 	for program in $(server_programs); do rm -f "$program" "$program.previous"; done
 	rmdir "$SERVER_TOOLS_DIR" 2>/dev/null || true
 	systemctl daemon-reload
 	systemctl reset-failed $SERVER_UNIT 2>/dev/null || true
-	if server_active; then die "meshway-server is still active"; fi
+	if server_running; then die "meshway-server is running again; the data directory was not removed"; fi
 	if [ $purge = 1 ]; then
-		rm -rf "$SERVER_DATA_DIR" "$SERVER_CONFIG_DIR" "$SERVER_UNIT_PATH.d"
+		if [ -d "$SERVER_DATA_DIR" ]; then
+			lock_data_dir || die "$SERVER_DATA_DIR is in use (its storage lock is held); it was not removed"
+			rm -rf "$SERVER_DATA_DIR"
+			unlock_data_dir
+		fi
+		rm -rf "$SERVER_CONFIG_DIR" "$SERVER_UNIT_PATH.d"
 		if id -u $SERVER_USER >/dev/null 2>&1; then userdel $SERVER_USER; fi
 		systemctl daemon-reload
 		log "removed the Server database and master key ($SERVER_DATA_DIR), $SERVER_CONFIG_DIR," \
@@ -350,7 +395,23 @@ server_healthy() { # The listener answers the unauthenticated auth options.
 	return 1
 }
 
-server_synced_since() { # A Node holds a lease of a Server process started since $1.
+# The rollback boundary: `served` in the data directory is durably replaced
+# by every Server process before its first sync answer (see docs/v2/server.md).
+# Prints `absent` or the record's SHA-256; nonzero when it cannot be read.
+served_state() {
+	record=$SERVER_DATA_DIR/served
+	if [ ! -e "$record" ] && [ ! -L "$record" ]; then
+		echo absent
+		return 0
+	fi
+	[ -f "$record" ] && [ ! -L "$record" ] || return 1
+	sum=$(sha256sum <"$record") || return 1
+	[ -n "${sum%% *}" ] || return 1
+	echo "${sum%% *}"
+}
+
+# Diagnostics only: the journal can lose lines; `served` decides.
+server_sync_logged_since() {
 	journalctl -u $SERVER_UNIT --since "@$1" -o cat 2>/dev/null | grep -q 'First Node sync answered'
 }
 
@@ -358,10 +419,22 @@ server_start() { # -> 0 when ready (READY=1) and healthy
 	systemctl start $SERVER_UNIT && server_active && server_healthy
 }
 
+# Puts the migration backup $1 back as the database; the database it
+# replaced and its journal are kept aside, never replayed onto the restored
+# one. The caller holds the data directory lock.
+restore_database() {
+	aside=$SERVER_DATA_DIR/controller.sqlite.failed-$started
+	for suffix in "" -wal -shm; do
+		[ ! -e "$database$suffix" ] || mv "$database$suffix" "$aside$suffix"
+	done
+	mv "$1" "$database"
+	log "restored the database from $1; the migrated one is kept as $aside"
+}
+
 write_server_env() {
 	install -d -m 0755 "$SERVER_CONFIG_DIR"
 	[ ! -f "$SERVER_ENV_PATH" ] || return 0
-	cat >"$work/server.env" <<'EOF'
+	cat >"$work/server.env" <<'ENV'
 # Meshway Server instance settings, read by meshway-server.service; see
 # docs/v2/server.md. install.sh creates this file once and never rewrites it.
 MESHWAY_LISTEN=127.0.0.1:8420
@@ -370,13 +443,13 @@ MESHWAY_LISTEN=127.0.0.1:8420
 #MESHWAY_REGISTRATION_ENABLED=true
 # Further arguments, e.g. --stun-listen 0.0.0.0:3478 --stun-server main=meshway.example.com:3478
 MESHWAY_SERVER_OPTIONS=
-EOF
+ENV
 	place "$work/server.env" "$SERVER_ENV_PATH" 0644
 	log "created $SERVER_ENV_PATH; set MESHWAY_CONSOLE_ORIGIN and the listen address there"
 }
 
 install_server() {
-	for tool in curl od runuser useradd; do
+	for tool in curl od runuser useradd flock sha256sum; do
 		command -v $tool >/dev/null || die "$tool is required"
 	done
 	work=$(mktemp -d)
@@ -440,7 +513,17 @@ install_server() {
 	place "$payload/meshway-server" "$BIN_DIR/meshway-server.new" 0755
 	if [ $was_active = 1 ]; then
 		log "stopping meshway-server (Nodes keep their leases meanwhile)"
-		systemctl stop $SERVER_UNIT
+	fi
+	if ! server_quiesce; then
+		rm -f "$BIN_DIR/meshway-server.new"
+		die "meshway-server did not stop; nothing was changed (see systemctl status meshway-server)"
+	fi
+	# What `served` says before the new Server can run: any later change is
+	# a new Server process that answered a Node sync. Unreadable: no upgrade.
+	if ! served_before=$(served_state); then
+		rm -f "$BIN_DIR/meshway-server.new"
+		if [ $was_active = 1 ]; then systemctl start $SERVER_UNIT || true; fi
+		die "cannot read $SERVER_DATA_DIR/served, so a rollback could not be proven safe; nothing was changed"
 	fi
 	backup=""
 	if [ -n "$from" ]; then
@@ -448,11 +531,10 @@ install_server() {
 			--data-dir "$SERVER_DATA_DIR" >"$work/migrate" 2>"$work/migrate.log"; then
 			cat "$work/migrate.log" >&2
 			rm -f "$BIN_DIR/meshway-server.new"
-			if [ $was_active = 1 ]; then systemctl start $SERVER_UNIT || true; fi
-			die "the migration failed; the database is unchanged and the installed Server was started again"
+			migration_failed
 		fi
-		cat "$work/migrate" >&2
-		backup=$(sed -n 's/^Database migrated .* the previous database is kept as \(.*\)\.$/\1/p' "$work/migrate")
+		backup=$(sed -n 's/^Migration state: published \(.*\)$/\1/p' "$work/migrate" | tail -n 1)
+		sed -n '/^Migration state: /!p' "$work/migrate" >&2
 	fi
 
 	# Replace: the running programs stay as <name>.previous.
@@ -483,30 +565,79 @@ install_server() {
 	if [ $upgrade = 0 ]; then
 		die "meshway-server did not become ready; see journalctl -u meshway-server"
 	fi
-	if server_synced_since "$started"; then
-		die "$installed did not become healthy after a Node synced with it: not rolled back (Nodes now" \
-			"hold its netmaps). Fix forward; see journalctl -u meshway-server"
+	rollback
+}
+
+# `migrate` failed. What it left is read back, never assumed from its exit
+# status: its `Migration state:` line (from the data directory) agreeing with
+# the database header. Unpublished: the installed Server starts again.
+# Published: the backup is put back first (no Server ran meanwhile). Anything
+# else: nothing is started, and the operator decides.
+migration_failed() {
+	state=$(sed -n 's/^Migration state: //p' "$work/migrate" | tail -n 1)
+	header=$(header_u32 "$database" 60 2>/dev/null) || header=""
+	case $state in
+	unpublished) [ "$header" = "$from" ] || state=unknown ;;
+	published\ *)
+		failed_backup=${state#published }
+		case $failed_backup in
+		"$SERVER_DATA_DIR"/controller.sqlite.v"$from"-*) ;;
+		*) state=unknown ;;
+		esac
+		{ [ "$header" = "$schema" ] && [ -f "$failed_backup" ]; } || state=unknown
+		;;
+	"")
+		# No report (killed): the name holds the old file or the new one, never
+		# a mix; only the old one is certain here.
+		if [ "$header" = "$from" ]; then state=unpublished; else state=unknown; fi
+		;;
+	*) state=unknown ;;
+	esac
+	case $state in
+	unpublished)
+		if [ $was_active = 1 ]; then
+			systemctl start $SERVER_UNIT || true
+			die "the migration failed and published nothing; the database is unchanged and the installed Server was started again"
+		fi
+		die "the migration failed and published nothing; the database is unchanged" ;;
+	published\ *)
+		if ! served_now=$(served_state) || [ "$served_now" != "$served_before" ]; then
+			die "the migration was published and $SERVER_DATA_DIR/served changed or is unreadable; not restored." \
+				"Inspect it; restore $failed_backup by hand only if no Node synced with a newer Server"
+		fi
+		lock_data_dir || die "$SERVER_DATA_DIR is in use; the migrated database was not restored"
+		restore_database "$failed_backup"
+		unlock_data_dir
+		if [ $was_active = 1 ]; then systemctl start $SERVER_UNIT || true; fi
+		die "the migration was published and then failed; the previous database was restored (the installed Server is started again when it was running)" ;;
+	*)
+		die "the migration failed and its outcome is unknown (database schema ${header:-unreadable}); neither Server was started." \
+			"See $work/migrate.log above and docs/v2/install.md#server-rollback" ;;
+	esac
+}
+
+# The new Server did not become ready and healthy. Rolled back only while
+# `served` is what it was before the new Server could run, the Server is
+# proven stopped and the data directory lock is held.
+rollback() {
+	if ! served_now=$(served_state) || [ "$served_now" != "$served_before" ]; then
+		if server_sync_logged_since "$started"; then log "the journal also records a sync answered by $installed"; fi
+		die "$installed did not become healthy and a Node may hold its netmaps ($SERVER_DATA_DIR/served" \
+			"changed or is unreadable): not rolled back. Fix forward; see journalctl -u meshway-server"
 	fi
 	log "$installed did not become ready and healthy; rolling back"
-	systemctl stop $SERVER_UNIT || true
-	if server_synced_since "$started"; then
-		die "a Node synced with $installed while it was stopped: not rolled back; fix forward"
+	server_quiesce || die "meshway-server did not stop; not rolled back, nothing else was changed"
+	if ! served_now=$(served_state) || [ "$served_now" != "$served_before" ]; then
+		die "a Node synced with $installed before it stopped: not rolled back; fix forward"
 	fi
+	lock_data_dir || die "$SERVER_DATA_DIR is in use (its storage lock is held): not rolled back"
 	mv -f "$BIN_DIR/meshway-server.previous" "$BIN_DIR/meshway-server"
 	for tool in $SERVER_TOOLS; do
 		[ ! -f "$SERVER_TOOLS_DIR/$tool.previous" ] || mv -f "$SERVER_TOOLS_DIR/$tool.previous" "$SERVER_TOOLS_DIR/$tool"
 	done
 	[ ! -f "$work/previous.service" ] || place "$work/previous.service" "$SERVER_UNIT_PATH" 0644
-	if [ -n "$backup" ]; then
-		# The migrated database and its journal are kept aside, never replayed
-		# onto the restored one.
-		aside=$SERVER_DATA_DIR/controller.sqlite.failed-$started
-		for suffix in "" -wal -shm; do
-			[ ! -e "$database$suffix" ] || mv "$database$suffix" "$aside$suffix"
-		done
-		mv "$backup" "$database"
-		log "restored the database from $backup; the migrated one is kept as $aside"
-	fi
+	if [ -n "$backup" ]; then restore_database "$backup"; fi
+	unlock_data_dir
 	systemctl daemon-reload
 	server_start || die "the previous Server did not start again either; see journalctl -u meshway-server"
 	die "rolled back to $("$BIN_DIR/meshway-server" -V 2>/dev/null || echo 'the previous Server'); $installed was not installed"
