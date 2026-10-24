@@ -2,6 +2,14 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+X19 已接受的入站连接的回包（`x19/inbound-replies`）：wire 6、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag；`underlay-egress.json` 的程序多一个可省略字段 `inbound`（ledger 版本仍为 2）。
+
+- Node（不变量：别的主机经非 Mesh 地址向本机发起的连接，其回包沿 underlay 原路返回，不进入源 capture，也不进入负向门；本机自己发起的新连接仍按方案捕获或 fail closed；包平面挂起、`apply(empty)`、租约到期与同 namespace 重启期间保留，直到 `down`。owner：underlay egress capture owner，与负向门同一张表、同一读回与收据）：egress 表新增 `replies` 链（`type route hook output`，优先级 −150）：conntrack 回复方向、原方向源不在 Mesh 地址池的包打上本节点已持有的保护 mark，内核按 mark 重新选路越过 capture 选择器，`output` 门首条规则放行。此前 PROD-1 jp（OCI 1:1 NAT、经公网 SSH 管理）选中 fallback 为出口的方案时入站 SSH 立即断开（回包被导入出口 TUN），挂起时负向门以 TCP reset 拒绝回包。只读 conntrack，不写 ct mark，与出口角色的 ct mark 位（选位排除保护 mark）和 `meshway_mss_*` 无关；转发流量（Docker FORWARD、出口 NAT 流）不经 OUTPUT。定义与限制见 [Exit 设计 · 已接受的入站连接的回包](/v2/node/exit-design#inbound-replies)。
+- 升级：旧版本建立、未 `down` 的 egress 表在 daemon 启动（或归属重证）时以一次 nft 事务补上 `replies` 链，读回其余对象与 handle 不变后记入收据（INFO `Egress capture table gained the inbound-reply exception`），无需 `down`／`up`；读回是表以外的形态即冲突，什么也没应用则保持暂态由下一次打开重试。降级到 alpha.23：其 egress ledger 不认识 `inbound` 字段，降级前先 `meshway down`。
+- 验收：组件 `inbound-replies`（`accepted_connections_keep_underlay_replies_through_capture_pause_and_upgrade`，`exit/off` 组件阶段）与 `exit/off` 第 17 阶段；文档：[服务器上选出口方案](/v2/install#server-exit-profile)。旧代码失败记录在 `.meshway/validation/x19/`。
+
 ## v0.1.0-alpha.23
 
 范围：v0.1.0 prod soak 候选（五台公网节点）。Console 跨源托管（CORS-1：`--console-origin` 进入 CORS 白名单、构建期 `VITE_MESHWAY_API_ORIGIN`、Cloudflare Pages 部署）；现场 soak 工具（SOAK-1，`scripts/soak/`）；节点迁到另一个 Server（N7）与 Control 打开失败的重证（N8）；resolved 后端在 Ubuntu 22.04 上报明确的版本要求并按 1→60 秒退避（DNS-2／2b），DNS 兜底与其他链路的具体域共存（Status `localDnsDomains`）；宿主停顿后的 Underlay 恢复：中断的 journal 步骤按内核现状补完（U2），失败的读取不再判为冲突、被替换的认证不算失败（U2b），未知的 journal 写入、半建 DNS 锚点与未读回的 egress 退役由 owner 重证，安装冲突只在证实时结束本期（U3）；Manager 接收背压与流式承载回到边顺序更前的 Native UDP、Status `sockets[].receiveDrops`（CM-1／CM-1b）；流式承载在有损路径上的说明（V1）；依赖公告 RUSTSEC-2026-0385（ctutils 0.4.4）与 RUSTSEC-2026-0386（tokio 1.53.3）。`compilerVersion` `meshway-netmap-4`、wire 6、Server schema 9 不变；IPC 13 只新增可省略的 Status 字段（`localDnsDomains`、`sockets[].receiveDrops`），CLI 与 daemon 一起升级；HTTP 契约只多 Console origin 的 CORS 响应头。按先 Node 后 Server 普通升级（无断网窗口、无迁移）。降级到 alpha.22：在 DNS 锚点创建待定或 egress 正在退役的时刻写下的 Underlay journal 会被旧版本拒绝（U3），降级前先 `meshway down`。发布验证：Planck 26 行矩阵 `20261023T225001Z-701f8fde`（`8199c8bd`，并行 8）一轮全部通过；`mise run --jobs 1 check` 在 `4a379efb` 通过（1,418 个测试）；U4 前的候选 `8b6221f5` 的矩阵 `20261023T175530Z-42e853ea` 暴露了 U4（`fault/throttle`）与 fixture 的 underlay-peer 期限（6 行）。
