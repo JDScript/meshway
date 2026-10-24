@@ -27,6 +27,11 @@ struct Setup {
 
 /// A Kernel with an owned client TUN and an initialized capture backend.
 async fn setup() -> Setup {
+    setup_with(true).await
+}
+
+/// [`setup`], with a capture table of an earlier version (`inbound: false`).
+async fn setup_with(inbound: bool) -> Setup {
     let temp = tempfile::tempdir().unwrap();
     let directory = Arc::new(
         meshway_private_storage::Directory::open(&temp.path().join("private"), "test.lock")
@@ -106,6 +111,7 @@ async fn setup() -> Setup {
             installation: random.iter().map(|byte| format!("{byte:02x}")).collect(),
             mark: kernel.journal.mark.mask,
             capture6: true,
+            inbound,
         },
         table: 24000,
         plan: full(),
@@ -625,6 +631,7 @@ async fn verification_distinguishes_a_missing_rule_and_table_from_a_consistent_t
 }
 
 mod changes;
+mod inbound;
 
 /// Managed IPv6 (an IPv6 exit) installs its capture-table routes and the
 /// IPv6 selector exactly as read back; sunk IPv6 stays rejected.

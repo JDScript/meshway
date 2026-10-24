@@ -170,6 +170,15 @@ resolved 后端的归属证明是同一 network namespace、Underlay 管理的 D
 
 实测结论与时间见[验收记录](#验收记录)。
 
+## 服务器上选出口方案 {#server-exit-profile}
+
+管理员可以从 Server 给任何节点分配含出口的方案（fallback 为 exit 等全量捕获），包括经公网地址 SSH 管理的服务器。这类节点上，别的主机向本机发起、经 underlay 进来的连接（SSH、对外提供的服务）的回包照旧从 underlay 原路返回，不进入出口，也不受包平面挂起或租约到期的负向边界影响；本机自己发起的连接（`apt`、`curl` 等）经出口，出口不可用时被拒绝而不直连。定义与限制见 [Exit 设计 · 已接受的入站连接的回包](/v2/node/exit-design#inbound-replies)。
+
+仍需注意：
+
+- 管理连接只在已有 conntrack 条目时享有例外。远程操作前可先在主机上安排一次不依赖 SSH 的回滚，例如 `systemd-run --unit meshway-exit-rollback --on-active=120 meshway exit off`（120 秒后经 Server 把本节点选回 `mesh`，`mesh` 须是该节点允许的方案；分配的默认方案不含出口时也可用 `meshway exit --default` 清除选择），确认无误后 `systemctl stop meshway-exit-rollback.timer`。选择只归 Server：回滚需要节点与 Server 之间的控制连接（受保护，不经出口）。
+- 本机发出的 DNS 查询在出口方案下也经出口解析（[出口 resolver](/v2/node/dataplane#exit-resolver)）；出口不可用时本机名称解析失败。
+
 ## 升级
 
 ```sh
@@ -206,6 +215,8 @@ compiler: meshway-netmap-4
 4. **窗口长度**＝从第一台节点升级到 Server 升级完成；节点升级本身只需数秒，窗口主要由节点之间的等待与 Server 升级决定。
 
 **升级时的源端 IPv6 捕获**：同一次启动内由旧版本建立、未 `down` 的源端捕获表没有 IPv6 捕获（`underlay-egress.json` 的程序不含 `capture6`），新版本沿用它时把受管与 sink 的 IPv6 出口区间都拒绝（fail closed），IPv6 出口在该节点 `meshway down` 后再 `up`，或主机重启后才生效；IPv4 不受影响。
+
+**升级时的入站回包例外**：旧版本建立、未 `down` 的源端捕获表没有 `replies` 链（`underlay-egress.json` 的程序不含 `inbound`）；升级后 daemon 启动时以一次 nft 事务补上并读回（INFO `Egress capture table gained the inbound-reply exception`），无需 `down`／`up`（[已接受的入站连接的回包](/v2/node/exit-design#inbound-replies)）。
 
 `wire` 变化时同一路径上新旧节点的帧互不兼容（[数据面 · wire](/v2/node/dataplane)），同样在一个窗口内全部升级。
 

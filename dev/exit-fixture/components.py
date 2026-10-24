@@ -83,6 +83,12 @@ CASES = {
                       "linux::kernel::egress::tests::changes::a_retirement_whose_read_back_failed_completes_and_a_missing_table_otherwise_conflicts"),
     "changes-egress": ("meshway-underlay-kernel-tests",
                        "linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed"),
+    # X19: replies of a connection the host accepted on the underlay stay on
+    # the underlay under a full capture, a paused gate and a table of an
+    # earlier version (upgraded in place); connections the host opens stay
+    # captured / rejected; down removes the table.
+    "inbound-replies": ("meshway-underlay-kernel-tests",
+                        "linux::kernel::egress::tests::inbound::accepted_connections_keep_underlay_replies_through_capture_pause_and_upgrade"),
     "nft": ("meshway-underlay-kernel-tests",
             "linux::kernel::exit::nft::tests::exit_nft_atomic_batch_readback_and_failed_transaction_leave_no_table"),
     "probe": ("meshway-underlay-kernel-tests",
@@ -98,9 +104,15 @@ def execute(report, image, platform, identity):
     containers = []
     results = {}
     commands = []
-    service = ("import socket\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n"
+    # UDP echo; `dial:<port>` also opens a TCP connection to the sender's
+    # port and echoes it (X19: a connection the case's host accepts).
+    service = ("import socket,threading\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n"
+               "def dial(host,port):\n c=socket.create_connection((host,port),timeout=60)\n"
+               " c.settimeout(None)\n while True:\n  b=c.recv(65535)\n  if not b: return\n  c.sendall(b)\n"
                "s.bind(('0.0.0.0',18080))\nwhile True:\n data,peer=s.recvfrom(65535)\n"
-               " print(peer,data.hex(),flush=True)\n s.sendto(data,peer)\n")
+               " print(peer,data.hex(),flush=True)\n"
+               " if data.startswith(b'dial:'): threading.Thread(target=dial,args=(peer[0],int(data[5:])),daemon=True).start()\n"
+               " s.sendto(data,peer)\n")
     try:
         network = run("docker", "network", "create", "--internal", "--label", label,
                       "meshway-exit-components-" + identity.lower(), capture=True).strip()

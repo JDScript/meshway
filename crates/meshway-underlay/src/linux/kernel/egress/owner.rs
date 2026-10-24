@@ -411,6 +411,7 @@ impl super::super::Kernel {
                     installation,
                     mark: self.journal.mark.mask,
                     capture6: true,
+                    inbound: true,
                 },
                 table,
                 plan: plan.clone(),

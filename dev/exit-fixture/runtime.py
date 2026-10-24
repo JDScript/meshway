@@ -48,6 +48,46 @@ NETMAP_CONTENT = "import json; print(json.dumps(json.load(open('/state/node/iden
 DIRECT_RANGES = 7000
 
 
+# Phase 17 (X19): A's TCP echo service on its Controller link, and the
+# Controller's connection to it: one small exchange a second on the same
+# connection until the stop signal, each sample [unix time, answered].
+INBOUND_PORT = 18022
+INBOUND_CAPTURE_SECONDS = 30
+INBOUND_EXPIRED_SAMPLES = 10
+INBOUND_RECOVERED_SAMPLES = 5
+INBOUND_SERVER = ("import socket,sys,threading\n"
+                  "s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n"
+                  "s.bind(('0.0.0.0',int(sys.argv[1]))); s.listen(4)\n"
+                  "def serve(c):\n"
+                  " while True:\n"
+                  "  b=c.recv(4096)\n"
+                  "  if not b: return\n"
+                  "  c.sendall(b)\n"
+                  "while True:\n"
+                  " c,_=s.accept(); threading.Thread(target=serve,args=(c,),daemon=True).start()\n")
+INBOUND_CLIENT = ("import json,os,socket,sys,time\n"
+                  "host,port,stop=sys.argv[1],int(sys.argv[2]),sys.argv[3]\n"
+                  "result={'connectedAt':None,'samples':[],'closed':None,'done':False}\n"
+                  "def save():\n"
+                  " open('/evidence/inbound-flow.tmp','w').write(json.dumps(result)); os.replace('/evidence/inbound-flow.tmp','/evidence/inbound-flow.json')\n"
+                  "s=socket.create_connection((host,port),5); s.settimeout(3)\n"
+                  "result['connectedAt']=time.time(); save()\n"
+                  "start=time.monotonic(); i=0\n"
+                  "while not os.path.exists(stop) and time.monotonic()-start<900:\n"
+                  " m=b'inbound-%d'%i; at=time.time()\n"
+                  " try:\n"
+                  "  s.sendall(m); got=b''\n"
+                  "  while len(got)<len(m):\n"
+                  "   b=s.recv(len(m)-len(got))\n"
+                  "   if not b: raise ConnectionError('closed')\n"
+                  "   got+=b\n"
+                  "  ok=got==m\n"
+                  " except socket.timeout: ok=False\n"
+                  " except OSError as error:\n"
+                  "  result['closed']=[time.time(),str(error)]; result['samples'].append([at,False]); break\n"
+                  " result['samples'].append([at,ok]); save(); i+=1; time.sleep(1)\n"
+                  "result['done']=True; save()\n")
+
 # exit6/off stages of I6-1; stage 9 (prefix change) is I6-2.
 IPV6_STAGES = (1, 2, 3, 4, 5, 6, 7, 8, 10)
 
@@ -259,7 +299,7 @@ def execute(report, artifacts, runtime_os, platform, short, load, variant="ipv4"
                 "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in (range(1, 17) if variant == "ipv4" else IPV6_STAGES)}}
+                "stages": {str(n): {"status": "notRun"} for n in (range(1, 18) if variant == "ipv4" else IPV6_STAGES)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -1292,6 +1332,49 @@ def execute(report, artifacts, runtime_os, platform, short, load, variant="ipv4"
         manifest["captureGap"]["to"] = time.time()
         start_captures("p2")
         manifest["stages"]["16"] = {"status": "passed", "evidence": ["exit-throughput.json"]}
+        # Phase 17 (X19): a TCP connection the Controller opens to A on their
+        # underlay link (as an SSH session to a server's public address) is
+        # answered on that link under A's full exit capture and through A's
+        # lease expiry (the negative boundary) to its recovery; A's own new
+        # connection to the same address stays captured / rejected, and A's
+        # external flows still leave through E.
+        manifest["status"] = "inbound-replies"
+        save()
+        inbound = {"address": addresses["ca"]["a"], "port": INBOUND_PORT}
+        controller_ca = addresses["ca"]["controller"]
+
+        def inbound_flow():
+            record = command("controller", "cat", "/evidence/inbound-flow.json", required=False)
+            return json.loads(record["stdout"]) if record["exitCode"] == 0 else None
+
+        def inbound_ok_since(at):
+            flow = inbound_flow() or {}
+            return sum(1 for when, ok in flow.get("samples", []) if when >= at and ok)
+
+        def a_opens_controller():
+            # A's own new connection to the address the Controller connects from.
+            return command("a", "timeout", "5", "python3", "-c", "import socket,sys; socket.create_connection((sys.argv[1],8443),2)",
+                           controller_ca, required=False)
+
+        start_on_a(INBOUND_SERVER, str(INBOUND_PORT))
+        owned("container", containers["controller"])
+        subprocess.run(["docker", "exec", "-d", containers["controller"], "python3", "-c", INBOUND_CLIENT,
+                        inbound["address"], str(INBOUND_PORT), "/signals/inbound-stop"],
+                       check=True, timeout=15, close_fds=True)
+        wait_for(lambda: (inbound_flow() or {}).get("connectedAt"), "Controller's connection to A", 30)
+        if not managed(a_capture("inbound-capture"), ipaddress.ip_address(controller_ca)):
+            raise RuntimeError("A's capture does not manage the Controller's address")
+        inbound["captureFrom"] = inbound_flow()["connectedAt"]
+        wait_for(lambda: inbound_ok_since(inbound["captureFrom"]) >= INBOUND_CAPTURE_SECONDS,
+                 "accepted connection answered under A's full capture", INBOUND_CAPTURE_SECONDS + 30)
+        inbound["captureTo"] = time.time()
+        inbound["aOpensUnderCapture"] = a_opens_controller()
+        if inbound["aOpensUnderCapture"]["exitCode"] == 0:
+            raise RuntimeError("A's own connection to the Controller's address escaped the capture")
+        inbound["aExternalUnderCapture"] = warm_probe("a", addresses["external"]["external"])
+        if inbound["aExternalUnderCapture"]["exitCode"] or not visits_from(e_peer):
+            raise RuntimeError("A's external flow did not leave through E beside the accepted connection")
+        save()
         # HTTP outage under the netmap model: closing Node HTTP never withdraws
         # the exit. Existing and new flows continue on the signed lease, with
         # no Server contact, until its actual expiry, which fails closed.
@@ -1373,6 +1456,19 @@ def execute(report, artifacts, runtime_os, platform, short, load, variant="ipv4"
                 process.wait()
                 log.close()
         wait_for(lambda: all(status(role).get("applied") is None for role in ("a", "r")), "A/R lease expiry", 60)
+        # A's negative boundary: the accepted connection is still answered;
+        # A's own new connection to that address is rejected at once.
+        inbound["expiredFrom"] = time.time()
+        wait_for(lambda: inbound_ok_since(inbound["expiredFrom"]) >= INBOUND_EXPIRED_SAMPLES,
+                 "accepted connection answered through A's lease expiry", INBOUND_EXPIRED_SAMPLES + 30)
+        started_open = time.monotonic()
+        inbound["aOpensExpired"] = a_opens_controller()
+        inbound["aOpensExpiredSeconds"] = time.monotonic() - started_open
+        if inbound["aOpensExpired"]["exitCode"] == 0 or inbound["aOpensExpiredSeconds"] > 2.5:
+            raise RuntimeError("A's own connection was not rejected at once by the negative boundary")
+        if status("a").get("applied") is not None:
+            raise RuntimeError("A recovered before the negative-boundary samples were taken")
+        inbound["expiredTo"] = time.time()
         dns_lifecycle["expired"] = fails("expired-" + dns_tag + "." + exit_zone)
         wait_for(retired, "expired role/conntrack retirement readback")
         expired = snapshot("expired")
@@ -1388,6 +1484,25 @@ def execute(report, artifacts, runtime_os, platform, short, load, variant="ipv4"
         write(report / "e/recovered-status.json", recovered)
         snapshot("recovered")
         wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "source/relay automatic recovery")
+        inbound["recoveredFrom"] = time.time()
+        wait_for(lambda: inbound_ok_since(inbound["recoveredFrom"]) >= INBOUND_RECOVERED_SAMPLES,
+                 "accepted connection answered after A's recovery", INBOUND_RECOVERED_SAMPLES + 30)
+        (report / "signals/inbound-stop").touch()
+        wait_for(lambda: (inbound_flow() or {}).get("done"), "Controller's connection finished", 30)
+        flow = inbound_flow()
+        inbound["flow"] = flow
+        samples = flow["samples"]
+        inbound["samples"] = len(samples)
+        inbound["failed"] = [when for when, ok in samples if not ok]
+        inbound["span"] = samples[-1][0] - samples[0][0] if samples else 0
+        write(report / "inbound-replies.json", inbound)
+        # One connection throughout, every exchange answered, none missing
+        # (a sample at least every 3 s).
+        gaps = [later[0] - earlier[0] for earlier, later in zip(samples, samples[1:])]
+        if (flow.get("closed") or inbound["failed"] or max(gaps, default=0) > 3
+                or not samples or samples[0][0] > inbound["captureFrom"] + 3):
+            raise RuntimeError("the accepted connection was not answered throughout capture, expiry and recovery")
+        manifest["stages"]["17"] = {"status": "passed", "evidence": ["inbound-replies.json", "inbound-capture.json", "expired.json"]}
         dns_lifecycle["recovered"] = resolves("recovered-" + dns_tag + "." + exit_zone, ["198.51.100.10"], timeout=60)
         no_source_fallback()
         write(report / "dns-lifecycle.json", dns_lifecycle)

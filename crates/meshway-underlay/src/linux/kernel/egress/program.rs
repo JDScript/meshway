@@ -17,6 +17,12 @@ pub(super) struct Program {
     /// recreated (at `down` or another boot).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub capture6: bool,
+    /// The table keeps the replies of connections the host accepted from
+    /// outside the Mesh on the underlay (chain `replies`). A table an
+    /// earlier version created gains the chain in one transaction when its
+    /// owner next opens it ([`Self::inbound_batch`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inbound: bool,
 }
 impl Program {
     pub fn table(&self) -> String {
@@ -140,6 +146,9 @@ impl Program {
         for expr in rules {
             items.push(json!({"add": {"rule": {"family": "inet", "table": table, "chain": "output", "expr": expr}}}));
         }
+        if self.inbound {
+            items.extend(self.inbound_items());
+        }
         json!({"nftables": items})
     }
     pub fn replace(&self, ranges: &Ranges, mesh: &Ranges, active: Option<&str>) -> Value {
@@ -195,7 +204,78 @@ impl Program {
         }
         sets
     }
+    /// The inbound-reply exception, added to a table created without it.
+    pub fn inbound_batch(&self) -> Value {
+        json!({"nftables": self.inbound_items()})
+    }
+    /// The host's own packets of a connection another host opened (its
+    /// conntrack reply direction), from an address outside the Mesh pools,
+    /// carry the protected mark from `replies` on: routed again past the
+    /// capture selector (the host's RPDB, the path the connection came on),
+    /// they pass the gate of `output` too. Only the reply direction, so every
+    /// connection the host opens is captured or rejected as before; a Mesh
+    /// peer's connection (from a Mesh address) keeps its Mesh route. The mark
+    /// bit is the one this Node already owns ([`Self::mark`]): nothing is
+    /// written to conntrack, and the exit owner never selects this bit.
+    fn inbound_items(&self) -> Vec<Value> {
+        let table = self.table();
+        let mut items = vec![
+            json!({"add": {"chain": {"family": "inet", "table": table, "name": "replies", "type": "route", "hook": "output", "prio": -150, "policy": "accept"}}}),
+        ];
+        let mark = json!({"meta": {"key": "mark"}});
+        for (protocol, family) in [("ip", 4), ("ip6", 6)] {
+            let expr = vec![
+                compare("==", json!({"ct": {"key": "direction"}}), json!("reply")),
+                compare(
+                    "!=",
+                    json!({"ct": {"key": format!("{protocol} saddr"), "dir": "original"}}),
+                    json!(format!("@mesh{family}")),
+                ),
+                json!({"mangle": {"key": mark.clone(), "value": {"|": [mark.clone(), self.mark]}}}),
+            ];
+            items.push(json!({"add": {"rule": {"family": "inet", "table": table, "chain": "replies", "expr": expr}}}));
+        }
+        items
+    }
 }
 fn compare(op: &str, left: Value, right: Value) -> Value {
     json!({"match": {"op": op, "left": left, "right": right}})
+}
+
+#[cfg(test)]
+mod unit {
+    use super::*;
+    use crate::linux::kernel::exit::objects::decode;
+
+    fn objects(value: &Value) -> std::collections::BTreeMap<String, Value> {
+        decode(&serde_json::to_vec(value).unwrap()).unwrap().objects
+    }
+
+    /// X19: the batch that upgrades a table of an earlier version adds
+    /// exactly what a current table has beyond it, and it reads and writes
+    /// only the packet's mark: conntrack is read, never written.
+    #[test]
+    fn the_inbound_batch_adds_exactly_the_reply_chain_of_a_current_table() {
+        let earlier = Program {
+            installation: "a".repeat(32),
+            mark: 1 << 17,
+            capture6: true,
+            inbound: false,
+        };
+        let current = Program {
+            inbound: true,
+            ..earlier.clone()
+        };
+        let mut upgraded = objects(&earlier.create());
+        let added = objects(&current.inbound_batch());
+        assert_eq!(added.len(), 3, "{added:?}");
+        for (key, value) in added {
+            assert!(upgraded.insert(key, value).is_none());
+        }
+        assert_eq!(upgraded, objects(&current.create()));
+        let batch = current.inbound_batch().to_string();
+        assert!(batch.contains(r#""hook":"output""#) && batch.contains(r#""type":"route""#));
+        assert!(!batch.contains(r#""mangle":{"key":{"ct""#));
+        assert!(batch.contains(r#""right":"reply""#) && !batch.contains(r#""right":"original""#));
+    }
 }

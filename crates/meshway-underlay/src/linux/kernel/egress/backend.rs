@@ -125,7 +125,10 @@ impl Backend {
             self.ledger.retiring = false;
             self.store.persist(&self.ledger).await?;
         }
-        let observed = self.dump().await?;
+        let mut observed = self.dump().await?;
+        if self.ledger.receipt.is_some() && !self.ledger.program.inbound {
+            observed = self.add_inbound(observed).await?;
+        }
         if let Some(receipt) = &self.ledger.receipt {
             if observed.objects != receipt.objects || observed.handles != receipt.handles {
                 return Err(Error::Conflict);
@@ -168,6 +171,50 @@ impl Backend {
                 .egress_table = Some(self.ledger.table);
         }
         Ok(())
+    }
+    /// A table an earlier version created and recorded gains the
+    /// inbound-reply chains in one nft transaction; the receipt is then the
+    /// table read back with them, its earlier objects and handles unchanged.
+    /// A table already read back with exactly them (a start after the
+    /// transaction whose record was not written) is recorded as it is.
+    /// Anything else is not this owner's table.
+    async fn add_inbound(&mut self, mut observed: Receipt) -> Result<Receipt> {
+        let receipt = self.ledger.receipt.clone().ok_or(Error::Journal)?;
+        let mut program = self.ledger.program.clone();
+        program.inbound = true;
+        let intended =
+            objects::decode(&serde_json::to_vec(&program.create()).map_err(|_| Error::Journal)?)?
+                .objects;
+        if observed.objects != intended {
+            if observed.objects != receipt.objects || observed.handles != receipt.handles {
+                return Err(Error::Conflict);
+            }
+            let _outcome = objects::mutate(&mut self.commands, &program.inbound_batch()).await;
+            observed = self.dump().await?;
+            if observed.objects == receipt.objects && observed.handles == receipt.handles {
+                // Nothing applied: the table is unchanged and still this
+                // owner's; the next opening adds the chains again.
+                return Err(Error::Netlink);
+            }
+            if observed.objects != intended {
+                return Err(Error::Conflict);
+            }
+        }
+        if receipt
+            .handles
+            .iter()
+            .any(|(key, handle)| observed.handles.get(key) != Some(handle))
+        {
+            return Err(Error::Conflict);
+        }
+        tracing::info!(
+            table = program.table(),
+            "Egress capture table gained the inbound-reply exception"
+        );
+        self.ledger.program = program;
+        self.ledger.receipt = Some(observed.clone());
+        self.store.persist(&self.ledger).await?;
+        Ok(observed)
     }
     async fn present(&mut self) -> Result<bool> {
         use super::super::tool::nft::{TablesError, tables};
