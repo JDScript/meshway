@@ -21,8 +21,6 @@ from __future__ import annotations
 import json
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import timedelta
 
 import common
@@ -108,12 +106,8 @@ def wait_health(config: common.Config, started: float, timeout: float) -> dict:
         return {}
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=10) as response:
-                if response.status == 200:
-                    return {"server_healthy_s": round(time.monotonic() - started, 1)}
-        except (urllib.error.URLError, OSError):
-            pass
+        if common.health(url, 10).get("http") == 200:
+            return {"server_healthy_s": round(time.monotonic() - started, 1)}
         time.sleep(3)
     raise FaultError(f"Server health {url} not 200 within {timeout:.0f} s")
 

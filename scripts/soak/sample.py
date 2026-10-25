@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 import sys
 import time
-import urllib.error
-import urllib.request
 
 import common
 
@@ -58,15 +56,7 @@ def server_sample(config: common.Config) -> dict:
     if url:
         started = time.monotonic()
         health = {"url": url}
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "meshway-soak"}),
-                                        timeout=15) as response:
-                health["http"] = response.status
-                response.read(4096)
-        except urllib.error.HTTPError as error:
-            health["http"] = error.code
-        except (urllib.error.URLError, OSError) as error:
-            health["error"] = str(getattr(error, "reason", error))[:200]
+        health.update(common.health(url, 15))
         health["ms"] = int((time.monotonic() - started) * 1000)
         health["ok"] = health.get("http") == 200
         record["health"] = health

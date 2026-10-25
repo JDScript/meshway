@@ -307,6 +307,27 @@ class Resources(unittest.TestCase):
         self.assertEqual(resources.parse("@@error no meshwayd")["error"], "no meshwayd")
 
 
+class Health(unittest.TestCase):
+    def test_health_requests_name_the_collector(self):
+        seen = []
+
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n): return b""
+
+        def urlopen(request, timeout):
+            seen.append(request.get_header("User-agent"))
+            return Response()
+
+        with mock.patch("urllib.request.urlopen", urlopen):
+            self.assertEqual(common.health("https://server.example/api/v1/auth/options", 5), {"http": 200})
+            config = mock.Mock(server={"health_url": "https://server.example/api/v1/auth/options"})
+            self.assertIn("server_healthy_s", fault.wait_health(config, 0.0, 5))
+        self.assertEqual(seen, ["meshway-soak", "meshway-soak"])
+
+
 class ServerStarts(unittest.TestCase):
     def test_a_container_started_before_the_range_is_not_a_start_in_it(self):
         baseline = {"t": "2026-11-01T23:55:00Z", "container": {"startedAt": "2026-10-30T00:00:00Z"}}

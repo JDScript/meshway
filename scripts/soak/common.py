@@ -459,3 +459,21 @@ def gate_spec(config: Config, host_name: str) -> dict:
             if fault["profile"] not in exit_["profiles"]:
                 exit_["profiles"].append(fault["profile"])
     return spec
+
+
+# Cloudflare refuses urllib's default User-Agent (error 1010); every Server health request names the collector.
+HEALTH_HEADERS = {"User-Agent": "meshway-soak"}
+
+
+def health(url: str, timeout: float) -> dict:
+    """One GET of the Server's health URL: {"http": status} or {"error": reason}."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=HEALTH_HEADERS), timeout=timeout) as response:
+            response.read(4096)
+            return {"http": response.status}
+    except urllib.error.HTTPError as error:
+        return {"http": error.code}
+    except (urllib.error.URLError, OSError) as error:
+        return {"error": str(getattr(error, "reason", error))[:200]}
