@@ -165,7 +165,9 @@ def process_identity(record: dict | None):
     return (pid, proc.get("start") if proc.get("pid") == pid else None)
 
 
-def server_analysis(records: list[dict], baseline: dict | None, windows: list[dict]) -> dict:
+def server_analysis(records: list[dict], baseline: dict | None, windows: list[dict], since=None) -> dict:
+    """`since` is where the analysed range begins (T0 for the first day): a container started before it (an upgrade
+    before T0, seen as a changed `startedAt` against the previous day's last sample) is not a start in the range."""
     out = {"samples": len(records), "health_ok": 0, "health_failed": [], "starts": []}
     started = ((baseline or {}).get("container") or {}).get("startedAt")
     for record in records:
@@ -181,7 +183,8 @@ def server_analysis(records: list[dict], baseline: dict | None, windows: list[di
         if container.get("startedAt"):
             if started and container["startedAt"] != started:
                 moment = common.parse_time(container["startedAt"])
-                out["starts"].append({"t": container["startedAt"], "planned": planned(windows, "server", moment)})
+                if since is None or moment >= since:
+                    out["starts"].append({"t": container["startedAt"], "planned": planned(windows, "server", moment)})
             started = container["startedAt"]
     return out
 
@@ -464,7 +467,8 @@ def analyze(config: common.Config, days: list[str]) -> dict:
         start, end = window_of(config, day)
         server_samples += in_window(common.read_day(config.dir("samples", "server"), day), start, end)
         server_logs += in_window(read_logs(config, "server", day), start, end)
-    server = server_analysis(server_samples, last_record(config, config.dir("samples", "server"), days[0]), windows)
+    server = server_analysis(server_samples, last_record(config, config.dir("samples", "server"), days[0]), windows,
+                             since=window_of(config, days[0])[0])
     server["logs"] = log_analysis(server_logs, windows, "server")
     probes = []
     for day in days:

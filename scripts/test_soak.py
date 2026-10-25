@@ -307,6 +307,17 @@ class Resources(unittest.TestCase):
         self.assertEqual(resources.parse("@@error no meshwayd")["error"], "no meshwayd")
 
 
+class ServerStarts(unittest.TestCase):
+    def test_a_container_started_before_the_range_is_not_a_start_in_it(self):
+        baseline = {"t": "2026-11-01T23:55:00Z", "container": {"startedAt": "2026-10-30T00:00:00Z"}}
+        records = [{"t": at(0.25), "health": {"ok": True}, "container": {"startedAt": "2026-11-01T23:59:00Z"}},
+                   {"t": at(5), "health": {"ok": True}, "container": {"startedAt": at(4.9)}}]
+        since = common.parse_time(at(0.25))
+        out = report.server_analysis(records, baseline, [], since=since)
+        self.assertEqual([s["t"] for s in out["starts"]], [at(4.9)])
+        self.assertEqual(len(report.server_analysis(records, baseline, [])["starts"]), 2)
+
+
 class Report(unittest.TestCase):
     def fixture(self):
         soak = Soak()
