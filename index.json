@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-25T04:43:14.876334+00:00",
+  "updatedAt": "2026-10-25T11:49:24.470689+00:00",
   "runs": [
+    {
+      "id": 40190168073,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "f9ec1f013ba4b4171c8f9d55127536c2559c1cf9",
+      "message": "tooling: soak Server health requests name the collector (Cloudflare refuses urllib's User-Agent with 1010); D2 waited 300 s on a 403",
+      "createdAt": "2026-10-25T11:45:04Z",
+      "updatedAt": "2026-10-25T11:46:28Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/40190168073",
+      "jobs": [
+        {
+          "id": 121159273607,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-25T11:45:05Z",
+          "completedAt": "2026-10-25T11:45:08Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40190168073/job/121159273607"
+        },
+        {
+          "id": 121159290313,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-25T11:45:09Z",
+          "completedAt": "2026-10-25T11:46:28Z",
+          "seconds": 79.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40190168073/job/121159290313"
+        },
+        {
+          "id": 121159291292,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-25T11:45:09Z",
+          "completedAt": "2026-10-25T11:45:09Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40190168073/job/121159291292"
+        },
+        {
+          "id": 121159291353,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-25T11:45:09Z",
+          "completedAt": "2026-10-25T11:45:09Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40190168073/job/121159291353"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 40162689005,
       "attempt": 1,
