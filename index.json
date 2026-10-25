@@ -1,8 +1,152 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-24T13:05:47.962099+00:00",
+  "updatedAt": "2026-10-25T02:20:41.501059+00:00",
   "runs": [
+    {
+      "id": 40153222276,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "e5b32acb8be0a06489e1ac17bf8125f6c27b254e",
+      "message": "tooling: soak report does not count a Server container started before the analysed range (pre-T0 upgrade)",
+      "createdAt": "2026-10-25T02:07:02Z",
+      "updatedAt": "2026-10-25T02:13:58Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/40153222276",
+      "jobs": [
+        {
+          "id": 121048949550,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-25T02:07:04Z",
+          "completedAt": "2026-10-25T02:13:56Z",
+          "seconds": 412.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222276/job/121048949550"
+        },
+        {
+          "id": 121048949745,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-25T02:13:57Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222276/job/121048949745"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12583199515,
+          "name": "server-aarch64-unknown-linux-musl-e5b32acb8be0a06489e1ac17bf8125f6c27b254e",
+          "bytes": 17785031,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222276/artifacts/12583199515",
+          "jobId": null,
+          "runner": null,
+          "seconds": null,
+          "state": "ignored",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": []
+        },
+        {
+          "id": 12583014879,
+          "name": "node-aarch64-unknown-linux-musl-e5b32acb8be0a06489e1ac17bf8125f6c27b254e",
+          "bytes": 11127753,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222276/artifacts/12583014879",
+          "jobId": 121048949550,
+          "runner": "planck",
+          "seconds": 412.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 17141944,
+              "sha256": "c6d9ceafd25bb0d565df31f9390144f31f5214ea186fc8401437d12ac31c1a53"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1955680,
+              "sha256": "14ff521ecbe73509e554a2edec240982147378618a74e0d9a2c605dd4518f592"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 40153222272,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "e5b32acb8be0a06489e1ac17bf8125f6c27b254e",
+      "message": "tooling: soak report does not count a Server container started before the analysed range (pre-T0 upgrade)",
+      "createdAt": "2026-10-25T02:07:02Z",
+      "updatedAt": "2026-10-25T02:17:41Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/40153222272",
+      "jobs": [
+        {
+          "id": 121048949708,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-25T02:07:05Z",
+          "completedAt": "2026-10-25T02:07:17Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222272/job/121048949708"
+        },
+        {
+          "id": 121049000616,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-25T02:07:20Z",
+          "completedAt": "2026-10-25T02:15:01Z",
+          "seconds": 461.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222272/job/121049000616"
+        },
+        {
+          "id": 121049000657,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-25T02:15:04Z",
+          "completedAt": "2026-10-25T02:17:41Z",
+          "seconds": 157.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222272/job/121049000657"
+        },
+        {
+          "id": 121049001716,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-25T02:07:18Z",
+          "completedAt": "2026-10-25T02:07:18Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40153222272/job/121049001716"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 40095015158,
       "attempt": 1,
