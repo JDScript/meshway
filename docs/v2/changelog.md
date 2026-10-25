@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.24
+
+范围：prod soak 期间的紧急修复版（D1 发现、可由远端触发）。L1：公网 listener 上一个连接在 accept 前被 RST（`getpeername` 返回 `ENOTCONN`）等单连接失败曾结束 listener owner、停止整个 connectivity Manager 并撤回包平面（it7 现场 2026-10-24T23:38:45Z，642 ms），现在只关闭该连接，listener 的暂态失败由其 owner 有界重试，不可用时只替换该 listener；X19：全量出口方案下已接受的入站连接（如公网 SSH）的回包沿 underlay 返回，捕获、挂起与租约到期期间都不断；soak 报告不再把 T0 前的 Server 升级计为计划外重启。`compilerVersion` `meshway-netmap-4`、wire 6、IPC 13、Server schema 9 与 HTTP 契约均不变，按先 Node 后 Server 普通升级（无断网窗口、无迁移）；alpha.23 留下、未 `down` 的 egress 表在启动时就地补上 X19 的 `replies` 链。降级到 alpha.23 前先 `meshway down`。
 
 X19 已接受的入站连接的回包（`x19/inbound-replies`）：wire 6、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag；`underlay-egress.json` 的程序多一个可省略字段 `inbound`（ledger 版本仍为 2）。
 
