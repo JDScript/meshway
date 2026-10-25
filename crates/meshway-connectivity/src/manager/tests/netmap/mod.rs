@@ -9,6 +9,7 @@ use meshway_protocol::{PeerFacts, PeerListenerFacts};
 use meshway_transport::spec::NativeUdpDialer;
 use support::{Netmaps, eventually, links};
 
+mod listener;
 mod rebind;
 mod roam;
 pub(in crate::manager) mod support;

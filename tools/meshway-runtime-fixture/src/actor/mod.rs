@@ -1,4 +1,5 @@
 mod interface_change;
+mod knock;
 mod reconnect;
 pub mod relay;
 mod scenario;
@@ -393,7 +394,20 @@ async fn exercise(
         // Both are ordinary futures, so failure cancels the other socket task
         // without detaching a producer. Snapshot failed reception before dropping
         // the original socket; restoration never subscribes again.
-        let result = tokio::try_join!(regular, subscription.receive_only(cli.traffic_duration()));
+        let knock = async {
+            if knock::enabled(cli) {
+                knock::run(cli, started + cli.traffic_duration())
+                    .await
+                    .map(Some)
+            } else {
+                Ok(None)
+            }
+        };
+        let result = tokio::try_join!(
+            regular,
+            subscription.receive_only(cli.traffic_duration()),
+            knock
+        );
         let failure = if result.is_err() {
             subscription_observation
                 .lock()
@@ -408,7 +422,13 @@ async fn exercise(
         {
             let _ = serde_json::to_writer_pretty(file, &failure);
         }
-        let (_, reception) = result?;
+        let (_, reception, knocks) = result?;
+        if let Some(knocks) = knocks {
+            if knocks.resets + knocks.datagrams == 0 {
+                return Err("the listener knock reached no listener".into());
+            }
+            save(cli, "listener-knock", &knocks).await?;
+        }
         if let Some(before) = fallback_before {
             signals.ready("fallback-verified").await?;
             let after = crate::fallback::sample(cli, traffic, started.elapsed(), "after").await?;
@@ -465,6 +485,9 @@ async fn exercise(
         &tun_received(&tun).await?,
     )
     .await?;
+    if knock::enabled(cli) {
+        knock::verify_log(cli).await?;
+    }
     signals
         .write(&format!("traffic-ready-{}", role.name()), &Signal::Ready)
         .await?;

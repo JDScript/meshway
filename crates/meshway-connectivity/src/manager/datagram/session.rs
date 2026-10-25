@@ -364,12 +364,12 @@ impl Owner {
             LinkAcquisition::AcceptedInbound,
         )? {
             if attempt.rebuild {
-                // Authentication and normal selection succeeded. Close/join
-                // this generation and surface Event::Closed, allowing the
-                // host's saved-attempt retry to reopen it. Never leave a live
-                // listener permanently unable to accept a new channel, or clear
-                // its replay/ABA state underneath other pending handshakes.
-                tracing::warn!("UDP replay capacity exhausted; connectivity rebuild required");
+                // Authentication and normal selection succeeded. End this
+                // listener's generation; the Manager rebinds the listener
+                // alone. Never leave a live listener permanently unable to
+                // accept a new channel, or clear its replay/ABA state
+                // underneath other pending handshakes.
+                tracing::warn!("UDP replay capacity exhausted; listener rebuild required");
                 self.shared.stop.cancel();
                 return Err(Error::Capacity);
             }

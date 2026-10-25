@@ -744,37 +744,158 @@ impl ProtectedListener {
             .local_addr()
     }
 
+    /// The next connection this listener can adopt. A connection that fails
+    /// on its own (reset or aborted before it was accepted, a socket that can
+    /// no longer be read or configured, no socket budget left for it) is
+    /// closed here and the next one is accepted: a remote client cannot end
+    /// the listener. An error is the listener's own: a host error from
+    /// `accept(2)` itself (descriptors, memory) or the end of its protection.
     pub async fn accept(&self) -> Result<(ProtectedTcp, SocketAddr)> {
-        let accepted = std::future::poll_fn(|cx| {
-            self.owned.wakers.read.register(cx.waker());
-            let socket = self
-                .owned
-                .socket
-                .lock()
-                .map_err(|_| io_error(Error::Worker))?;
-            let listener = socket.as_ref().ok_or_else(|| io_error(Error::Expired))?;
-            self.owned.scope.prepare(&SockRef::from(listener))?;
-            listener.poll_accept(cx)
-        });
-        let (stream, peer) = tokio::select! { biased;
-            _ = self.owned.scope.ended() => return Err(Error::Expired),
-            result = accepted => result?,
-        };
+        loop {
+            let accepted = std::future::poll_fn(|cx| {
+                self.owned.wakers.read.register(cx.waker());
+                let socket = self
+                    .owned
+                    .socket
+                    .lock()
+                    .map_err(|_| io_error(Error::Worker))?;
+                let listener = socket.as_ref().ok_or_else(|| io_error(Error::Expired))?;
+                self.owned.scope.prepare(&SockRef::from(listener))?;
+                listener.poll_accept(cx)
+            });
+            let (stream, peer) = tokio::select! { biased;
+                _ = self.owned.scope.ended() => return Err(Error::Expired),
+                result = accepted => match result {
+                    Ok(accepted) => accepted,
+                    Err(error) if connection_failed(&error) => {
+                        tracing::debug!(%error, "Protected listener skipped a connection that failed before it was accepted");
+                        continue;
+                    }
+                    // The listener's own protection, as `prepare` reports it.
+                    Err(error) => return Err(match error.downcast::<Error>() {
+                        Ok(error) => error,
+                        Err(error) => Error::Io(error),
+                    }),
+                },
+            };
+            match self.adopt_accepted(stream) {
+                Ok(stream) => return Ok((stream, peer)),
+                Err(error @ Error::Conflict) => {
+                    tracing::warn!(%peer, %error, "Protected listener closed an accepted connection without its mark");
+                }
+                Err(error) => {
+                    tracing::debug!(%peer, %error, "Protected listener closed an accepted connection it could not adopt");
+                }
+            }
+        }
+    }
+
+    fn adopt_accepted(&self, stream: TcpStream) -> Result<ProtectedTcp> {
         let mark = SockRef::from(&stream).mark()?;
         let owned = self.owned.scope.shared.mark;
         if mark & owned.mask != owned.value {
             return Err(Error::Conflict);
         }
         let capacity = self.owned.scope.capacity()?;
-        Ok((
-            adopt(
+        adopt(
+            stream,
+            self.owned.scope.clone(),
+            capacity,
+            &self.options,
+            &self.tcp,
+        )
+    }
+}
+
+/// `accept(2)` failed for one pending connection, not for the listener:
+/// it was reset or aborted first, or carried a network error that Linux
+/// passes on to `accept` (see accept(2), "Error handling"). The next
+/// connection can still be accepted.
+fn connection_failed(error: &io::Error) -> bool {
+    // Linux errno values; this module is Linux only.
+    const ECONNABORTED: i32 = 103;
+    const ECONNRESET: i32 = 104;
+    const EPROTO: i32 = 71;
+    const ENETDOWN: i32 = 100;
+    const ENOPROTOOPT: i32 = 92;
+    const EHOSTDOWN: i32 = 112;
+    const ENONET: i32 = 64;
+    const EHOSTUNREACH: i32 = 113;
+    const EOPNOTSUPP: i32 = 95;
+    const ENETUNREACH: i32 = 101;
+    const ETIMEDOUT: i32 = 110;
+    const EPERM: i32 = 1;
+    const EINTR: i32 = 4;
+    matches!(
+        error.raw_os_error(),
+        Some(
+            ECONNABORTED
+                | ECONNRESET
+                | EPROTO
+                | ENETDOWN
+                | ENOPROTOOPT
+                | EHOSTDOWN
+                | ENONET
+                | EHOSTUNREACH
+                | EOPNOTSUPP
+                | ENETUNREACH
+                | ETIMEDOUT
+                | EPERM
+                | EINTR
+        )
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// L1: what accept(2) reports for one pending connection is not the
+    /// listener's failure; a host limit is.
+    #[test]
+    fn only_a_pending_connections_own_failure_is_skipped() {
+        for errno in [103, 104, 71, 100, 92, 112, 64, 113, 95, 101, 110, 1, 4] {
+            assert!(
+                connection_failed(&io::Error::from_raw_os_error(errno)),
+                "{errno}"
+            );
+        }
+        // EMFILE, ENFILE, ENOBUFS, ENOMEM, EBADF, EINVAL.
+        for errno in [24, 23, 105, 12, 9, 22] {
+            assert!(
+                !connection_failed(&io::Error::from_raw_os_error(errno)),
+                "{errno}"
+            );
+        }
+        assert!(!connection_failed(&io_error(Error::Expired)));
+    }
+
+    /// L1 root cause: a client that resets its connection before the
+    /// listener accepts it (a scanner's connect and RST) is still handed to
+    /// `accept(2)`, but its peer address is gone, so adopting it fails.
+    /// Before, that adoption error was returned by [`ProtectedListener::accept`]
+    /// and ended the listener's owner and with it the whole Manager.
+    #[tokio::test]
+    async fn a_connection_reset_before_accept_cannot_be_adopted() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        SockRef::from(&client)
+            .set_linger(Some(Duration::ZERO))
+            .unwrap();
+        drop(client);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let (stream, _) = listener.accept().await.unwrap();
+        assert_eq!(
+            stream.peer_addr().unwrap_err().kind(),
+            io::ErrorKind::NotConnected
+        );
+        assert!(
+            meshway_transport::tcp::TcpTransport::adopt(
                 stream,
-                self.owned.scope.clone(),
-                capacity,
-                &self.options,
-                &self.tcp,
-            )?,
-            peer,
-        ))
+                &Default::default(),
+                &Default::default()
+            )
+            .is_err()
+        );
     }
 }

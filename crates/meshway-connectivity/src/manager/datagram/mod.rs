@@ -376,10 +376,20 @@ impl Owner {
             })
     }
 
+    /// Serve this socket until asked to stop. A receive error the socket
+    /// cannot have from one remote (anything but the ones below) pauses
+    /// reading by [`super::resources::Streak`] and ends this owner only once
+    /// it lasted [`super::resources::HORIZON`].
     async fn run(&mut self) -> Result<(), Error> {
         let mut plans = self.shared.plans.subscribe();
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let label = self
+            .listener
+            .as_ref()
+            .map_or_else(|| "(dial candidate)".to_owned(), |fact| fact.key.clone());
+        let mut streak = super::resources::Streak::default();
+        let mut resume: Option<Instant> = None;
         loop {
             let lifetime = self.lifetime.clone();
             enum Work {
@@ -390,13 +400,16 @@ impl Owner {
                 Command(Option<super::traversal::Command>),
                 Room(Option<super::events::Reservation>),
                 Stalled,
+                Resume,
             }
             // Business frames already read wait for room in the event queue;
             // until then the socket is not read (pressure stays in the kernel
             // buffer). Only the consumer's dequeue, or the stall bound, resumes it.
             let blocked = self.backlog.blocked();
+            let paused = resume.is_some();
             let room = self.shared.events.reserve(self.backlog.waiting());
             let stall_at = self.backlog.stall_at().unwrap_or_else(Instant::now);
+            let resume_at = resume.unwrap_or_else(Instant::now);
             let work = lifetime.run(async {
                 tokio::select! { biased;
                     changed = plans.changed() => changed.map(|_| Work::Reconfigured).map_err(|_| Error::Cancelled),
@@ -405,7 +418,8 @@ impl Owner {
                     command = async { match &mut self.commands { Some(commands) => commands.recv().await, None => std::future::pending().await } } => Ok(Work::Command(command)),
                     reservation = room, if blocked => Ok(Work::Room(reservation)),
                     _ = tokio::time::sleep_until(stall_at), if blocked => Ok(Work::Stalled),
-                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv_batch(), if !blocked => Ok(Work::Frame(frame, std::time::Instant::now())),
+                    _ = tokio::time::sleep_until(resume_at), if paused => Ok(Work::Resume),
+                    frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv_batch(), if !blocked && !paused => Ok(Work::Frame(frame, std::time::Instant::now())),
                 }
             }).await;
             let operation = async {
@@ -421,7 +435,9 @@ impl Owner {
                     Work::Tick => self.tick().await?,
                     Work::Room(reservation) => self.make_room(reservation),
                     Work::Stalled => self.stalled(),
+                    Work::Resume => resume = None,
                     Work::Frame(Ok(frames), received_at) => {
+                        streak.succeeded(&label, "receive");
                         self.receive_batch(frames, received_at).await?;
                     }
                     Work::Frame(
@@ -447,6 +463,10 @@ impl Owner {
                         // Unconnected UDP may surface an asynchronous error from a
                         // single destination. Its health scope expires independently.
                         tokio::task::yield_now().await;
+                    }
+                    Work::Frame(Err(ReceiveError::Io(error)), _) => {
+                        let wait = streak.failed(&label, "receive", Error::Io(error))?;
+                        resume = Some(Instant::now() + wait);
                     }
                     Work::Frame(Err(_), _) => return Err(Error::Unavailable),
                 }
@@ -566,7 +586,13 @@ async fn send_control(
         .await
 }
 
-pub(super) async fn listen(shared: Arc<Shared>, fact: ListenerFact, endpoint: Box<dyn Datagram>) {
+/// The owner of one Native UDP listener socket. It ends unasked only with
+/// an error, and the Manager rebinds that listener alone.
+pub(super) async fn listen(
+    shared: Arc<Shared>,
+    fact: ListenerFact,
+    endpoint: Box<dyn Datagram>,
+) -> Result<(), Error> {
     let result = async {
         let mut owner = Owner::new(shared.clone(), endpoint, fact.socket_id)?;
         owner.listener = Some(fact);
@@ -579,6 +605,7 @@ pub(super) async fn listen(shared: Arc<Shared>, fact: ListenerFact, endpoint: Bo
         tracing::debug!(%error, "Datagram socket owner ended");
         shared.stop.cancel();
     }
+    result
 }
 
 pub(super) async fn listen_traversal(
@@ -587,7 +614,7 @@ pub(super) async fn listen_traversal(
     listener: Option<ListenerFact>,
     socket: crate::TraversalSocket,
     commands: mpsc::Receiver<super::traversal::Command>,
-) {
+) -> Result<(), Error> {
     let result = async {
         let mut owner = Owner::new(shared.clone(), socket.endpoint, id)?;
         owner.listener = listener;
@@ -602,6 +629,7 @@ pub(super) async fn listen_traversal(
         tracing::debug!(%error, "Datagram socket owner ended");
         shared.stop.cancel();
     }
+    result
 }
 
 #[allow(clippy::too_many_arguments)]

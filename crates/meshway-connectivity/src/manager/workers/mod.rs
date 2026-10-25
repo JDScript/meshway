@@ -719,38 +719,70 @@ async fn pause(
         .await
 }
 
+/// The owner of one stream listener socket. One connection's failure (its
+/// provider or adjacency handshake, even a panic of its task) ends only that
+/// connection. A failed accept is retried ([`resources::Streak`]); only an
+/// accept failing for [`resources::HORIZON`], or the listener's protected
+/// socket ending ([`Error::Underlay`]), ends the owner with that error, and
+/// the Manager rebinds this listener alone.
 pub(super) async fn listen(
     shared: Arc<Shared>,
     fact: ListenerFact,
     listener: Box<dyn ListenerSocket>,
     acceptor: Arc<provider::Acceptor>,
-) {
+) -> Result<(), Error> {
+    enum Next {
+        Child(Result<(), tokio::task::JoinError>),
+        Accepted(Result<crate::AcceptedSocket, Error>),
+    }
     let mut children = JoinSet::new();
-    loop {
+    let mut streak = resources::Streak::default();
+    let result = loop {
         let lifetime = shared.scope(None, false);
-        let socket = lifetime
+        let next = lifetime
             .run(async {
-                tokio::select! { biased;
-                    result = children.join_next(), if !children.is_empty() => {
-                        if result.is_some_and(|result| result.is_err()) {
-                            shared.stop.cancel();
-                            return Err(Error::Worker);
-                        }
-                        Ok(None)
-                    },
-                    socket = listener.accept() => match socket {
-                        Ok(socket) => Ok(Some(socket)),
-                        Err(_) => Err(Error::Underlay),
-                    },
-                }
+                Ok(tokio::select! { biased;
+                    Some(result) = children.join_next(), if !children.is_empty() => Next::Child(result),
+                    socket = listener.accept() => Next::Accepted(socket),
+                })
             })
             .await;
-        let socket = match socket {
-            Ok(Some(socket)) => socket,
-            Ok(None) => continue,
-            Err(_) => {
-                shared.stop.cancel();
-                break;
+        let socket = match next {
+            // Asked to stop.
+            Err(_) => break Ok(()),
+            Ok(Next::Child(result)) => {
+                if let Err(error) = result
+                    && error.is_panic()
+                {
+                    let panic = error.into_panic();
+                    tracing::error!(listener = %fact.key, panic = resources::panic_message(&*panic),
+                        "Inbound connection task panicked; the listener keeps serving");
+                }
+                continue;
+            }
+            Ok(Next::Accepted(Ok(socket))) => {
+                streak.succeeded(&fact.key, "accept");
+                socket
+            }
+            Ok(Next::Accepted(Err(error))) => {
+                if !matches!(error, Error::Io(_) | Error::Capacity) {
+                    break Err(error);
+                }
+                match streak.failed(&fact.key, "accept", error) {
+                    Ok(wait) => {
+                        let waited = lifetime
+                            .run(async {
+                                tokio::time::sleep(wait).await;
+                                Ok(())
+                            })
+                            .await;
+                        if waited.is_err() {
+                            break Ok(());
+                        }
+                        continue;
+                    }
+                    Err(error) => break Err(error),
+                }
             }
         };
         let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
@@ -802,10 +834,11 @@ pub(super) async fn listen(
                 let _ = connected(shared, stream, fact, plan, opening, &mut was_selected).await;
             }
         });
-    }
+    };
     drop(listener);
     shared.stop.cancel();
     while children.join_next().await.is_some() {}
+    result
 }
 
 #[cfg(test)]

@@ -29,4 +29,4 @@ pub(in crate::manager) fn carriers(
 }
 
 mod sockets;
-pub(super) use sockets::Factory;
+pub(super) use sockets::{AcceptFault, Factory};

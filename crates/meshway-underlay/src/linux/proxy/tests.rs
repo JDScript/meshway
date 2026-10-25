@@ -275,3 +275,26 @@ async fn a_different_inode_or_a_live_listener_is_never_reclaimed() {
     assert!(socket.exists());
     drop(live);
 }
+
+/// L1: the Server's edge closing a relayed connection is not a relay
+/// failure worth a WARN (field: 3–30 a day per Node, all `Broken pipe` or
+/// `Connection reset by peer`); anything else still is.
+#[test]
+fn only_a_peer_closing_the_relay_is_quiet() {
+    for kind in [
+        io::ErrorKind::BrokenPipe,
+        io::ErrorKind::ConnectionReset,
+        io::ErrorKind::ConnectionAborted,
+        io::ErrorKind::UnexpectedEof,
+    ] {
+        assert!(peer_closed(&kind.into()), "{kind:?}");
+    }
+    for kind in [
+        io::ErrorKind::TimedOut,
+        io::ErrorKind::ConnectionRefused,
+        io::ErrorKind::PermissionDenied,
+        io::ErrorKind::Other,
+    ] {
+        assert!(!peer_closed(&kind.into()), "{kind:?}");
+    }
+}

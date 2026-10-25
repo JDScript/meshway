@@ -437,6 +437,10 @@ pub struct Manager {
     rebound: mpsc::Receiver<rebind::Rebound>,
     rebound_sender: mpsc::Sender<rebind::Rebound>,
     rebind_tokens: u64,
+    /// Listener socket owners that failed, for [`Self::listener_failed`].
+    failed: mpsc::Receiver<resources::Failed>,
+    failed_sender: mpsc::Sender<resources::Failed>,
+    owner_tokens: u64,
 }
 
 impl Manager {
@@ -555,6 +559,9 @@ impl Manager {
             roam_observation: Arc::default(),
         });
         let (rebound_sender, rebound) = mpsc::channel(limits.listeners);
+        // Each listener owner reports at most once; a full queue (nothing
+        // reads the Manager) stops the Manager instead.
+        let (failed_sender, failed) = mpsc::channel(limits.listeners);
         let mut manager = Self {
             factory,
             shared,
@@ -566,6 +573,9 @@ impl Manager {
             rebound,
             rebound_sender,
             rebind_tokens: 0,
+            failed,
+            failed_sender,
+            owner_tokens: 0,
         };
         manager.install_resources().await?;
         if diagnostic_event() {
@@ -1140,6 +1150,18 @@ impl Manager {
                         }
                     }
                 },
+                Some(failed) = self.failed.recv() => {
+                    match self.listener_failed(failed).await {
+                        Ok(true) => return vec![Event::Changed],
+                        Ok(false) => continue,
+                        Err(error) => {
+                            tracing::warn!(error = %resources::chain(&error),
+                                "Replacing a failed listener failed; stopping the Manager");
+                            self.shared.stop.cancel();
+                            return vec![Event::Closed];
+                        }
+                    }
+                },
                 count = self.control_events.recv_many(&mut controls, limit) => { events = controls; count },
                 count = self.events.recv_many(&mut events, limit), if data => count,
             };
@@ -1314,6 +1336,8 @@ impl Manager {
         // restart binds the same ports before the old Manager is replaced.
         self.rebound.close();
         while self.rebound.try_recv().is_ok() {}
+        self.failed.close();
+        while self.failed.try_recv().is_ok() {}
         self.shared.links.lock().map_err(|_| Error::Worker)?.clear();
         self.listeners.clear();
         self.shared.unbound.with(BTreeMap::clear)?;

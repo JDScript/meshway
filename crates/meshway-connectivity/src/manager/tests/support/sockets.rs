@@ -10,6 +10,20 @@ pub(in crate::manager::tests) struct Faults {
     pub(in crate::manager::tests) writes: AtomicUsize,
     pub(in crate::manager::tests) waker: AtomicWaker,
     pub(in crate::manager::tests) controls: Mutex<Vec<(u8, SocketAddr, Vec<u8>)>>,
+    /// Failures the next stream listener accepts return, in order.
+    pub(in crate::manager::tests) accept_faults: Mutex<std::collections::VecDeque<AcceptFault>>,
+    /// Host errors (errno) the next receives on a UDP socket return, by
+    /// its local address.
+    pub(in crate::manager::tests) receive_faults:
+        Mutex<BTreeMap<SocketAddr, std::collections::VecDeque<i32>>>,
+}
+
+/// One failed accept of a stream listener.
+pub(in crate::manager::tests) enum AcceptFault {
+    /// A host error from accept(2) itself, by errno (EMFILE, ENOBUFS).
+    Host(i32),
+    /// The listener's protected socket ended, as the Linux factory reports it.
+    Ended,
 }
 
 struct Endpoint {
@@ -28,6 +42,17 @@ impl Datagram for Endpoint {
         cx: &mut Context<'_>,
         bytes: &mut [u8],
     ) -> Poll<io::Result<DatagramRead>> {
+        let local = self.inner.local_addr()?;
+        if let Some(errno) = self
+            .faults
+            .receive_faults
+            .lock()
+            .unwrap()
+            .get_mut(&local)
+            .and_then(std::collections::VecDeque::pop_front)
+        {
+            return Poll::Ready(Err(io::Error::from_raw_os_error(errno)));
+        }
         self.inner.poll_recv_from(cx, bytes)
     }
     fn poll_send_to(
@@ -146,13 +171,20 @@ impl Factory {
         })
     }
 }
-struct StreamListener(TcpListener);
+struct StreamListener(TcpListener, Arc<Faults>);
 impl ListenerSocket for StreamListener {
     fn local_addr(&self) -> Result<SocketAddr, Error> {
         Ok(self.0.local_addr()?)
     }
     fn accept(&self) -> BoxFuture<'_, Result<AcceptedSocket, Error>> {
         Box::pin(async {
+            match self.1.accept_faults.lock().unwrap().pop_front() {
+                Some(AcceptFault::Host(errno)) => {
+                    return Err(Error::Io(io::Error::from_raw_os_error(errno)));
+                }
+                Some(AcceptFault::Ended) => return Err(Error::Underlay),
+                None => {}
+            }
             let (stream, peer) = self.0.accept().await?;
             Ok(AcceptedSocket {
                 local: stream.local_addr()?,
@@ -268,7 +300,7 @@ impl SocketFactory for Factory {
                     .map_err(|source| bind_error(key, address, source))?,
             };
             assert_eq!(socket.local_addr()?.port(), address.port());
-            Ok(Box::new(StreamListener(socket)) as Box<dyn ListenerSocket>)
+            Ok(Box::new(StreamListener(socket, self.faults.clone())) as Box<dyn ListenerSocket>)
         })
     }
     fn traversal_listener<'a>(

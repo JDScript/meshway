@@ -214,11 +214,30 @@ async fn relay_current(
     tokio::select! { biased;
         _ = scope.ended() => Err(Error::Conflict),
         _ = activity.quiet(IDLE) => Ok(()),
-        result = tokio::io::copy_bidirectional_with_sizes(&mut local, &mut remote, 8192, 8192) => {
-            result?;
-            Ok(())
+        result = tokio::io::copy_bidirectional_with_sizes(&mut local, &mut remote, 8192, 8192) => match result {
+            Err(error) if peer_closed(&error) => {
+                // The Server's edge closing a long-lived connection (field:
+                // Cloudflare, several a day): the Control client reconnects.
+                tracing::debug!(%error, "Protected control relay closed by its peer");
+                Ok(())
+            }
+            result => {
+                result?;
+                Ok(())
+            }
         },
     }
+}
+
+/// A relayed connection one side closed while bytes were still crossing.
+fn peer_closed(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::UnexpectedEof
+    )
 }
 
 /// A relayed connection with no byte in either direction this long closes.

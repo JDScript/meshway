@@ -43,6 +43,21 @@ Manager 是 listener 生命周期的唯一 owner。安装内容时先绑定全�
 
 Linux 默认临时端口范围（`net.ipv4.ip_local_port_range`，32768–60999）内的 listener 端口可能在某一刻被任意进程的出站 socket 占用；配置校验对已启用 listener 的此类端口给出警告 `ephemeral_listener_port`，节点在启动邻接时按本机实际范围记 WARN。建议选用范围外的端口（或调整该 sysctl）。绑定失败时 listener 每秒重试，成功后以同一内容重新 apply 并清空 `lastError`，无需重启（`udp/off` 行与[真机证据](/v2/node/validation#u1-startup-self-heal)）。
 
+## listener 运行中的失败 {#listener-failure}
+
+不变量：一个 listener 的失败只影响它自己——单个连接的失败只关闭该连接，listener socket 的暂态失败由它的 owner 有界重试，二者都不停止 Manager、不撤回包平面；只有 socket 本身已不可用时才替换这一个 listener。公网 listener 会被扫描器和异常客户端访问，这些输入不能结束任何 owner。
+
+owner：每个 listener socket 由它自己的 owner 服务（流式：`manager/workers/mod.rs::listen`；Native UDP：`manager/datagram` 的 socket owner）；Linux 上单个待接受连接的失败由 `ProtectedListener::accept`（`meshway-underlay`）吸收；替换 listener 归 Manager（`manager/resources.rs::listener_failed`），之后的绑定归[绑定重试](#listener-bind-retry)的 retry owner。
+
+| 情况 | 处理 |
+| --- | --- |
+| 单个连接失败：在被接受前已被对端重置或中止（扫描器常见的 connect 后立即 RST，接受后读不到对端地址）、`accept(2)` 报告的单连接网络错误（`ECONNABORTED`、`EPROTO`、`ENETDOWN`、`EHOSTUNREACH`、`ENETUNREACH`、`EPERM` 等，见 accept(2)“Error handling”）、mark 读回不符、socket 选项设置失败、Underlay socket 预算已满 | 关闭该连接，接着接受下一个；debug 日志（mark 不符为 WARN） |
+| 已接受连接的 provider 或邻接握手失败、超时（含静默不发数据的客户端，受握手期限约束），连接任务 panic | 只结束该连接；panic 记 ERROR `Inbound connection task panicked; the listener keeps serving`（`listener`、`panic`） |
+| `accept(2)` 自身的主机错误（`EMFILE`、`ENFILE`、`ENOBUFS`、`ENOMEM`）；Native UDP 读错误（单个目的地的异步 ICMP 错误除外，它们照旧忽略） | owner 50 ms 后重试，翻倍、上限 1 s；本轮第一次失败 WARN `Listener socket operation failed; retrying it`（`listener`、`operation`：`accept`／`receive`、`error`、`retry_ms`），之后为 debug，恢复后 INFO `Listener socket operation recovered`（`failures`、`failing_ms`）。已建立的通道不受影响 |
+| 上述失败连续 10 秒没有一次成功；listener 的受保护 socket 已结束（Underlay 保护结束：WARN `Protected listener ended`）；Native UDP socket owner 以错误结束 | owner 以该错误结束；Manager 只退役这一个 listener（它的 socket 与经它建立的通道），交给[绑定重试](#listener-bind-retry)从 1 秒起重新绑定，WARN `Listener socket failed; rebinding only this listener`（`listener`、`error`）。重试期间该 listener 与 U1 一样报告为不可用（`Snapshot.unavailable`、State `phase: failed`、Status `lastError: transport`），daemon 以同一内容再 apply（`Listener availability changed; applying the netmap again`），其他 listener、拨号、通道与包平面照常 |
+
+其他 owner（拨号、协调、事实、idle）意外结束，或任一 owner（含 listener）panic，仍停止整个 Manager，包平面按[恢复语义](/v2/node/runtime)撤回并重装。日志 WARN `Connectivity owner ended unrequested; stopping the Manager` 带 `owner` 与 `reason`：`failed: <错误及其来源>`、`returned`、`panicked: <panic 消息>` 或 `dropped before it ended`。
+
 ## Provider 的连接需求
 
 连接需求描述的是 provider 接收什么底层资源，不代表网络一定可达，也不代表业务发起方必须是拨号方。各承载的建连需求与反向拨号示例见[承载与邻接模型](/v2/node/carriers#按承载类型的建连需求)。

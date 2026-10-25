@@ -326,7 +326,16 @@ impl ListenerSocket for meshway_underlay::ProtectedListener {
     }
     fn accept(&self) -> BoxFuture<'_, Result<AcceptedSocket, Error>> {
         Box::pin(async move {
-            let (stream, peer) = self.accept().await.map_err(|_| Error::Underlay)?;
+            // A host error (descriptors, memory) is retried by the listener's
+            // owner; anything else means this protected listener ended.
+            let (stream, peer) = self.accept().await.map_err(|error| match error {
+                meshway_underlay::Error::Io(error) => Error::Io(error),
+                meshway_underlay::Error::Capacity => Error::Capacity,
+                error => {
+                    tracing::warn!(%error, "Protected listener ended");
+                    Error::Underlay
+                }
+            })?;
             Ok(AcceptedSocket {
                 local: stream.local_addr()?,
                 peer,
