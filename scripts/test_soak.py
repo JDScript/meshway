@@ -307,6 +307,22 @@ class Resources(unittest.TestCase):
         self.assertEqual(resources.parse("@@error no meshwayd")["error"], "no meshwayd")
 
 
+class RepeatedFault(unittest.TestCase):
+    def test_each_run_of_a_fault_keeps_its_own_window(self):
+        soak = Soak()
+        soak.put("faults.jsonl", [
+            {"t": at(10), "event": "start", "id": "d2-server-upgrade", "affects": ["server", "*"], "grace_min": 15},
+            {"t": at(10.08), "event": "end", "id": "d2-server-upgrade", "ok": False, "error": "health"},
+            {"t": at(11.75), "event": "start", "id": "d2-server-upgrade", "affects": ["server", "*"], "grace_min": 15},
+            {"t": at(11.76), "event": "end", "id": "d2-server-upgrade", "ok": True},
+        ])
+        windows = report.fault_windows(soak.config)
+        self.assertEqual([w["ok"] for w in windows], [False, True])
+        self.assertEqual(report.planned(windows, "server", common.parse_time(at(10.01)), wildcard=False),
+                         "d2-server-upgrade")
+        self.assertIsNone(report.planned(windows, "server", common.parse_time(at(11)), wildcard=False))
+
+
 class Health(unittest.TestCase):
     def test_health_requests_name_the_collector(self):
         seen = []

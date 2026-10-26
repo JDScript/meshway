@@ -46,20 +46,25 @@ SAMPLE_INTERVAL_S = 300
 def fault_windows(config: common.Config) -> list[dict]:
     path = config.dir("faults.jsonl")
     events = common.read_jsonl(path) if path.exists() else []
-    windows: dict = {}
+    # One window per run: a fault run again (a failed injection repeated by hand) keeps the earlier run's window,
+    # so what that run caused stays planned; an `end` closes the latest open run of its id.
+    windows: list[dict] = []
     for event in events:
         fid = event["id"]
         if event["event"] == "start":
-            windows[fid] = {"id": fid, "start": common.parse_time(event["t"]), "end": None, "affects": event["affects"],
+            windows.append({"id": fid, "start": common.parse_time(event["t"]), "end": None, "affects": event["affects"],
                             "grace": timedelta(minutes=event.get("grace_min", 15)), "ok": None,
-                            "planned_at": event.get("planned_at"), "action": event.get("action"), "dry": event.get("dry")}
-        elif event["event"] == "end" and fid in windows:
-            windows[fid].update(end=common.parse_time(event["t"]), ok=event["ok"], error=event.get("error"),
-                                detail=event.get("detail"), interrupted=event.get("interrupted"))
+                            "planned_at": event.get("planned_at"), "action": event.get("action"),
+                            "dry": event.get("dry")})
+        elif event["event"] == "end":
+            run = next((w for w in reversed(windows) if w["id"] == fid and w.get("start") and w["end"] is None), None)
+            if run is not None:
+                run.update(end=common.parse_time(event["t"]), ok=event["ok"], error=event.get("error"),
+                           detail=event.get("detail"), interrupted=event.get("interrupted"))
         elif event["event"] == "skipped":
-            windows[fid] = {"id": fid, "skipped": event.get("reason"), "start": None, "end": None, "affects": [],
-                            "grace": timedelta(0), "planned_at": event.get("planned_at")}
-    return [w for w in windows.values() if not w.get("dry")]
+            windows.append({"id": fid, "skipped": event.get("reason"), "start": None, "end": None, "affects": [],
+                            "grace": timedelta(0), "planned_at": event.get("planned_at")})
+    return [w for w in windows if not w.get("dry")]
 
 
 def planned(windows: list[dict], node: str, start, end=None, wildcard: bool = True) -> str | None:
