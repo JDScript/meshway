@@ -56,6 +56,19 @@
 - 没有使用出口时，`overrideLocal: true` 使用非空 default；空 default 则拒绝配置。未知解析器引用也拒绝。
 - private nameserver 的可达路径和访问授权仍需存在，DNS 配置不会自动开放业务访问。
 
+### 节点能安装的 DNS 设置 {#installable}
+
+保存（validate 与 apply）时 Server 对每个已启用节点可用的每个方案（assignment 的 `allowed`，无 assignment 的节点为 `mesh`；网络还没有节点时按第一个节点执行 `mesh`、本机解析判定）做节点安装 DNS 时的同一判定（`meshway_policy::compile::resolver_plan_gaps`，节点 DNS owner 安装前调用同一函数），规则集内容尚未取得的方案在内容取得后判定；任一不满足即以 `dns_resolver_plan_incomplete` 拒绝整个版本，`params.node`、`params.profile`、`params.reason`：
+
+| `reason` | 条件 | 路径与参数 |
+| --- | --- | --- |
+| `search_domain_without_resolver` | 搜索域既不是 MagicDNS 域（`magicDNS: true` 时）或其下的域，也不在任何 `routes` 后缀之下（按 DNS 标签），且该方案没有兜底：`overrideLocal: false` 并且普通名称不经出口解析（`noExit`）。其下名称会被交给本节点的 DNS 链路，而只有系统其他链路能回答，resolved 后端不压平原系统的分域路由 | `/dns/searchDomains/<i>`，`value` |
+| `local_resolver` | 节点会查询的解析器（不经出口时全部；经出口时只有 `useWithExit`）是 loopback 或 IPv6 链路本地地址，即使没有被 `default`／`routes` 引用 | `/dns/servers/<key>`，`server` |
+| `routed_resolver` | 节点会查询的解析器在该方案下不是本机 socket：地址属于 Mesh 地址池或某节点的 Mesh 地址，或方案的 IP 规则把它送往出口而它没有 `useWithExit`（`dns.resolvers[key]` 为 `exit`／`rejected`） | `/dns/servers/<key>`，`server` |
+| `domain_limit` | MagicDNS 域、`routes` 后缀、搜索域与兜底 `.` 去重后超过 256 个 | `/dns`，`max` |
+
+例如只设 `searchDomains`、没有任何解析器的配置会被拒绝；给该后缀加一条 `routes`、或以 `overrideLocal: true` 配合 `default` 接管普通名称即可保存。显式文件代理后端本身能用原 nameserver 回答没有解析器的搜索域，但同一网络中 resolved 后端的节点不能，Server 不知道节点的本机后端，因此按所有后端都能安装的设置判定。出口方案（普通名称 `viaExit`）的兜底 `~.` 覆盖搜索域；判定逐个节点与方案进行，只要有一个节点还能执行本机解析的方案（如 `mesh`），搜索域就需要解析器。方案的出口分割不可计算（[`egress_partition_limit`](/v2/configuration-reference/routing#capture-limits)，节点对外部目的 fail closed）时不判定 `routed_resolver`。
+
 ## Node 精确名称查询
 
 名称记录随 `POST /agent-api/v1/sync` 的签名 netmap 下发；查询本身不调用 Server。Node 在有效 netmap 内按 DNS 标签比较完整名称，并保留请求中的大小写。配置名称使用 IDNA 规范化；Node hostname 与网络 domain 拼接后的完整名称须满足 253 ASCII bytes 上限。

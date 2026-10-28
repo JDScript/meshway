@@ -81,27 +81,10 @@ impl Runtime {
         })
     }
 
-    /// Netmap DNS settings this installer can serve.
+    /// Netmap DNS settings this installer can serve
+    /// ([`SystemDnsPlan::executable`]).
     pub fn check(&self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
-        let settings = &netmap.projection.configuration.dns;
-        let plan = SystemDnsPlan::new(settings, &netmap.dns.egress)?;
-        let via_exit = matches!(netmap.dns.egress, DnsPlan::ViaExit { .. });
-        if settings.servers.values().any(|server| {
-            (!via_exit || server.use_with_exit)
-                && (server.server.is_loopback()
-                    || matches!(server.server, std::net::IpAddr::V6(ip) if ip.is_unicast_link_local()))
-        }) {
-            // A local stub can recurse through the very split route being
-            // installed; scoped IPv6 also lacks a published interface context.
-            return Err(SystemDnsError::ResolverPlan);
-        }
-        if matches!(self.settings.backend, SystemDnsBackend::Resolved)
-            && plan.needs_system_fallback(settings)
-        {
-            // Resolved's original link-specific routing must not be flattened.
-            return Err(SystemDnsError::ResolverPlan);
-        }
-        Ok(())
+        SystemDnsPlan::executable(netmap, &self.settings.backend).map(|_| ())
     }
 
     /// Install the required negative system capture, including for

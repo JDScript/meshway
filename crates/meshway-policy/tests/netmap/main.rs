@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 mod associations;
 mod auto;
+mod dns_plans;
 mod equivalence;
 mod exit;
 mod incremental;

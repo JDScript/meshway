@@ -34,6 +34,19 @@ pub fn netmap_resolver(
         .ok_or(ResolverRouteError::Missing)
 }
 
+/// [`crate::compile::resolver_plan_gaps`] of the installed netmap: its DNS
+/// settings, plan and resolver decisions.
+pub fn netmap_resolver_plan_gaps(netmap: &NodeNetmap) -> Vec<crate::compile::ResolverPlanGap> {
+    crate::compile::resolver_plan_gaps(
+        &netmap.projection.configuration.dns,
+        matches!(
+            netmap.dns.egress,
+            DnsPlan::ViaExit { .. } | DnsPlan::Unavailable { .. }
+        ),
+        Some(&netmap.dns.resolvers),
+    )
+}
+
 /// Source/path must come from authenticated ingress, never a socket tuple.
 pub fn netmap_dns_service(
     netmap: &meshway_configuration::netmap::NodeNetmap,

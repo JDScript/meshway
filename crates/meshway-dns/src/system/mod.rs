@@ -272,6 +272,33 @@ impl SystemDnsPlan {
         Self::required(settings, egress)
     }
 
+    /// The plan of `netmap` if `backend` can serve it: the plan's gaps
+    /// (`meshway_policy::compile::resolver_plan_gaps`, the judgement the
+    /// Server saves by) refuse it, except a search domain without a
+    /// resolver on the explicit file backend, which answers it from the
+    /// original nameservers. resolved's original link-specific routing is
+    /// never flattened.
+    pub fn executable(
+        netmap: &meshway_configuration::netmap::NodeNetmap,
+        backend: &SystemDnsBackend,
+    ) -> Result<Self, SystemDnsError> {
+        let plan = Self::new(&netmap.projection.configuration.dns, &netmap.dns.egress)?;
+        let resolved = matches!(backend, SystemDnsBackend::Resolved);
+        if meshway_policy::dns_route::netmap_resolver_plan_gaps(netmap)
+            .iter()
+            .any(|gap| {
+                resolved
+                    || !matches!(
+                        gap,
+                        meshway_policy::compile::ResolverPlanGap::SearchDomain { .. }
+                    )
+            })
+        {
+            return Err(SystemDnsError::ResolverPlan);
+        }
+        Ok(plan)
+    }
+
     /// Required OS capture even when execution is unavailable. An unsupported
     /// exit plan captures root negatively rather than treating it as NoExit.
     /// This plan grants no query execution; callers keep Scope=None until every
@@ -305,7 +332,7 @@ impl SystemDnsPlan {
         if root {
             domains.insert(".".into(), true);
         }
-        if domains.len() > 256 {
+        if domains.len() > meshway_policy::compile::MAX_SYSTEM_DNS_DOMAINS {
             return Err(SystemDnsError::Capacity);
         }
         let plan = Self {
@@ -329,7 +356,7 @@ impl SystemDnsPlan {
             .collect()
     }
     fn validate(&self) -> Result<(), SystemDnsError> {
-        if self.domains.len() > 256
+        if self.domains.len() > meshway_policy::compile::MAX_SYSTEM_DNS_DOMAINS
             || self.search.len() > self.domains.len()
             || self.root != (self.domains.get(".") == Some(&true))
             || self.search.iter().enumerate().any(|(i, name)| {
@@ -373,15 +400,6 @@ impl SystemDnsPlan {
             ForeignRoute::Unrelated
         }
     }
-    pub fn needs_system_fallback(&self, settings: &DnsConfiguration) -> bool {
-        // Search domains also route DNS in resolved. Only suffixes whose entire
-        // namespace is already handled locally/configured need no fallback.
-        !self.root
-            && self.search.iter().any(|s| {
-                !(settings.magic_dns && suffix_of(&settings.domain, s))
-                    && !settings.routes.keys().any(|route| suffix_of(route, s))
-            })
-    }
 }
 /// [`SystemDnsPlan::foreign_route`]: the one judgement of another link's
 /// routing domain against an installed plan.
@@ -396,16 +414,6 @@ pub enum ForeignRoute {
     /// Equal to or more specific than one of the plan's explicit domains,
     /// or a second `~.` beside the plan's own.
     Conflict,
-}
-
-fn suffix_of(parent: &str, child: &str) -> bool {
-    let parent = parent.trim_end_matches('.');
-    let child = child.trim_end_matches('.');
-    parent.eq_ignore_ascii_case(child)
-        || child
-            .to_ascii_lowercase()
-            .strip_suffix(&parent.to_ascii_lowercase())
-            .is_some_and(|s| s.ends_with('.'))
 }
 
 /// Where a system resolver snapshot's upstreams come from.

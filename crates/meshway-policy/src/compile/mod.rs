@@ -18,7 +18,10 @@ pub use capture::{
     MAX_WORK as MAX_CAPTURE_WORK, Partition, excepted_resolvers, retained_capture,
     summary as capture_summary, unavailable_capture,
 };
-pub use dns::{DnsResolution, resolution as dns_resolution};
+pub use dns::{
+    DnsResolution, MAX_SYSTEM_DNS_DOMAINS, ResolverPlanGap, profile_resolver_plan_gaps,
+    resolution as dns_resolution, resolver_plan_gaps,
+};
 pub use edge_constraints::MAX_EDGE_TRANSPORT_ISSUES;
 pub(crate) use edge_constraints::validate_edge_transports;
 pub use exit::ExitInputs;

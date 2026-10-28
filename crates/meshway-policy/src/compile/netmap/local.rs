@@ -187,7 +187,7 @@ fn mesh_address(cfg: &NetworkConfiguration, address: IpAddr) -> bool {
 }
 
 /// The route of a configured resolver decides its local socket permission.
-pub(super) fn resolvers(
+pub(crate) fn resolvers(
     cfg: &NetworkConfiguration,
     enabled: bool,
     partition: &capture::Partition,

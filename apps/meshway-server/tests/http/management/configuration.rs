@@ -158,3 +158,91 @@ async fn advertised_network_name_rules_match_unicode_http_boundary() {
     }
     s.close().await;
 }
+
+/// M1: MagicDNS and a search domain with no resolver was saved and every
+/// Node on resolved withdrew its packet plane. validate and apply refuse it
+/// with the same issue for the enrolled Node and store nothing; a split
+/// route that answers the domain is saved.
+#[tokio::test]
+async fn dns_settings_no_node_can_install_are_refused_by_validate_and_apply() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("controller"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "dns-plan@example.test", "valid password").await;
+    let token = owner.token.expose();
+    let n = create(&c, &s, token, "dns-plan").await.network.id;
+    let node = super::super::live::enroll(&c, &s, n, token, 62)
+        .await
+        .0
+        .node_id;
+    let document = |dns: serde_json::Value, revision| {
+        let mut input = serde_json::to_value(&revision).unwrap();
+        for (key, value) in dns.as_object().unwrap() {
+            input["dns"][key] = value.clone();
+        }
+        input
+    };
+    let initial = source(&c, &s, n, token).await;
+    let request_for = |dns: serde_json::Value| ConfigurationRequest::Document {
+        expected_revision: initial.revision,
+        request_id: request(),
+        source_jsonc: WireSecret::new(
+            serde_json::to_string(&document(dns, initial.configuration.clone())).unwrap(),
+        ),
+    };
+    let refused = serde_json::json!({
+        "magicDNS": true, "servers": {}, "default": [], "routes": {},
+        "searchDomains": ["churn1.m1.test"]
+    });
+    for endpoint in ["configuration/validate", "configuration"] {
+        let response = c
+            .post(net(&s, n, endpoint))
+            .bearer_auth(token)
+            .json(&request_for(refused.clone()))
+            .send()
+            .await
+            .unwrap();
+        let problem = serde_json::to_value(
+            error(
+                response,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "configuration_invalid",
+            )
+            .await
+            .problem,
+        )
+        .unwrap();
+        let issues = problem["params"]["issues"].as_array().unwrap();
+        let issue = issues
+            .iter()
+            .find(|issue| issue["code"] == "dns_resolver_plan_incomplete")
+            .unwrap_or_else(|| panic!("{endpoint}: {problem}"));
+        assert_eq!(issue["path"], "/dns/searchDomains/0", "{endpoint}");
+        assert_eq!(issue["params"]["node"], node.to_string());
+        assert_eq!(issue["params"]["profile"], "mesh");
+        assert_eq!(
+            issue["params"]["reason"], "search_domain_without_resolver",
+            "{endpoint}"
+        );
+    }
+    assert_eq!(source(&c, &s, n, token).await.revision, initial.revision);
+    let answered = serde_json::json!({
+        "servers": {"office": {"type": "udp", "server": "10.20.0.53"}},
+        "routes": {"churn1.m1.test": ["office"]},
+        "searchDomains": ["churn1.m1.test"]
+    });
+    for endpoint in ["configuration/validate", "configuration"] {
+        c.post(net(&s, n, endpoint))
+            .bearer_auth(token)
+            .json(&request_for(answered.clone()))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    let saved = source(&c, &s, n, token).await;
+    assert_eq!(saved.configuration.dns.search_domains, ["churn1.m1.test"]);
+    s.close().await;
+}

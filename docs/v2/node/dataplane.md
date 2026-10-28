@@ -324,9 +324,9 @@ resolved 按最具体匹配把名称交给路由域最长的链路。锚点安�
 
 安全说明：共存的后缀（如 OCI DHCP 下发的 `tko.oraclevcn.com`）的查询由本地网络的 resolver 看到并回答，不经出口；出口方案只保证其余名称经出口。需要这些后缀也经出口时，从该链路的 DHCP／网络配置中去掉它们。
 
-两种后端均使用 namespace 级私有预约，避免不同数据目录竞争同一系统 DNS。MagicDNS 域加入系统搜索域；额外搜索域仍按配置执行。resolved 保留未捕获域的原有系统路由，不把原系统的分域配置压平成任意 nameserver 列表。需要这种未实现 fallback 的搜索域组合明确失败。
+两种后端均使用 namespace 级私有预约，避免不同数据目录竞争同一系统 DNS。MagicDNS 域加入系统搜索域；额外搜索域仍按配置执行。resolved 保留未捕获域的原有系统路由，不把原系统的分域配置压平成任意 nameserver 列表。需要这种未实现 fallback 的搜索域组合（没有解析器的搜索域）在 resolved 后端安装失败（`DNS resolver plan is incomplete`）；Server 保存时已按同一判定拒绝它，见 [DNS · 节点能安装的 DNS 设置](/v2/configuration-reference/dns#installable)，文件代理后端用原 nameserver 回答它。
 
-文件代理只安装本机 stub，原系统上游作为受监控的私有来源保存。其业务查询仍需要精确的 Server local-egress 许可；普通 UDP 系统 resolver 的 TCP 截断重试使用另一个预先获准的 TCP demand，配置为 UDP 的专用 resolver 不隐含 TCP 权限。现阶段不接受 loopback／scoped IPv6 业务 resolver；实际后端安装条件不能由配置选项或地址候选代替。
+文件代理只安装本机 stub，原系统上游作为受监控的私有来源保存。其业务查询仍需要精确的 Server local-egress 许可；普通 UDP 系统 resolver 的 TCP 截断重试使用另一个预先获准的 TCP demand，配置为 UDP 的专用 resolver 不隐含 TCP 权限。现阶段不接受 loopback／scoped IPv6 业务 resolver（保存即拒绝，同上）；实际后端安装条件不能由配置选项或地址候选代替。
 
 多个系统上游按原顺序在同一查询 ticket／总期限内重试，按剩余上游数量分配剩余时间。网络失败或子期限到达才尝试下一项；权限失效或取消立即停止。UDP→TCP 重试绑定当前选中的上游及其独立 TCP 许可，不借用另一上游的权限。
 

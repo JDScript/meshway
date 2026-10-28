@@ -6491,6 +6491,7 @@ export const schemaDocument = {
           "global_exit_requires_internet",
           "exit_fallback_requires_internet",
           "dns_exit_plan_required",
+          "dns_resolver_plan_incomplete",
           "netmap_limit",
           "netmap_budget",
           "resolver_outside_access",

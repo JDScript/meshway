@@ -299,6 +299,39 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
       node: node(p.node ?? "?"),
       profile: profileText(p.profile ?? "?", node),
     }),
+  dns_resolver_plan_incomplete: (p, node) => {
+    const ends = {
+      node:
+        p.node === undefined
+          ? m.configuration_issue_dns_first_node()
+          : node(p.node),
+      profile: profileText(p.profile ?? "?", node),
+    }
+    switch (p.reason) {
+      case "search_domain_without_resolver":
+        return m.configuration_issue_dns_search_domain_without_resolver({
+          ...ends,
+          value: p.value ?? "?",
+        })
+      case "local_resolver":
+        return m.configuration_issue_dns_local_resolver({
+          ...ends,
+          server: p.server ?? "?",
+        })
+      case "routed_resolver":
+        return m.configuration_issue_dns_routed_resolver({
+          ...ends,
+          server: p.server ?? "?",
+        })
+      case "domain_limit":
+        return m.configuration_issue_dns_domain_limit({
+          ...ends,
+          max: p.max ?? "?",
+        })
+      default:
+        return m.configuration_issue_dns_resolver_plan_incomplete(ends)
+    }
+  },
   netmap_limit: (p, node) => {
     const [size, max] = sizesApart(p.bytes, p.maxBytes)
     return m.configuration_issue_netmap_limit({

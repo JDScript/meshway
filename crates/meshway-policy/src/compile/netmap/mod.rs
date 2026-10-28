@@ -17,6 +17,7 @@ mod project;
 pub use associations::{Associations, associable};
 pub use decide::{Decision, LocalCompiler, LocalDecision, Target, compile_local, transit};
 pub use incremental::{IncrementalNetmaps, compile_incremental};
+pub(crate) use local::resolvers as local_resolvers;
 pub use observe::{ObservationDenied, ObservationPaths, observation_paths};
 
 /// This Node's routing profile selection as its netmap decides it: the same

@@ -126,16 +126,13 @@ fn published_egress_proof_and_search_routing_are_not_inferred() {
     assert!(negative.domains().contains(&(".".into(), true)));
     cfg.domain = "mesh.example".into();
     cfg.search_domains = vec!["mesh.example".into()];
-    assert!(
-        !SystemDnsPlan::new(&cfg, &DnsPlan::NoExit)
-            .unwrap()
-            .needs_system_fallback(&cfg)
-    );
+    let gaps =
+        |cfg: &DnsConfiguration| meshway_policy::compile::resolver_plan_gaps(cfg, false, None);
+    assert_eq!(gaps(&cfg), vec![]);
     cfg.search_domains.push("ordinary.example".into());
-    assert!(
-        SystemDnsPlan::new(&cfg, &DnsPlan::NoExit)
-            .unwrap()
-            .needs_system_fallback(&cfg)
+    assert_eq!(
+        gaps(&cfg),
+        vec![meshway_policy::compile::ResolverPlanGap::SearchDomain { index: 1 }]
     );
     assert_eq!(
         SystemDnsPlan::new(&cfg, &DnsPlan::NoExit)
@@ -228,4 +225,57 @@ fn failures_are_proven_only_when_read_back_different() {
     assert!(SystemDnsFailure::new(Unsupported, "resolv_conf_mode").system());
     assert!(!SystemDnsFailure::new(ResolverPlan, "unrecorded").system());
     assert!(!SystemDnsFailure::new(Unsupported, "unrecorded").system());
+}
+
+/// M1: the Server once saved MagicDNS plus a search domain and no resolver;
+/// every Node on resolved withdrew its packet plane. The judgement is the
+/// Server's (`resolver_plan_gaps`); only the explicit file backend answers
+/// such a search domain, from the original nameservers.
+#[test]
+fn a_search_domain_without_a_resolver_executes_only_on_the_file_backend() {
+    use meshway_test_server::configuration::{compile_one, network, node, tag_node, trusted};
+    let compile = |edit: &dyn Fn(&mut meshway_configuration::NetworkConfiguration)| {
+        let mut cfg = network("test.internal");
+        cfg.nodes
+            .insert(node(1), tag_node("a", 1, Default::default(), false));
+        edit(&mut cfg);
+        compile_one(
+            "00000000-0000-4000-8000-0000000000aa".parse().unwrap(),
+            &cfg,
+            &BTreeMap::from([(node(1), trusted(1, false))]),
+            node(1),
+            None,
+        )
+        .netmap
+    };
+    let resolved = SystemDnsBackend::Resolved;
+    let file = SystemDnsBackend::OwnedResolvConf {
+        path: "/etc/resolv.conf".into(),
+    };
+    let searched = compile(&|cfg| cfg.dns.search_domains = vec!["churn1.m1.test".into()]);
+    assert_eq!(
+        SystemDnsPlan::executable(&searched, &resolved),
+        Err(SystemDnsError::ResolverPlan)
+    );
+    assert!(SystemDnsPlan::executable(&searched, &file).is_ok());
+    let covered = compile(&|cfg| cfg.dns.search_domains = vec!["test.internal".into()]);
+    assert!(SystemDnsPlan::executable(&covered, &resolved).is_ok());
+    // A loopback resolver is refused on either backend.
+    let stub = compile(&|cfg| {
+        cfg.dns.servers.insert(
+            "stub".into(),
+            meshway_configuration::DnsServer {
+                transport: DnsTransport::Udp,
+                server: "127.0.0.53".parse().unwrap(),
+                server_port: 53.try_into().unwrap(),
+                use_with_exit: false,
+            },
+        );
+    });
+    for backend in [&resolved, &file] {
+        assert_eq!(
+            SystemDnsPlan::executable(&stub, backend),
+            Err(SystemDnsError::ResolverPlan)
+        );
+    }
 }

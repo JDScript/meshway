@@ -162,6 +162,16 @@ pub enum IssueCode {
     /// backups, so no single exit can resolve its names; params `node`,
     /// `profile`.
     DnsExitPlanRequired,
+    /// A Node could not install the DNS settings of a profile it may
+    /// execute; params `node` (absent while the network has no Node),
+    /// `profile` and `reason`: `search_domain_without_resolver` (a search
+    /// domain outside the MagicDNS domain and every split route, without a
+    /// fallback; `value`), `local_resolver` (a loopback or IPv6 link-local
+    /// resolver; `server`), `routed_resolver` (a resolver at a Mesh
+    /// address, or one the profile sends through an exit without
+    /// `useWithExit`; `server`) or `domain_limit` (more DNS domains than a
+    /// Node installs; `max`).
+    DnsResolverPlanIncomplete,
     /// A Node's netmap would exceed the distribution safety bound; params
     /// `node`, `bytes`, `maxBytes`.
     NetmapLimit,
@@ -273,6 +283,7 @@ impl IssueCode {
             GlobalExitRequiresInternet => "global exit requires internet access grant",
             ExitFallbackRequiresInternet => "exit fallback requires internet access grant",
             DnsExitPlanRequired => "no single exit can resolve the names this profile routes",
+            DnsResolverPlanIncomplete => "a node cannot install these DNS settings",
             NetmapLimit => "netmap exceeds the distribution safety bound",
             NetmapBudget => "netmap compilation exceeds a fixed compiler budget",
             ResolverOutsideAccess => {

@@ -128,6 +128,11 @@ pub(super) fn validate_assignments_access(
     };
     let assignments = &config.routing.egress.assignments;
     let judged = judged_sets(config, &context.rule_sets);
+    if config.nodes.is_empty() {
+        // The first Node to enroll executes `mesh` and resolves locally:
+        // refuse now what would refuse its enrollment.
+        resolver_plans(config, &judged, None, "mesh", check);
+    }
     for id in config.nodes.keys() {
         // Every (assignment, allowed profile) pair that applies to this Node,
         // with the pointer of the allowing entry.
@@ -313,9 +318,48 @@ pub(super) fn validate_assignments_access(
     }
 }
 
+/// `dns_resolver_plan_incomplete` for each gap of `node` executing
+/// `profile` ([`crate::compile::profile_resolver_plan_gaps`]); without a
+/// Node, no `node` parameter.
+fn resolver_plans(
+    config: &NetworkConfiguration,
+    sets: &BTreeMap<String, Arc<meshway_rules::RuleSet>>,
+    node: Option<NodeId>,
+    profile: &str,
+    check: &mut Check,
+) {
+    use crate::compile::ResolverPlanGap;
+    let Ok(gaps) = crate::compile::profile_resolver_plan_gaps(config, sets, profile, node) else {
+        return;
+    };
+    for gap in gaps {
+        let mut issue =
+            ConfigurationIssue::new(gap.pointer(), IssueCode::DnsResolverPlanIncomplete)
+                .with("profile", profile)
+                .with("reason", gap.reason());
+        if let Some(node) = node {
+            issue = issue.with("node", node);
+        }
+        match &gap {
+            ResolverPlanGap::SearchDomain { index } => {
+                issue = issue.with("value", &config.dns.search_domains[*index]);
+            }
+            ResolverPlanGap::LocalResolver { key } | ResolverPlanGap::RoutedResolver { key } => {
+                issue = issue.with("server", key);
+            }
+            ResolverPlanGap::DomainLimit => {
+                issue = issue.with("max", crate::compile::MAX_SYSTEM_DNS_DOMAINS);
+            }
+        }
+        check.issue(issue);
+    }
+}
+
 /// Every profile a Node may execute must have an executable DNS plan: its
 /// name rules (and an exit fallback) leave through one exit and via
-/// ([`crate::compile::dns_resolution`], the function its netmap uses). A
+/// ([`crate::compile::dns_resolution`], the function its netmap uses), and
+/// its DNS settings install ([`crate::compile::resolver_plan_gaps`], the
+/// function its DNS owner installs by). A
 /// Node without an assignment executes `mesh`. Profiles whose rule sets
 /// await their content are judged once the content is prepared.
 fn dns_plans(
@@ -374,6 +418,7 @@ fn dns_plans(
                 .with("profile", *name),
             );
         }
+        resolver_plans(config, sets, Some(node), name, check);
         // A kept resolver under an exit is reached from the Node itself;
         // that exception is no Access grant, so say when none covers it.
         for key in crate::compile::excepted_resolvers(config, sets, name, node) {
