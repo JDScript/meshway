@@ -539,6 +539,24 @@ musl system工具的Manager／Secure OOM复现，节点RSS约495／501 MiB，其
 
 仅TUN复用不足以消除Manager OOM；mimalloc工具加TUN复用的65+1秒独立窗口：4 CPU Manager UDP118,763 pps／RSS32.74 MiB，Secure direct154,441／23.77 MiB；2 CPU Manager TCP1320.18 Mbps／34.70 MiB。全部OOM/max/Swap为0，匿名页平台化。关闭allocator统计的复验为Manager122,410 pps／RSS33.82 MiB、cgroup45.83 MiB；稳定不依赖读取统计。此为单次内存回归，不代替完整矩阵。生产选择仅Linux musl daemon入口，库不装全局allocator；原生C分配不自动替换。
 
+### Server 停机与 netmap 重装后的驻留 {#outage-rss}
+
+M1，alpha.24 release 程序。隔离 fixture：真实 `meshway-server`、nginx TLS 代理（扮演 Cloudflare，上游断开时回 502）、3 个 node-lab 镜像中的 `meshwayd`（与 prod planck 节点同一镜像与容器选项，全互联 native_udp、MagicDNS／resolved，每 5 min 一次 Status 与全对 ping）；x86_64 在 Planck，aarch64 在 OrbStack（M3 Pro）原生容器。其中一个节点为测量构建：同一 mimalloc 3.3.2 外包计数分配器，每分钟记录程序存活堆与 mimalloc commit，不进生产。每轮停机先停 Server 进程（节点得到 502／`ServerBusy`），再停代理（`Network`），每节点每 30 min 约 240 ＋ 110 次失败的控制操作（prod D3 约 350 次）。数值为 MiB，恢复期取最后 30 min 中位数。
+
+| 运行 | 存活堆：基线 → 末轮 | mimalloc commit：基线 → 末轮 | RssAnon：基线 → 第 1 轮 → 末轮（3 个节点） |
+| --- | --- | --- | --- |
+| x86，3 轮（20 ＋ 10 min，恢复 60 min） | 11.29 → 11.31 | 38.25 → 47.75 | 32.8–37.0 → 35.6–37.8 → 32.8–36.0 |
+| aarch64，同上 | 11.31 → 11.32 | 45.06 → 49.06（第 2 轮起不变） | 40.5–45.9 → 42.7–46.4 → 44.1–48.0 |
+| x86，8 轮（15 ＋ 5 min，恢复 25 min） | 11.29 → 11.31 | 41.31 → 45.75（第 5 轮起不变） | 30.5–34.9 → 33.7–39.9 → 34.9–41.1 |
+| aarch64，同上 | 11.29 → 11.31 | 39.75 → 40.75（第 2 轮起不变） | 34.6–38.1 → 36.6–39.0 → 38.1–40.6 |
+| x86，6 次不撤回的 netmap 重装（每次 20 min） | 11.29 → 11.39 | 38.62 → 44.62（第 3 次起不变） | 32.1–34.5 → 32.4–40.3 → 39.0–44.5 |
+
+- 不是泄漏：存活堆与块数在每次停机后回到原水平，3／8 轮后 +0.01–0.02 MiB（每节点 1,050／1,860 次失败操作，即每次失败残留小于约 20 B）；fd 与线程数不变。
+- RSS 台阶是 mimalloc 的提交页保留：基线 commit 已是存活堆的 3.4–4 倍，第一次（有时第二次）事件后上 1–8 MiB，之后不随事件次数增加；8 轮中第 2–8 轮的 RssAnon 逐轮斜率为 −0.08 至 +0.12 MiB／轮（aarch64 一个节点在第 4 轮一次 +3 MiB 后不变）。netmap 重装比停机上的台阶更大（一个节点前 4 次累计 +15 MiB 后持平）。1 min 采样下 RssAnon 随 5 min 探测上下 3–5 MiB。
+- prod 2026-10-26：jp 与 planck 的 VmHWM 在 08:01–09:01 之间上升（jp 85.4 → 87.7，planck 86.8 → 90.2），对应 08:40 的 netmap revision 15 重装，早于 10:00–10:30 的 D3 停机；D3 期间与之后 HWM 不再上升，jp 之后 30 余小时在 80–87 MiB 内持平。
+
+范围：fixture 无出口／中继、规则集与 capture 路由，prod 节点 RSS 约 80 MiB、fixture 约 50 MiB。报告：`.meshway/validation/m1/outage-memory/`（fixture 与分析脚本、每分钟样本、测量构建补丁、prod 样本副本）。
+
 ### 二进制体积（ARM64 实测）
 
 报告 `20261007T192625Z`，Apple M3 Pro／macOS 27.0，Rust 1.98.0、Zig 0.17.0、cargo-zigbuild 0.23.4。基线使用 `60cab2bb` 的冻结源码归档，结果使用 `2a58dc9f` 的 ring HTTP 装配和上述 release profile；两种 target 均在该主机构建。最终 host 产物另按冻结后的源码重建核对，SHA-256 与测量快照一致。
