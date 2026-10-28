@@ -473,7 +473,8 @@ impl Upstream {
         if evidence.unexpected != 0 {
             return Err("non-public/Mesh query leaked to upstream".into());
         }
-        // A netmap scenario row (expiry) runs the shared startup alone.
+        // A netmap scenario row (expiry) runs the shared startup alone, and
+        // its own `down`.
         let stages: &[&str] = if cli.netmap_scenario.is_some() {
             &["before-restart", "after-restart", "initial"]
         } else {
@@ -510,8 +511,10 @@ impl Upstream {
         {
             return Err("TCP-configured split DNS used UDP".into());
         }
-        for role in Role::ALL {
-            for stage in [
+        let ordinary: &[&str] = if cli.netmap_scenario.is_some() {
+            &["before", "before-restart", "after-restart", "initial"]
+        } else {
+            &[
                 "before",
                 "before-restart",
                 "after-restart",
@@ -520,7 +523,10 @@ impl Upstream {
                 "restored",
                 "recovered",
                 "down",
-            ] {
+            ]
+        };
+        for role in Role::ALL {
+            for stage in ordinary {
                 if !evidence
                     .queries
                     .contains_key(&format!("{}-{stage}.public.test.", role.name()))
@@ -531,7 +537,8 @@ impl Upstream {
             let expired = evidence
                 .queries
                 .contains_key(&format!("{}-lease-expired.public.test.", role.name()));
-            if expired != (cli.dns_backend == DnsBackend::Resolved) {
+            if cli.netmap_scenario.is_none() && expired != (cli.dns_backend == DnsBackend::Resolved)
+            {
                 return Err("expired ordinary DNS did not follow backend scope boundary".into());
             }
         }
