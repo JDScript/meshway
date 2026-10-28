@@ -4,7 +4,7 @@
 
 ## v0.1.0-alpha.25
 
-范围：v0.1.0 候选，prod soak 期间计划内升级。SP1：租约到期后 Server 仍不可达时网络 worker 的安装重试截止停在过去、在 biased select 中永远就绪，一个线程 100 % 空转（alpha.22–24 均受影响，现场 dev 6.5 小时）；现在没有可装内容时这次重试结束，`netmap/expiry` 行加到期后的空闲阶段（每线程 < 5 %）。C2：Server 不再保存任何节点都装不上的 DNS 设置（只有搜索域而没有 resolver、本地回环／链路本地 resolver、经出口或 Mesh 的 resolver、超过 256 个域），validate 与 apply 均以 422 `dns_resolver_plan_incomplete` 拒绝，Server 与节点调用同一个 Policy 判定。`compilerVersion` `meshway-netmap-4`、wire 6、IPC 13、Server schema 9 不变；HTTP 契约只多一个配置问题码。已保存的配置若不满足 C2 的检查，此后任何变更都会被拒绝，直到修正其 DNS 设置。按先 Node 后 Server 普通升级（无断网窗口、无迁移）。
+范围：v0.1.0 候选，prod soak 期间计划内升级。SP1：租约到期后 Server 仍不可达时网络 worker 的安装重试截止停在过去、在 biased select 中永远就绪，一个线程 100 % 空转（alpha.22–24 均受影响，现场 dev 6.5 小时）；现在没有可装内容时这次重试结束，`netmap/expiry` 行加到期后的空闲阶段（每线程 < 5 %）。C2：Server 不再保存任何节点都装不上的 DNS 设置（只有搜索域而没有 resolver、本地回环／链路本地 resolver、经出口或 Mesh 的 resolver、超过 256 个域），validate 与 apply 均以 422 `dns_resolver_plan_incomplete` 拒绝，Server 与节点调用同一个 Policy 判定。`compilerVersion` `meshway-netmap-4`、wire 6、IPC 13、Server schema 9 不变；HTTP 契约只多一个配置问题码。已保存的配置若不满足 C2 的检查，此后任何变更都会被拒绝，直到修正其 DNS 设置。按先 Node 后 Server 普通升级（无断网窗口、无迁移）。发布验证：Planck 26 行矩阵 `20261028T222721Z-0256dcef`（`bd125d96`，并行 8，与全量 check 同时运行，load 13.7）23 行通过，`udp/resolved`、`nat/resolved`、`exit/off` 单独复跑 `20261028T230156Z-0d165bd9`（load 7.3）通过；`mise run --jobs 1 check` 在 `bd125d96` 通过（1,435 个测试）。
 
 SP1 租约到期后 Server 不可达时一个线程空转（`sp1/expired-lease-spin`）：wire 6、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
 
