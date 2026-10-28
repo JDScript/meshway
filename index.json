@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-28T09:30:25.680276+00:00",
+  "updatedAt": "2026-10-28T09:36:20.626084+00:00",
   "runs": [
     {
       "id": 40662588428,
@@ -12,9 +12,9 @@
       "commit": "e73137351021b34a4ae6d28a33cdfcd918098401",
       "message": "fixture: the expiry idle bound is the project's idle bound (every thread < 5 % over 60 s); 2 % left debug builds 0.2 points of margin",
       "createdAt": "2026-10-28T09:13:38Z",
-      "updatedAt": "2026-10-28T09:28:19Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-28T09:33:00Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/40662588428",
       "jobs": [
         {
@@ -43,11 +43,11 @@
           "id": 122729195469,
           "name": "web",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-28T09:28:19Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-28T09:32:59Z",
+          "seconds": 280.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/40662588428/job/122729195469"
         },
         {
