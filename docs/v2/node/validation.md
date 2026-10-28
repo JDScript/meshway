@@ -53,7 +53,7 @@
 | `fault/throttle` | A→R→B，B 经出口 E，四端 resolved | 外部压力下自动恢复与空闲 CPU | 无 `blocked`、≤ 10 秒恢复、线程 < 5 % | `20261025T032318Z-1edd92ad` | [fault/throttle 行](#fault-row) |
 | `netmap/offline` | 本机上报端点 | Server 不可达 3 分钟（多次租约内） | 一切照常 | `20261025T033835Z-e85b05a3` | [netmap 生命周期行](#netmap-rows) |
 | `netmap/revoke` | Native TCP | 端口、密钥、成员变化到达数据面 | ≤ 5 秒 | `20261025T033927Z-d9340d49` | [netmap 生命周期行](#netmap-rows) |
-| `netmap/expiry` | Native UDP，三端 resolved（runtime 镜像） | 越过租约后 fail closed 并恢复；到期后 B 的 resolved 停顿时各 daemon 保持空闲（SP1） | TUN ≤ 2 秒删除；到期后 60 秒最忙线程 < 2 % | `20261025T033937Z-37f59438` | [租约到期撤回](#lease-expiry-withdrawal) |
+| `netmap/expiry` | Native UDP，三端 resolved（runtime 镜像） | 越过租约后 fail closed 并恢复；到期后 B 的 resolved 停顿时各 daemon 保持空闲（SP1） | TUN ≤ 2 秒删除；到期后 60 秒最忙线程 < 5 % | `20261025T033937Z-37f59438` | [租约到期撤回](#lease-expiry-withdrawal) |
 | `netmap/restart` | 本机上报端点 | Server 不可达时空闲重拨与 daemon 重启 | 只用最后已知事实重建 | `20261025T033952Z-d4922b03` | [netmap 生命周期行](#netmap-rows) |
 
 **新增行或更新状态**：新行在本表按 `ROWS` 顺序加一行，并在[行定义](#rows)下按同一模板（拓扑、阶段与断言、门槛来源、不覆盖）加一个小节；后续运行只更新本节开头的矩阵 ID 与“报告”列。行暴露的已修问题加到[已修复问题索引](#fixed)，未修的加到[剩余边界](#remaining-boundaries)，真机结论加到[真机证据](#real-hosts)；运行过程写 changelog 与私有证据。修复合入的工作包负责把对应的剩余边界条目移到已修复问题索引。
@@ -239,14 +239,14 @@
 | --- | --- | --- |
 | `netmap/offline` | 本机上报端点（无 configured／STUN，拨号候选只来自 peer 事实）；关闭 Node HTTP 3 分钟（三个 60 秒租约期，期间续租与过期判断都发生） | 持续流不断，Status 不撤回；常驻 lab 另做 10 分钟离线复验 |
 | `netmap/revoke` | Native TCP；依次撤一个 TCP 端口服务再恢复、B 经 daemon 轮换自己的密钥、撤销成员 | 每个新 serial 5 秒内到达数据面：被撤端口拒绝、恢复后可用；轮换后 A、R 的 circuit 重新握手且流量继续；被撤成员不可达 |
-| `netmap/expiry` | A、R、B 各在自己的 mount namespace 运行 systemd-resolved 与 daemon 的 resolved 后端（runtime 镜像与 `fault/throttle` 同一 namespace supervisor；DNS 镜像没有 netmap 行 egress capture 需要的 nft）；关闭 Node HTTP（503）越过 60 秒租约；到期 20 秒后（Control 已不再提供 netmap）B 的 resolved 被 `SIGSTOP` 10 秒再继续 | fail closed：业务阻断、拒绝路由保留；Status 去掉租约后 2 秒内 TUN 删除（记录 `scenario-expired-tun-removed-ms`）；停顿期间 B 的 `networkError` 为 `dns`；随后 60 秒每个 daemon 按 `/proc/<pid>/task/*/schedstat` 的最忙线程 < 2 % 且仍无租约（`scenario-expired-idle-cpu`）；恢复后自动重新 applied |
+| `netmap/expiry` | A、R、B 各在自己的 mount namespace 运行 systemd-resolved 与 daemon 的 resolved 后端（runtime 镜像与 `fault/throttle` 同一 namespace supervisor；DNS 镜像没有 netmap 行 egress capture 需要的 nft）；关闭 Node HTTP（503）越过 60 秒租约；到期 20 秒后（Control 已不再提供 netmap）B 的 resolved 被 `SIGSTOP` 10 秒再继续 | fail closed：业务阻断、拒绝路由保留；Status 去掉租约后 2 秒内 TUN 删除（记录 `scenario-expired-tun-removed-ms`）；停顿期间 B 的 `networkError` 为 `dns`；随后 60 秒每个 daemon 按 `/proc/<pid>/task/*/schedstat` 的最忙线程 < 5 % 且仍无租约（`scenario-expired-idle-cpu`）；恢复后自动重新 applied |
 | `netmap/restart` | 本机上报端点；关闭 HTTP 后停业务 125 秒（越过 120 秒按需邻接空闲关闭与全部事实的新鲜度），再重启三个 daemon | 空闲关闭后 A 的 `meshway ping` 与新 5 元组经重拨成功（`scenario-idle-redial-*`）；重启后的邻接只能来自 `peer-facts.json` 的[最后已知事实](/v2/node/connectivity#last-known-facts) |
 
 #### 租约到期撤回 {#lease-expiry-withdrawal}
 
 Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），到截止即为 null、`dataPlane` 为 `suspended`；Engine 在同一截止由单调计时器触发 `expire`，依次撤回 connectivity、dataplane、DNS、underlay 并删除 TUN，耗时数十毫秒。因此 Status 先于 TUN 删除变化，这是预期时序，不是“到期未撤”；行门槛据此为“Status 去掉租约后 2 秒内 TUN 删除”，之后照旧检查拒绝路由与业务阻断。截止到撤回完成之间，worker 在撤回前处理中的至多一批（32 包）不逐包检查租约，这一窗口未单独测量。
 
-到期后的空闲门槛 2 %（SP1）：撤回后 Server 不可达时 daemon 没有包处理工作，只剩 Control 1–15 秒一次的重试与 DNS owner 每秒一次的观察；debug 构建在 Planck 上 A、R 的最忙线程约 1.3–1.8 %、B 约 0.2–0.3 %（`20261028T082534Z-f662a75c`），修复前 B 为 99.9 %（`20261028T075547Z-b6e73a9b`），现场 release 构建恢复后为 0 %。`fault/throttle` 的 5 % 针对的是承受压力的活跃包平面，不适用于这里。
+到期后的空闲门槛沿用项目唯一的空闲口径——[里程碑 C](/v2/process#v0-1-gate) 的 60 秒窗口每线程 < 5 %（SP1）：撤回后 Server 不可达时 daemon 没有包处理工作，只剩 Control 1–15 秒一次的重试与 DNS owner 每秒一次的观察；debug 构建在 Planck 上 A、R 的最忙线程约 1.3–1.8 %、B 约 0.2–0.3 %（`20261028T082534Z-f662a75c`），修复前 B 为 99.9 %（`20261028T075547Z-b6e73a9b`），现场 release 构建恢复后为 0 %。
 
 ## 真机证据 {#real-hosts}
 

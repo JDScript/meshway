@@ -217,12 +217,11 @@ const WITHDRAWAL: Duration = Duration::from_secs(2);
 /// which each daemon's busiest thread stays below [`EXPIRED_IDLE_CPU`].
 const EXPIRED_IDLE_WINDOW: Duration = Duration::from_secs(60);
 
-/// A withdrawn daemon whose Server is unreachable has no packet work: its
-/// only wakeups are Control's 1–15 s retries and the DNS owner's 1 s
-/// observation (dev 2026-10-28: 0 % per thread once recovered, against one
-/// thread at 100 % before the fix; the `fault/throttle` row's 5 % bounds a
-/// live plane under pressure).
-const EXPIRED_IDLE_CPU: f64 = 0.02;
+/// The project's idle bound (milestone C: every thread < 5 % over a 60 s
+/// window): a withdrawn daemon whose Server is unreachable is idle. Before
+/// the fix one thread turned at 100 %; debug builds idle at 1.3–1.8 % under
+/// matrix load, release builds at 0 %.
+const EXPIRED_IDLE_CPU: f64 = 0.05;
 
 /// Control offers again after each failed attempt, at most 15 s apart
 /// (`BACKOFF_MAX`): after this, it offers no netmap any more.
