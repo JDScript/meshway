@@ -473,14 +473,20 @@ impl Upstream {
         if evidence.unexpected != 0 {
             return Err("non-public/Mesh query leaked to upstream".into());
         }
-        for stage in [
-            "before-restart",
-            "after-restart",
-            "initial",
-            "revoked",
-            "restored",
-            "recovered",
-        ] {
+        // A netmap scenario row (expiry) runs the shared startup alone.
+        let stages: &[&str] = if cli.netmap_scenario.is_some() {
+            &["before-restart", "after-restart", "initial"]
+        } else {
+            &[
+                "before-restart",
+                "after-restart",
+                "initial",
+                "revoked",
+                "restored",
+                "recovered",
+            ]
+        };
+        for stage in stages {
             for (suffix, protocol) in [
                 ("office.example.", "udp"),
                 ("tcp.example.", "tcp"),
