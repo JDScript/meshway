@@ -2,6 +2,14 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+SP1 租约到期后 Server 不可达时一个线程空转（`sp1/expired-lease-spin`）：wire 6、IPC 13、`compilerVersion`、Server schema 9 与 HTTP 契约均不变，无新 flag。
+
+- Node（不变量：网络 worker 的安装重试只针对仍可安装的 netmap，每个到期的重试恰好处理一次；没有可安装的内容时重试结束，不留下永远就绪的截止。owner：网络 worker 的安装重试，[恢复语义](/v2/node/runtime#recovery)节奏表“网络 worker 的安装”）：租约到期、或到期的重装发现 Control 不再提供 netmap／所提供的租约已到期／Mesh 池重叠持有它时，重试结束（`timing::nothing_to_install`），Status 不再显示它的 `retryAt`。此前 DNS owner 在到期后失败（现场 `observe_deadline`）时 worker 排的 5 秒重试到期后找不到 netmap，原样保留，过去的截止在 `biased` select 中永远就绪、排在 DNS 恢复边沿之前：一个 tokio 线程 100 %（dev `meshway-vm` alpha.23 约 6.5 小时，lab alpha.22 同样；Planck 复现约 287,000 轮／秒），直到 Server 恢复。所提供的租约已到期不再按安装失败判为 `blocked · apply`；到期后 DNS owner 或宿主内核归属恢复时包平面回到 `suspended`（此前停在 `failed`）。alpha.22 起的 worker 代码相同，alpha.24 同样受影响。
+- 诊断：opt-in profile（`MESHWAY_PROFILE`）计数 `network.worker.turn`，按轮次类型（`retry`、`offer`、`tick`…）。
+- 验收：`timing::tests::a_retry_due_with_nothing_offered_ends_instead_of_turning`（旧语义下 8 轮内不结束即失败）；`netmap/expiry` 行改为三端 resolved（runtime 镜像），到期 20 秒后 B 的 resolved 停顿 10 秒，随后 60 秒各 daemon 最忙线程 < 2 %（[租约到期撤回](/v2/node/validation#lease-expiry-withdrawal)）。旧代码上该阶段失败（`20261028T075547Z-b6e73a9b`：B 99.9 %，A／R 1.8／1.3 %）；修复后通过（`20261028T082534Z-f662a75c`：A／B／R 1.4／0.3／1.4 %）。证据 `.meshway/validation/sp1/`。
+
 ## v0.1.0-alpha.24
 
 范围：prod soak 期间的紧急修复版（D1 发现、可由远端触发）。L1：公网 listener 上一个连接在 accept 前被 RST（`getpeername` 返回 `ENOTCONN`）等单连接失败曾结束 listener owner、停止整个 connectivity Manager 并撤回包平面（it7 现场 2026-10-24T23:38:45Z，642 ms），现在只关闭该连接，listener 的暂态失败由其 owner 有界重试，不可用时只替换该 listener；X19：全量出口方案下已接受的入站连接（如公网 SSH）的回包沿 underlay 返回，捕获、挂起与租约到期期间都不断；soak 报告不再把 T0 前的 Server 升级计为计划外重启。`compilerVersion` `meshway-netmap-4`、wire 6、IPC 13、Server schema 9 与 HTTP 契约均不变，按先 Node 后 Server 普通升级（无断网窗口、无迁移）；alpha.23 留下、未 `down` 的 egress 表在启动时就地补上 X19 的 `replies` 链。降级到 alpha.23 前先 `meshway down`。发布验证：Planck 26 行矩阵 `20261025T031721Z-e7b7d422`（`fbd8d882`，并行 8）一轮全部通过，含 runtime 行的扫描器阶段与 `exit/off` 第 17 阶段；`mise run --jobs 1 check` 在 `fbd8d882` 通过（1,426 个测试）。

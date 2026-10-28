@@ -53,7 +53,7 @@
 | `fault/throttle` | A→R→B，B 经出口 E，四端 resolved | 外部压力下自动恢复与空闲 CPU | 无 `blocked`、≤ 10 秒恢复、线程 < 5 % | `20261025T032318Z-1edd92ad` | [fault/throttle 行](#fault-row) |
 | `netmap/offline` | 本机上报端点 | Server 不可达 3 分钟（多次租约内） | 一切照常 | `20261025T033835Z-e85b05a3` | [netmap 生命周期行](#netmap-rows) |
 | `netmap/revoke` | Native TCP | 端口、密钥、成员变化到达数据面 | ≤ 5 秒 | `20261025T033927Z-d9340d49` | [netmap 生命周期行](#netmap-rows) |
-| `netmap/expiry` | Native UDP | 越过租约后 fail closed 并恢复 | TUN ≤ 2 秒删除 | `20261025T033937Z-37f59438` | [租约到期撤回](#lease-expiry-withdrawal) |
+| `netmap/expiry` | Native UDP，三端 resolved（runtime 镜像） | 越过租约后 fail closed 并恢复；到期后 B 的 resolved 停顿时各 daemon 保持空闲（SP1） | TUN ≤ 2 秒删除；到期后 60 秒最忙线程 < 2 % | `20261025T033937Z-37f59438` | [租约到期撤回](#lease-expiry-withdrawal) |
 | `netmap/restart` | 本机上报端点 | Server 不可达时空闲重拨与 daemon 重启 | 只用最后已知事实重建 | `20261025T033952Z-d4922b03` | [netmap 生命周期行](#netmap-rows) |
 
 **新增行或更新状态**：新行在本表按 `ROWS` 顺序加一行，并在[行定义](#rows)下按同一模板（拓扑、阶段与断言、门槛来源、不覆盖）加一个小节；后续运行只更新本节开头的矩阵 ID 与“报告”列。行暴露的已修问题加到[已修复问题索引](#fixed)，未修的加到[剩余边界](#remaining-boundaries)，真机结论加到[真机证据](#real-hosts)；运行过程写 changelog 与私有证据。修复合入的工作包负责把对应的剩余边界条目移到已修复问题索引。
@@ -239,12 +239,14 @@
 | --- | --- | --- |
 | `netmap/offline` | 本机上报端点（无 configured／STUN，拨号候选只来自 peer 事实）；关闭 Node HTTP 3 分钟（三个 60 秒租约期，期间续租与过期判断都发生） | 持续流不断，Status 不撤回；常驻 lab 另做 10 分钟离线复验 |
 | `netmap/revoke` | Native TCP；依次撤一个 TCP 端口服务再恢复、B 经 daemon 轮换自己的密钥、撤销成员 | 每个新 serial 5 秒内到达数据面：被撤端口拒绝、恢复后可用；轮换后 A、R 的 circuit 重新握手且流量继续；被撤成员不可达 |
-| `netmap/expiry` | 关闭 Node HTTP（503）越过 60 秒租约 | fail closed：业务阻断、拒绝路由保留；Status 去掉租约后 2 秒内 TUN 删除（记录 `scenario-expired-tun-removed-ms`）；恢复后自动重新 applied |
+| `netmap/expiry` | A、R、B 各在自己的 mount namespace 运行 systemd-resolved 与 daemon 的 resolved 后端（runtime 镜像与 `fault/throttle` 同一 namespace supervisor；DNS 镜像没有 netmap 行 egress capture 需要的 nft）；关闭 Node HTTP（503）越过 60 秒租约；到期 20 秒后（Control 已不再提供 netmap）B 的 resolved 被 `SIGSTOP` 10 秒再继续 | fail closed：业务阻断、拒绝路由保留；Status 去掉租约后 2 秒内 TUN 删除（记录 `scenario-expired-tun-removed-ms`）；停顿期间 B 的 `networkError` 为 `dns`；随后 60 秒每个 daemon 按 `/proc/<pid>/task/*/schedstat` 的最忙线程 < 2 % 且仍无租约（`scenario-expired-idle-cpu`）；恢复后自动重新 applied |
 | `netmap/restart` | 本机上报端点；关闭 HTTP 后停业务 125 秒（越过 120 秒按需邻接空闲关闭与全部事实的新鲜度），再重启三个 daemon | 空闲关闭后 A 的 `meshway ping` 与新 5 元组经重拨成功（`scenario-idle-redial-*`）；重启后的邻接只能来自 `peer-facts.json` 的[最后已知事实](/v2/node/connectivity#last-known-facts) |
 
 #### 租约到期撤回 {#lease-expiry-withdrawal}
 
 Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），到截止即为 null、`dataPlane` 为 `suspended`；Engine 在同一截止由单调计时器触发 `expire`，依次撤回 connectivity、dataplane、DNS、underlay 并删除 TUN，耗时数十毫秒。因此 Status 先于 TUN 删除变化，这是预期时序，不是“到期未撤”；行门槛据此为“Status 去掉租约后 2 秒内 TUN 删除”，之后照旧检查拒绝路由与业务阻断。截止到撤回完成之间，worker 在撤回前处理中的至多一批（32 包）不逐包检查租约，这一窗口未单独测量。
+
+到期后的空闲门槛 2 %（SP1）：撤回后 Server 不可达时 daemon 没有包处理工作，只剩 Control 1–15 秒一次的重试与 DNS owner 每秒一次的观察；debug 构建在 Planck 上 A、R 的最忙线程约 1.3–1.8 %、B 约 0.2–0.3 %（`20261028T082534Z-f662a75c`），修复前 B 为 99.9 %（`20261028T075547Z-b6e73a9b`），现场 release 构建恢复后为 0 %。`fault/throttle` 的 5 % 针对的是承受压力的活跃包平面，不适用于这里。
 
 ## 真机证据 {#real-hosts}
 
@@ -328,6 +330,7 @@ Status 的 `netmap` 按查询时的时钟判定租约（`now < expiresAt`），�
 | <a id="u4-reinstall"></a>U4 | alpha.23 发布矩阵 `fault/throttle`：B 限额后 DNS `observe_deadline` 撤回，DNS owner 10 秒后已重证，包平面却至行结束未重装，`retrying · dns`、`retryAt` 为 null | 通道的共享发送端是 `tokio::sync::Mutex`：排队的锁等待者在持有者释放时即获得锁，不论之后是否再被 poll。包处理 owner 跨轮保留发送 future、重配置期间不 poll；获得锁的那个 future 一直持有它，而撤回所 join 的通道 owner 关闭时要锁同一发送端，`Manager::shutdown` 永不结束。`retryAt` 只投影 Control 与 DNS owner 的重试，DNS 重证后 worker 自己的重装时点不可见 | 未发布（U4） | `an_output_kept_unpolled_does_not_hold_the_sender_from_shutdown`、`an_owner_that_does_not_stop_is_aborted_after_its_grace`、`retry_at_is_the_planes_reinstall_once_the_dns_owner_re_proved_itself`；`fault/throttle` |
 | <a id="x19-inbound"></a>X19 | PROD-1 jp（OCI 1:1 NAT、经公网 SSH 管理）选中 fallback 为出口的方案时入站 SSH 立即断开，直到从别处经 API 清除选择；包平面挂起时同样断 | 源 capture 的 RPDB 选择器与 OUTPUT 负向门只按目的判定：本机对已接受连接的回包（目的为对端公网地址）同样被导入出口 TUN，挂起时被负向门以 TCP reset 拒绝 | 未发布（X19） | `the_inbound_batch_adds_exactly_the_reply_chain_of_a_current_table`、`accepted_connections_keep_underlay_replies_through_capture_pause_and_upgrade`（`exit/off` 组件 `inbound-replies`）；`exit/off` 第 17 阶段 |
 | <a id="l1-listener"></a>L1 | prod soak D1（alpha.23）：公网出口 it7 的 Native TCP listener `prod-tcp` 的 owner 意外结束（WARN `Connectivity owner ended unrequested; stopping the Manager {owner: Listener("prod-tcp")}`，无原因），整个 Manager 停止、包平面撤回 642 ms，经它的流全部中断 | 流式 listener 把 `accept` 的任何错误当作 listener 失败并停止 Manager；Linux `ProtectedListener::accept` 把单个连接的失败（被接受前已 RST 的连接 `getpeername` 得 `ENOTCONN`、socket 选项失败、socket 预算满）作为 accept 错误返回，远端一次 connect＋RST 即可触发（Planck loopback 实验：640 个 RST 连接中 622 个在接受后读不到对端地址）；连接任务 panic、Native UDP 非 ICMP 读错误同样停止 Manager；结束日志不带原因 | 未发布（L1） | `manager::tests::netmap::listener::*`（`failed_accepts_are_retried_without_stopping_the_manager`、`an_ended_listener_socket_is_rebound_alone`、`failed_receives_on_a_udp_listener_are_retried_without_stopping_the_manager`、`an_owner_ending_unrequested_says_why`）、`linux::sockets::tests::*`；runtime 行扫描器式访问阶段 |
+| <a id="sp1-expired-spin"></a>SP1 | dev 2026-10-28：Mac 重启后 dev Server 不可达（502），`meshway-vm`（alpha.23）租约到期、DNS owner `observe_deadline` 撤回后约 6.5 小时一个 tokio 线程 100 %（用户态，5 秒 167 次 syscall），Status `Data plane failed`；lab lax／sha（alpha.22）同样；Server 恢复后一分钟内停止 | 网络 worker 为 DNS 撤回排了一次安装重试（5 秒），到期时 Control 已不提供 netmap：重装分支找不到可安装的内容即 `continue`，重试原样保留，过去的截止在 `biased` select 中排在 DNS 恢复边沿之前、永远就绪（Planck 复现：`retry` 轮约 287,000 次／秒） | 未发布（SP1） | `a_retry_due_with_nothing_offered_ends_instead_of_turning`；`netmap/expiry` 到期空闲阶段 |
 
 ## 剩余边界 {#remaining-boundaries}
 
