@@ -27,8 +27,12 @@ mod withdrawal;
 use packets::{packet_pool, receive_packets};
 use peers::PeerChannels;
 use sample::{RoamEvidence, sample_host};
-use timing::{apply_failed, apply_recovery, apply_retry_at, lease_end, sleep_until};
-use withdrawal::{Cause, Withdrawn, finish_withdrawal, shutdown, withdraw, withdrawing};
+use timing::{
+    apply_failed, apply_recovery, apply_retry_at, lease_end, nothing_to_install, sleep_until,
+};
+use withdrawal::{
+    Cause, Withdrawn, finish_withdrawal, retry_ended, shutdown, withdraw, withdrawing,
+};
 
 /// Exit replies taken in one turn, like one Mesh TUN read turn.
 const EXIT_REPLY_BATCH: usize = 32;
@@ -453,6 +457,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Work::ExitReply(_) => "exitReply",
             Work::DnsQuery(_) | Work::DnsReport(_) => "dns",
             Work::Offer => "offer",
+            Work::Retry => "retry",
             Work::Lifecycle(_) => "lifecycle",
             _ => "other",
         });
@@ -718,13 +723,25 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         diagnostics.stop().await;
                         withdraw(&mut engine, &reports, false).await;
                         withdrawn.get_or_insert(Withdrawn::of(Cause::Withdrawn));
+                    } else if matches!(work, Work::DnsRecovered | Work::HostRecovered) {
+                        // The component that withdrew the plane recovered:
+                        // it stays withdrawn for want of a lease alone.
+                        finish_withdrawal(&mut engine, &reports, false);
+                    }
+                    // Nothing to install: a due retry ends here (SP1).
+                    if nothing_to_install(&mut retry) {
+                        retry_ended(&reports, &retry);
                     }
                     continue;
                 };
                 // A new ownership term publishes the overlap it read before
                 // the worker sees that change.
                 if overlap.is_some() || overlaps.borrow().is_some() {
-                    // Kept offered; installed once the overlapping address leaves.
+                    // Kept offered; installed once the overlapping address
+                    // leaves (that edge queues the reinstall), not retried.
+                    if nothing_to_install(&mut retry) {
+                        retry_ended(&reports, &retry);
+                    }
                     continue;
                 }
                 let reference = netmap.content.reference();
@@ -859,6 +876,25 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         apply_failed(&mut retry, failure);
                         report.apply = retry.health().clone();
                     }
+                    // The offered lease has already ended (Control has not
+                    // withdrawn it yet): not an installation failure. Engine
+                    // withdrew what it held, as at the lease end, and nothing
+                    // is retried until Control offers a live lease (SP1).
+                    Err(meshway_engine::Error::Lease) if plane.failure.is_none() && !kept => {
+                        tracing::info!(
+                            netmap_serial = reference.serial.get(),
+                            "Offered netmap lease has ended; nothing to install"
+                        );
+                        diagnostics.invalidate();
+                        if previous.content.is_some() {
+                            withdrawn.get_or_insert(Withdrawn::of(Cause::LeaseEnded));
+                        }
+                        nothing_to_install(&mut retry);
+                        report.apply = retry.health().clone();
+                        reports.send_replace(report);
+                        finish_withdrawal(&mut engine, &reports, false);
+                        continue;
+                    }
                     Err(error) if plane.failure.is_none() && kept => {
                         // Rejected input (regressing reference or stale lease):
                         // Engine kept its current desired content unchanged.
@@ -909,6 +945,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     tracing::info!("Netmap lease ended; terminating the packet plane");
                     withdrawn.get_or_insert(Withdrawn::of(Cause::LeaseEnded));
                     finish_withdrawal(&mut engine, &reports, false);
+                    // A pending retry of the ended content has nothing left
+                    // to install; the next offer installs.
+                    if nothing_to_install(&mut retry) {
+                        retry_ended(&reports, &retry);
+                    }
                 } else {
                     let mut report = reports.borrow().clone();
                     report.capture = engine
@@ -1221,6 +1262,8 @@ struct SlowTurn {
 
 impl SlowTurn {
     fn new(kind: &'static str) -> Self {
+        // Opt-in (`MESHWAY_PROFILE`): how many turns of each kind ran.
+        meshway_logging::profile::event("network.worker.turn", kind);
         Self {
             kind,
             started: std::time::Instant::now(),

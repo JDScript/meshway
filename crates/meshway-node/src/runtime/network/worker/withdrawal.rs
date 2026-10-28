@@ -70,6 +70,15 @@ pub(super) fn finish_withdrawal(engine: &mut Engine<Plane>, reports: &Publisher,
     reports.send_replace(report);
 }
 
+/// The worker's own retry ended without an installation (nothing to
+/// install): Status no longer shows its reinstall (`retryAt`) or refusal.
+pub(super) fn retry_ended(reports: &Publisher, retry: &meshway_model::recovery::Recovery) {
+    let mut report = reports.borrow().clone();
+    report.apply = retry.health().clone();
+    report.observed_at = chrono::Utc::now();
+    reports.send_replace(report);
+}
+
 /// Publish the withdrawal for a failed component before its cleanup runs:
 /// the cleanup can wait for seconds (a kernel change retried, a stalled
 /// process), and the plane is withdrawing meanwhile, so its cause is known
