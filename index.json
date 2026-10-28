@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-28T09:36:20.626084+00:00",
+  "updatedAt": "2026-10-28T13:38:43.252526+00:00",
   "runs": [
+    {
+      "id": 40697830825,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "0e24d6f3e7476557a5e9e172ad19fd298be5c5e0",
+      "message": "docs: M1 node RSS after Server outages and netmap reinstalls (allocator retention, not a leak)",
+      "createdAt": "2026-10-28T13:35:29Z",
+      "updatedAt": "2026-10-28T13:37:16Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/40697830825",
+      "jobs": [
+        {
+          "id": 122849236175,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-28T13:35:30Z",
+          "completedAt": "2026-10-28T13:35:34Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40697830825/job/122849236175"
+        },
+        {
+          "id": 122849281749,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-28T13:35:35Z",
+          "completedAt": "2026-10-28T13:37:15Z",
+          "seconds": 100.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40697830825/job/122849281749"
+        },
+        {
+          "id": 122849284897,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-28T13:35:34Z",
+          "completedAt": "2026-10-28T13:35:34Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40697830825/job/122849284897"
+        },
+        {
+          "id": 122849284989,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-28T13:35:35Z",
+          "completedAt": "2026-10-28T13:35:34Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/40697830825/job/122849284989"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 40662588428,
       "attempt": 1,
