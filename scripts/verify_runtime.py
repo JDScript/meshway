@@ -249,9 +249,13 @@ def main():
     roam_scenario = (args.netmap_scenario or "").startswith("roam-")
     if roam_scenario != (args.traversal == "roam" and args.netmap_scenario is not None):
         parser.error("--netmap-scenario roam-* requires --traversal roam, which accepts no other scenario")
+    # The expiry row runs resolved: its DNS owner fails and recovers past the
+    # lease end with the Server unreachable (SP1).
+    scenario_dns = ("off", "resolved") if args.netmap_scenario == "expiry" else ("off",)
     if (args.netmap_scenario not in (None, "relay", "reconnect") and not roam_scenario
-            and (args.traversal != "off" or args.dns_backend != "off")):
-        parser.error("--netmap-scenario requires --traversal off --dns-backend off")
+            and (args.traversal != "off" or args.dns_backend not in scenario_dns)):
+        parser.error("--netmap-scenario requires --traversal off --dns-backend off "
+                     "(expiry: off or resolved)")
     if args.only and args.traversal in ("exit", "exit6"):
         parser.error("--only main is the A/R/B runtime flow, not the exit topology")
     if args.traversal in ("exit", "exit6", "roam", "fault") and (args.dns_backend != "off" or args.transport != "native-udp"):
@@ -262,8 +266,11 @@ def main():
         parser.error("--only main is the A/R/B runtime flow, not the roaming topology")
     if args.reported_endpoints and (args.transport != "native-udp" or args.traversal != "off" or args.dns_backend != "off"):
         parser.error("--reported-endpoints requires native-udp with traversal and DNS off")
-    if not args.build_only and (args.dns_backend != "off") != bool(args.dns_image_manifest):
-        parser.error("DNS scenarios require --dns-image-manifest; IP-only runs must omit it")
+    # The expiry row's resolved runs on the runtime image, as the fault row's:
+    # the netmap rows' egress capture needs its nft, which the DNS image lacks.
+    args.runtime_resolved = args.netmap_scenario == "expiry" and args.dns_backend == "resolved"
+    if not args.build_only and (args.dns_backend != "off" and not args.runtime_resolved) != bool(args.dns_image_manifest):
+        parser.error("DNS scenarios require --dns-image-manifest; IP-only runs and the expiry row must omit it")
     if args.traversal == "nat" and args.transport != "native-udp":
         parser.error("--traversal nat requires --transport native-udp")
     if args.traversal_fallback and args.traversal != "nat":
@@ -318,7 +325,13 @@ def main():
         return
     dns_image = None
     dns_assets = None
-    if args.dns_backend != "off":
+    if args.runtime_resolved:
+        dns_image = image
+        (report / "dns-support/os-packages.tsv").write_text("".join(
+            package["name"] + "\t" + package["version"] + "\t" + package["architecture"] + "\n"
+            for package in runtime_os["packages"]))
+        shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "dns-support/namespace.sh")
+    elif args.dns_backend != "off":
         dns_assets = json.loads(args.dns_image_manifest.read_text())
         lock_path = ROOT / DNS_OS[args.dns_os][0]
         lock = json.loads(lock_path.read_text())
@@ -377,7 +390,7 @@ def main():
                  "passed": False, "processes": {}, "resources": {"containers": containers},
                   "carrier": args.transport,
                   "dnsBackend": args.dns_backend,
-                  "dnsOs": args.dns_os if args.dns_backend != "off" else None,
+                  "dnsOs": args.dns_os if args.dns_backend != "off" and not args.runtime_resolved else None,
                    "dnsOsAssets": dns_assets,
                    "traversal": args.traversal,
                    "reportedEndpoints": args.reported_endpoints,
@@ -464,6 +477,8 @@ def main():
             mounts.append(("controller", "/controller", not prepare))
         if dns_actor:
             mounts.append(("dns-support", "/dns-fixture", True))
+            if args.runtime_resolved:
+                mounts.append(("dns-support/os-packages.tsv", "/usr/share/meshway-dns-packages.tsv", True))
         if not prepare:
             mounts.append((role, "/evidence", False))
         if role in ("underlay-restart-a", "underlay-restart-b"):
@@ -805,7 +820,7 @@ def main():
                 write_json(metadata, manifest)
         if not args.only and any(manifest["underlayPeer"].values()):
             raise RuntimeError("remote underlay peer did not stop cleanly")
-        if args.dns_backend != "off" and not args.only:
+        if args.dns_backend != "off" and not args.only and not args.runtime_resolved:
             # Whatever the row's backend: the production resolved backend on
             # this DNS image's own resolved and the Kernel's anchor.
             role = "dns-resolved-backend"
@@ -821,7 +836,8 @@ def main():
             write_json(metadata, manifest)
             if not passed:
                 raise RuntimeError("resolved backend conformance on the DNS image failed")
-        if args.dns_backend != "off" and not args.only and DNS_OS[args.dns_os][1] == "unsupported":
+        if (args.dns_backend != "off" and not args.only and not args.runtime_resolved
+                and DNS_OS[args.dns_os][1] == "unsupported"):
             role = "dns-resolved-cadence"
             create(role, ["--ignored", "--exact", RESOLVED_CADENCE_TEST, "--nocapture", "--test-threads=1"],
                    tun=True, executable=LIFECYCLE_BINARY, dns_backend="resolved",

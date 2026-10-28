@@ -49,7 +49,9 @@ ROWS = {
     "fault/throttle": ("runtime", ("--transport", "native-udp", "--traversal", "fault", "--dns-backend", "off")),
     "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "offline")),
     "netmap/revoke": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "revoke")),
-    "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "expiry")),
+    # resolved on the runtime image: B's DNS owner fails and recovers past
+    # the lease end (SP1).
+    "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "resolved", "--netmap-scenario", "expiry")),
     "netmap/restart": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "restart")),
 }
 # Rows accepted only by explicit selection, with the reason shown in --list.

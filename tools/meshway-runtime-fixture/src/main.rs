@@ -325,9 +325,13 @@ async fn main() -> std::process::ExitCode {
         } else {
             cli.traversal == TraversalMode::Off
         };
-        if !traversal || cli.dns_backend != DnsBackend::Off {
+        // The expiry row runs resolved too: its DNS owner fails and recovers
+        // past the lease end (SP1).
+        let dns = cli.dns_backend == DnsBackend::Off
+            || (scenario == NetmapScenario::Expiry && cli.dns_backend == DnsBackend::Resolved);
+        if !traversal || !dns {
             eprintln!(
-                "--netmap-scenario relay/reconnect require --traversal nat (no fallback), the others traversal off; DNS off"
+                "--netmap-scenario relay/reconnect require --traversal nat (no fallback), the others traversal off; DNS off (expiry: off or resolved)"
             );
             return std::process::ExitCode::FAILURE;
         }

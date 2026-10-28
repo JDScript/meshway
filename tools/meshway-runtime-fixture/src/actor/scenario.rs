@@ -213,9 +213,31 @@ async fn offline(context: Context<'_>) -> Result<String> {
 /// first Status without the lease to the TUN's removal.
 const WITHDRAWAL: Duration = Duration::from_secs(2);
 
+/// SP1: the window after the lease end, the Server still unreachable, over
+/// which each daemon's busiest thread stays below [`EXPIRED_IDLE_CPU`].
+const EXPIRED_IDLE_WINDOW: Duration = Duration::from_secs(60);
+
+/// A withdrawn daemon whose Server is unreachable has no packet work: its
+/// only wakeups are Control's 1–15 s retries and the DNS owner's 1 s
+/// observation (dev 2026-10-28: 0 % per thread once recovered, against one
+/// thread at 100 % before the fix; the `fault/throttle` row's 5 % bounds a
+/// live plane under pressure).
+const EXPIRED_IDLE_CPU: f64 = 0.02;
+
+/// Control offers again after each failed attempt, at most 15 s apart
+/// (`BACKOFF_MAX`): after this, it offers no netmap any more.
+const WITHDRAWN_OFFER: Duration = Duration::from_secs(20);
+
+/// B's resolved stalls this long: the DNS owner's observation misses its
+/// 2 s deadline (the field's `observe_deadline` fault), and the worker's
+/// retry of the withdrawal falls due (5 s) before the owner re-proves.
+const RESOLVED_STALL: Duration = Duration::from_secs(10);
+
 /// The Controller is unreachable past the lease: Engine withdraws every
 /// component (no TUN, negative capture, traffic blocked), then a new lease
-/// after reopening reinstalls the same content.
+/// after reopening reinstalls the same content. Meanwhile B's resolved
+/// stalls, as on `meshway-vm` (SP1): the DNS owner fails and recovers with
+/// no netmap to install, and every daemon stays idle.
 async fn expiry(mut context: Context<'_>) -> Result<String> {
     let Context {
         cli, role, signals, ..
@@ -254,6 +276,11 @@ async fn expiry(mut context: Context<'_>) -> Result<String> {
     if let Some(traffic) = context.traffic.as_mut() {
         traffic.blocked().await?;
     }
+    if role == Role::B {
+        tokio::time::sleep(WITHDRAWN_OFFER.saturating_sub(expired.elapsed())).await;
+        stall_resolved(cli).await?;
+    }
+    expired_idle(&mut context).await?;
     observed(signals, &format!("scenario-offline-{}", role.name()), role).await?;
     opened(signals).await?;
     let status = running(cli, context.revision).await?;
@@ -269,6 +296,147 @@ async fn expiry(mut context: Context<'_>) -> Result<String> {
     )
     .await?;
     Ok(context.tun)
+}
+
+/// Stop this actor's systemd-resolved for [`RESOLVED_STALL`], then let it
+/// run again; the DNS owner reports the fault and its re-proof.
+async fn stall_resolved(cli: &Cli) -> Result<()> {
+    let mut pid = None;
+    let mut processes = tokio::fs::read_dir("/proc").await?;
+    while let Some(entry) = processes.next_entry().await? {
+        let Ok(candidate) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        if tokio::fs::read_to_string(entry.path().join("comm"))
+            .await
+            .is_ok_and(|name| name.trim() == "systemd-resolve")
+        {
+            pid = Some(candidate);
+        }
+    }
+    let pid = pid
+        .ok_or("this actor runs no systemd-resolved")?
+        .to_string();
+    let signal = async |name: &str| -> Result<()> {
+        if !tokio::process::Command::new("/bin/kill")
+            .args([name, &pid])
+            .status()
+            .await?
+            .success()
+        {
+            return Err("signalling systemd-resolved failed".into());
+        }
+        Ok(())
+    };
+    signal("-STOP").await?;
+    let stalled = command(cli, "status").await;
+    tokio::time::sleep(RESOLVED_STALL).await;
+    let during = command(cli, "status").await;
+    signal("-CONT").await?;
+    let failed = |status: &Result<Status>| {
+        status.as_ref().ok().and_then(|status| {
+            status
+                .network_error
+                .as_ref()
+                .map(|failure| failure.problem)
+                .or(status.last_error)
+        })
+    };
+    save(
+        cli,
+        "scenario-expired-resolved-stall",
+        &serde_json::json!({
+            "pid": pid,
+            "stallMs": RESOLVED_STALL.as_millis() as u64,
+            "stoppedStatus": stalled.as_ref().ok(),
+            "stalledStatus": during.as_ref().ok(),
+        }),
+    )
+    .await?;
+    if failed(&during) != Some(meshway_protocol::ipc::Problem::Dns) {
+        return Err("the DNS owner did not report the stalled resolved".into());
+    }
+    Ok(())
+}
+
+/// Every daemon thread's time on CPU (ns, `/proc/<pid>/task/*/schedstat`).
+async fn thread_cpu(pid: u32) -> Result<BTreeMap<u32, (String, u64)>> {
+    let mut threads = BTreeMap::new();
+    let mut tasks = tokio::fs::read_dir(format!("/proc/{pid}/task")).await?;
+    while let Some(task) = tasks.next_entry().await? {
+        let Ok(tid) = task.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        // A thread that ended between the listing and the read is skipped.
+        let (Ok(schedstat), Ok(name)) = (
+            tokio::fs::read_to_string(task.path().join("schedstat")).await,
+            tokio::fs::read_to_string(task.path().join("comm")).await,
+        ) else {
+            continue;
+        };
+        let ns = schedstat
+            .split_whitespace()
+            .next()
+            .and_then(|field| field.parse().ok())
+            .ok_or("unreadable schedstat")?;
+        threads.insert(tid, (name.trim().to_owned(), ns));
+    }
+    Ok(threads)
+}
+
+/// SP1: past the lease end with the Server unreachable, the daemon's busiest
+/// thread stays below [`EXPIRED_IDLE_CPU`] over [`EXPIRED_IDLE_WINDOW`].
+async fn expired_idle(context: &mut Context<'_>) -> Result<()> {
+    let pid = context.daemon.id().ok_or("daemon PID absent")?;
+    let begin = thread_cpu(pid).await?;
+    let started = Instant::now();
+    tokio::time::sleep(EXPIRED_IDLE_WINDOW).await;
+    let end = thread_cpu(pid).await?;
+    let wall = started.elapsed().as_nanos() as f64;
+    let mut threads: Vec<_> = end
+        .iter()
+        .map(|(tid, (name, ns))| {
+            let before = begin.get(tid).map_or(0, |(_, ns)| *ns);
+            (*tid, name.clone(), ns.saturating_sub(before) as f64 / wall)
+        })
+        .collect();
+    threads.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let busiest = threads.first().map_or(0.0, |thread| thread.2);
+    let status = command(context.cli, "status").await?;
+    save(
+        context.cli,
+        "scenario-expired-idle-cpu",
+        &serde_json::json!({
+            "pid": pid,
+            "windowMs": started.elapsed().as_millis() as u64,
+            "limit": EXPIRED_IDLE_CPU,
+            "busiest": busiest,
+            "threads": threads
+                .iter()
+                .take(8)
+                .map(|(tid, name, share)| serde_json::json!({ "tid": tid, "name": name, "share": share }))
+                .collect::<Vec<_>>(),
+            "status": status,
+        }),
+    )
+    .await?;
+    tracing::info!(
+        phase = "scenario-expired-idle",
+        role = context.role.name(),
+        busiest,
+        "daemon CPU past the lease end"
+    );
+    if busiest >= EXPIRED_IDLE_CPU {
+        return Err(format!(
+            "a daemon thread spun past the lease end: {:.1} % of one CPU",
+            busiest * 100.0
+        )
+        .into());
+    }
+    if status.netmap.is_some() || status.applied.is_some() {
+        return Err("the daemon left the expired state while the Server was unreachable".into());
+    }
+    Ok(())
 }
 
 /// The restart row first waits past the 120 s idle adjacency close with no
