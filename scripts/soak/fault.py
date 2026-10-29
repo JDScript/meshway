@@ -76,26 +76,42 @@ def recorded(config: common.Config) -> dict:
 
 # ---------------------------------------------------------------- helpers
 
-def node_status(config: common.Config, node: str) -> dict | None:
+def node_process(config: common.Config, node: str) -> tuple[dict | None, dict | None]:
+    """Status and the daemon's process identity (`@@proc`: pid and start time)."""
     result = common.node_call(config, node, "status", timeout=60)
-    _, body = common.proc_line(result.out)
+    proc, body = common.proc_line(result.out)
     try:
-        return json.loads(body) if result.ok else None
+        return (json.loads(body) if result.ok else None), proc
     except json.JSONDecodeError:
-        return None
+        return None, proc
 
 
-def wait_running(config: common.Config, node: str, started: float, timeout: float, old_pid=None) -> dict:
-    """Poll Status until running/ready (and, if given, a new process); seconds since `started`."""
+def node_status(config: common.Config, node: str) -> dict | None:
+    return node_process(config, node)[0]
+
+
+def replaced(old: dict | None, status: dict, proc: dict | None) -> bool:
+    """A new daemon process: another pid, or the same pid started later (a restarted container reuses its pids)."""
+    if old is None:
+        return True
+    if status.get("processId") != old.get("pid"):
+        return True
+    return bool(proc and old.get("start") is not None and proc.get("start") is not None
+                and proc["start"] != old["start"])
+
+
+def wait_running(config: common.Config, node: str, started: float, timeout: float, old: dict | None = None) -> dict:
+    """Poll Status until running/ready (and, if `old` names the previous process, a new one); seconds since `started`."""
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
-        status = node_status(config, node)
+        status, proc = node_process(config, node)
         if status:
-            last = {"phase": status.get("phase"), "dataPlane": status.get("dataPlane"), "pid": status.get("processId")}
-            if (status.get("phase") == "running" and status.get("dataPlane") == "ready"
-                    and (old_pid is None or status.get("processId") != old_pid)):
-                return {"recovered_s": round(time.monotonic() - started, 1), "pid_after": status.get("processId")}
+            last = {"phase": status.get("phase"), "dataPlane": status.get("dataPlane"), "pid": status.get("processId"),
+                    "start": (proc or {}).get("start")}
+            if status.get("phase") == "running" and status.get("dataPlane") == "ready" and replaced(old, status, proc):
+                return {"recovered_s": round(time.monotonic() - started, 1), "pid_after": status.get("processId"),
+                        "start_after": (proc or {}).get("start")}
         time.sleep(3)
     raise FaultError(f"{node} not running/ready within {timeout:.0f} s (last {last})")
 
@@ -161,9 +177,9 @@ RESTARTING = {"unless-stopped", "always", "on-failure", "on-abnormal", "dry"}
 
 def run_restart(config, fault):
     node = fault["node"]
-    before = node_status(config, node) if not DRY else {"processId": 0}
-    old = (before or {}).get("processId")
-    detail = {"pid_before": old}
+    before, proc = node_process(config, node) if not DRY else ({"processId": 0}, None)
+    old = {"pid": (before or {}).get("processId"), "start": (proc or {}).get("start")}
+    detail = {"pid_before": old["pid"], "start_before": old["start"]}
     action = fault["action"]
     if action == "kill9":
         detail["restart_policy"] = restart_policy(config, node)
@@ -176,7 +192,7 @@ def run_restart(config, fault):
         if line.startswith("@@killed "):
             detail["killed_host_pid"] = int(line.split()[1])
     if not DRY:
-        detail.update(wait_running(config, node, started, recovery_timeout(fault), old_pid=old))
+        detail.update(wait_running(config, node, started, recovery_timeout(fault), old=old))
     return detail
 
 

@@ -323,6 +323,15 @@ class RepeatedFault(unittest.TestCase):
         self.assertIsNone(report.planned(windows, "server", common.parse_time(at(11)), wildcard=False))
 
 
+class RestartedProcess(unittest.TestCase):
+    def test_a_restarted_container_reusing_its_pid_is_a_new_process(self):
+        old = {"pid": 24, "start": 1000.0}
+        self.assertTrue(fault.replaced(old, {"processId": 24}, {"pid": 24, "start": 2000.0}))
+        self.assertFalse(fault.replaced(old, {"processId": 24}, {"pid": 24, "start": 1000.0}))
+        self.assertTrue(fault.replaced(old, {"processId": 25}, None))
+        self.assertTrue(fault.replaced(None, {"processId": 24}, None))
+
+
 class Health(unittest.TestCase):
     def test_health_requests_name_the_collector(self):
         seen = []
