@@ -58,6 +58,11 @@ def fault_windows(config: common.Config) -> list[dict]:
                             "dry": event.get("dry")})
         elif event["event"] == "end":
             run = next((w for w in reversed(windows) if w["id"] == fid and w.get("start") and w["end"] is None), None)
+            if run is None and not event.get("interrupted"):
+                # The owner's own end for a run `fault.py recover` had already closed as interrupted (an older
+                # recover closed a manual marker within a minute): the owner's end is the run's record.
+                run = next((w for w in reversed(windows) if w["id"] == fid and w.get("start") and w.get("interrupted")
+                            and w["end"] <= common.parse_time(event["t"])), None)
             if run is not None:
                 run.update(end=common.parse_time(event["t"]), ok=event["ok"], error=event.get("error"),
                            detail=event.get("detail"), interrupted=event.get("interrupted"))

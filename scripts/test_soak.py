@@ -323,6 +323,32 @@ class RepeatedFault(unittest.TestCase):
         self.assertIsNone(report.planned(windows, "server", common.parse_time(at(11)), wildcard=False))
 
 
+class ManualMarker(unittest.TestCase):
+    def test_the_owners_end_replaces_an_early_interrupted_close(self):
+        soak = Soak()
+        soak.put("faults.jsonl", [
+            {"t": at(0), "event": "start", "id": "manual-upgrade", "action": "manual_field_upgrade",
+             "affects": ["jp", "hk", "server"], "grace_min": 15},
+            {"t": at(0.01), "event": "end", "id": "manual-upgrade", "ok": False, "error": "interrupted",
+             "interrupted": True},
+            {"t": at(0.05), "event": "end", "id": "manual-upgrade", "ok": True, "interrupted": False},
+        ])
+        windows = report.fault_windows(soak.config)
+        self.assertEqual([(w["ok"], w["interrupted"]) for w in windows], [(True, False)])
+        self.assertEqual(windows[0]["end"], common.parse_time(at(0.05)))
+        soak.close()
+
+    def test_recover_leaves_a_manual_marker_to_its_owner_for_an_hour(self):
+        soak = Soak()
+        soak.put("faults.jsonl", [{"t": at(0), "event": "start", "id": "manual-upgrade",
+                                   "action": "manual_field_upgrade", "affects": ["jp"], "grace_min": 15}])
+        with mock.patch.object(common, "now", return_value=common.parse_time(at(0.5))):
+            self.assertEqual(fault.recover(soak.config), [])
+        with mock.patch.object(common, "now", return_value=common.parse_time(at(1.1))):
+            self.assertEqual(fault.recover(soak.config), ["manual-upgrade"])
+        soak.close()
+
+
 class RestartedProcess(unittest.TestCase):
     def test_a_restarted_container_reusing_its_pid_is_a_new_process(self):
         old = {"pid": 24, "start": 1000.0}

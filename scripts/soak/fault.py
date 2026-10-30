@@ -323,6 +323,11 @@ def execute(config: common.Config, fault: dict, planned=None) -> bool:
     return ok
 
 
+# A `manual_*` marker (a planned upgrade by hand) is closed by the person who opened it; recover closes it only
+# once it has been open this long, so a forgotten marker cannot keep a window open.
+MANUAL_HOLD = timedelta(hours=1)
+
+
 def recover(config: common.Config) -> list[str]:
     """Faults with a start and no later end were interrupted: clean up, then close them."""
     closed = []
@@ -330,6 +335,9 @@ def recover(config: common.Config) -> list[str]:
     for fid, events in recorded(config).items():
         start, end = events.get("start"), events.get("end")
         if not start or (end and end["t"] >= start["t"]):
+            continue
+        if (str(start.get("action") or "").startswith("manual_")
+                and common.now() - common.parse_time(start["t"]) < MANUAL_HOLD):
             continue
         fault = faults.get(fid)
         error = None
