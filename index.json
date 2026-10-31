@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-30T15:33:47.412615+00:00",
+  "updatedAt": "2026-10-31T06:27:44.691700+00:00",
   "runs": [
+    {
+      "id": 41176387415,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-10-31T06:23:14Z",
+      "updatedAt": "2026-10-31T06:24:51Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/41176387415",
+      "jobs": [
+        {
+          "id": 124464708475,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-31T06:23:16Z",
+          "completedAt": "2026-10-31T06:23:28Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/41176387415/job/124464708475"
+        },
+        {
+          "id": 124464754131,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-31T06:23:29Z",
+          "completedAt": "2026-10-31T06:24:50Z",
+          "seconds": 81.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/41176387415/job/124464754131"
+        },
+        {
+          "id": 124464754975,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-31T06:23:28Z",
+          "completedAt": "2026-10-31T06:23:28Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/41176387415/job/124464754975"
+        },
+        {
+          "id": 124464755386,
+          "name": "server-upgrade",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-31T06:23:28Z",
+          "completedAt": "2026-10-31T06:23:28Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/41176387415/job/124464755386"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 41077209073,
       "attempt": 1,
