@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-11-08T15:18:16.452345+00:00",
+  "updatedAt": "2026-11-09T18:53:33.214014+00:00",
   "runs": [
+    {
+      "id": 42677581772,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-11-09T18:50:12Z",
+      "updatedAt": "2026-11-09T18:50:27Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/42677581772",
+      "jobs": [
+        {
+          "id": 129363030973,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-11-09T18:50:14Z",
+          "completedAt": "2026-11-09T18:50:26Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/42677581772/job/129363030973"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 13700931984,
+          "name": "validate-matrix-42677581772",
+          "bytes": 1144,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/42677581772/artifacts/13700931984",
+          "jobId": 129363030973,
+          "runner": "planck",
+          "seconds": 12.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261109T185024Z-c0309e3a",
+              "short": false,
+              "rows": []
+            }
+          ],
+          "builds": []
+        }
+      ]
+    },
     {
       "id": 42493843690,
       "attempt": 1,
