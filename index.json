@@ -1,8 +1,36 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-11-11T16:15:45.168191+00:00",
+  "updatedAt": "2026-11-12T16:53:29.038758+00:00",
   "runs": [
+    {
+      "id": 43262911527,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-11-12T16:49:50Z",
+      "updatedAt": "2026-11-12T16:49:56Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/43262911527",
+      "jobs": [
+        {
+          "id": 131338674057,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-11-12T16:49:52Z",
+          "completedAt": "2026-11-12T16:49:56Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/43262911527/job/131338674057"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 43055991137,
       "attempt": 1,
@@ -2187,7 +2215,7 @@
           "id": 12861790017,
           "name": "node-aarch64-unknown-linux-musl-aa8f35e6634fb4b5405f3763b11b910e16d2b5af",
           "bytes": 11141437,
-          "expired": false,
+          "expired": true,
           "url": "https://github.com/JDScript/meshway/actions/runs/40786700604/artifacts/12861790017",
           "jobId": 123161578294,
           "runner": "planck",
@@ -2215,7 +2243,7 @@
           "id": 12861381171,
           "name": "server-aarch64-unknown-linux-musl-aa8f35e6634fb4b5405f3763b11b910e16d2b5af",
           "bytes": 17802080,
-          "expired": false,
+          "expired": true,
           "url": "https://github.com/JDScript/meshway/actions/runs/40786700604/artifacts/12861381171",
           "jobId": null,
           "runner": null,
@@ -2230,7 +2258,7 @@
           "id": 12860632316,
           "name": "node-x86_64-unknown-linux-musl-aa8f35e6634fb4b5405f3763b11b910e16d2b5af",
           "bytes": 11938129,
-          "expired": false,
+          "expired": true,
           "url": "https://github.com/JDScript/meshway/actions/runs/40786700604/artifacts/12860632316",
           "jobId": 123161577949,
           "runner": "planck",
@@ -2258,7 +2286,7 @@
           "id": 12860318465,
           "name": "server-x86_64-unknown-linux-musl-aa8f35e6634fb4b5405f3763b11b910e16d2b5af",
           "bytes": 19076756,
-          "expired": false,
+          "expired": true,
           "url": "https://github.com/JDScript/meshway/actions/runs/40786700604/artifacts/12860318465",
           "jobId": null,
           "runner": null,
