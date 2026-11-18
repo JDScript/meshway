@@ -1,8 +1,120 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-11-14T15:10:06.562786+00:00",
+  "updatedAt": "2026-11-18T17:42:00.525794+00:00",
   "runs": [
+    {
+      "id": 44356939422,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-11-18T17:17:08Z",
+      "updatedAt": "2026-11-18T17:38:36Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/44356939422",
+      "jobs": [
+        {
+          "id": 135001753848,
+          "name": "matrix",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-11-18T17:38:36Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/44356939422/job/135001753848"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 44139227744,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-11-17T17:38:34Z",
+      "updatedAt": "2026-11-18T17:38:36Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/44139227744",
+      "jobs": [
+        {
+          "id": 134237100521,
+          "name": "matrix",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-11-17T17:38:35Z",
+          "completedAt": "2026-11-18T17:38:35Z",
+          "seconds": 86400.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/44139227744/job/134237100521"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 43930375031,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-11-16T18:35:12Z",
+      "updatedAt": "2026-11-16T18:35:19Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/43930375031",
+      "jobs": [
+        {
+          "id": 133520855178,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-11-16T18:35:14Z",
+          "completedAt": "2026-11-16T18:35:18Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/43930375031/job/133520855178"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 43731198479,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-11-15T15:40:33Z",
+      "updatedAt": "2026-11-15T15:40:44Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/43731198479",
+      "jobs": [
+        {
+          "id": 132863783405,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-11-15T15:40:35Z",
+          "completedAt": "2026-11-15T15:40:44Z",
+          "seconds": 9.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/43731198479/job/132863783405"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 43608428501,
       "attempt": 1,
