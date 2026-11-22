@@ -1,8 +1,36 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-11-21T17:41:39.481091+00:00",
+  "updatedAt": "2026-11-22T17:41:41.927239+00:00",
   "runs": [
+    {
+      "id": 45043056649,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
+      "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
+      "createdAt": "2026-11-22T16:18:09Z",
+      "updatedAt": "2026-11-22T17:38:39Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/45043056649",
+      "jobs": [
+        {
+          "id": 137294630939,
+          "name": "matrix",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-11-22T17:38:39Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/45043056649/job/137294630939"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 44923082137,
       "attempt": 1,
@@ -12,20 +40,20 @@
       "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
       "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
       "createdAt": "2026-11-21T16:10:19Z",
-      "updatedAt": "2026-11-21T17:38:38Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-11-22T17:38:49Z",
+      "status": "completed",
+      "conclusion": "cancelled",
       "url": "https://github.com/JDScript/meshway/actions/runs/44923082137",
       "jobs": [
         {
           "id": 136927890163,
           "name": "matrix",
           "runner": null,
-          "status": "queued",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "cancelled",
           "startedAt": "2026-11-21T17:38:38Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-11-22T17:38:39Z",
+          "seconds": 86401.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/44923082137/job/136927890163"
         }
       ],
