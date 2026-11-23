@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-11-22T17:41:41.927239+00:00",
+  "updatedAt": "2026-11-23T17:41:58.613890+00:00",
   "runs": [
     {
       "id": 45043056649,
@@ -12,20 +12,20 @@
       "commit": "3209dc95da439ff016a2f0d058ca4dc683e06ccc",
       "message": "tooling: soak recover leaves a manual marker to its owner for an hour; the owner's end replaces an early interrupted close (alpha.24/25 upgrades showed interrupted)",
       "createdAt": "2026-11-22T16:18:09Z",
-      "updatedAt": "2026-11-22T17:38:39Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-11-23T17:38:40Z",
+      "status": "completed",
+      "conclusion": "cancelled",
       "url": "https://github.com/JDScript/meshway/actions/runs/45043056649",
       "jobs": [
         {
           "id": 137294630939,
           "name": "matrix",
           "runner": null,
-          "status": "queued",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "cancelled",
           "startedAt": "2026-11-22T17:38:39Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-11-23T17:38:40Z",
+          "seconds": 86401.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/45043056649/job/137294630939"
         }
       ],
